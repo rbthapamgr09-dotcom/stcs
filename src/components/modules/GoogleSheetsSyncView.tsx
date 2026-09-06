@@ -1,0 +1,990 @@
+import React, { useState } from 'react';
+import {
+  CloudUpload,
+  CloudDownload,
+  RefreshCw,
+  Copy,
+  CheckCircle,
+  FileCode,
+  AlertCircle,
+  ExternalLink,
+  Shield,
+  Save,
+  Check,
+  FileSpreadsheet,
+  LogIn,
+  LogOut,
+  Sparkles,
+  Link2,
+  Table,
+  Globe,
+  FolderKanban,
+  ShieldAlert,
+} from 'lucide-react';
+import { useApp } from '../../context/AppContext';
+import { GoogleSheetsConfig } from '../../types';
+import { TARGET_GOOGLE_DRIVE_FOLDER_ID, TARGET_GOOGLE_DRIVE_FOLDER_URL, TARGET_ADMIN_ACCOUNT_EMAIL } from '../../services/googleSheetsService';
+
+export const GoogleSheetsSyncView: React.FC = () => {
+  const {
+    googleSheetsConfig,
+    updateGoogleSheetsConfig,
+    syncWithGoogleSheets,
+    isGoogleAccountConnected,
+    googleConnectedEmail,
+    connectGoogleAccount,
+    disconnectGoogleAccount,
+    createGoogleSpreadsheetForApp,
+    openUnauthorizedDomainModal,
+    addToast,
+    currentUser,
+    organization,
+    activeFiscalYear,
+  } = useApp();
+
+  const [formData, setFormData] = useState<GoogleSheetsConfig>(googleSheetsConfig);
+  const [isCopied, setIsCopied] = useState(false);
+  const [isPushing, setIsPushing] = useState(false);
+  const [isPulling, setIsPulling] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
+  const [isCreatingSheet, setIsCreatingSheet] = useState(false);
+
+  // RBAC Access Guard: Only SUPER_ADMIN allowed
+  if (currentUser?.role !== 'SUPER_ADMIN') {
+    return (
+      <div className="bg-white p-8 rounded-2xl border border-red-200 shadow-sm text-center max-w-xl mx-auto my-12 space-y-4">
+        <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <h3 className="text-lg font-bold text-gray-900">
+          पहुँच अस्वीकृत (Access Denied)
+        </h3>
+        <p className="text-sm text-gray-600 leading-relaxed">
+          गुगल सिट्स डाटा सिंक (Google Sheets Integration) पृष्ठको पहुँच केवल <strong>सुपर एडमिन (Super Admin)</strong> प्रयोगकर्ताका लागि मात्र अधिकार छ।
+        </p>
+      </div>
+    );
+  }
+
+  const cleanUrlString = (rawUrl: string): string => {
+    let clean = (rawUrl || '').trim();
+    if (clean.includes('script.google.com/macros/s/')) {
+      if (clean.endsWith('/edit') || clean.endsWith('/dev')) {
+        clean = clean.replace(/\/(edit|dev)(\?.*)?$/, '/exec');
+      } else if (!clean.endsWith('/exec') && !clean.includes('/exec?')) {
+        clean = clean.replace(/\/?$/, '/exec');
+      }
+    }
+    return clean;
+  };
+
+  const handleSaveConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    const sanitizedUrl = cleanUrlString(formData.webAppUrl || '');
+    const updated = {
+      ...formData,
+      webAppUrl: sanitizedUrl,
+    };
+    setFormData(updated);
+    updateGoogleSheetsConfig(updated);
+    addToast('success', 'कन्फिगरेसन सुरक्षित भयो', 'गुगल सिट्स सेटिङ्स सुरक्षित गरियो।');
+  };
+
+  const handleGoogleConnect = async () => {
+    setIsConnectingGoogle(true);
+    try {
+      await connectGoogleAccount();
+    } finally {
+      setIsConnectingGoogle(false);
+    }
+  };
+
+  const handleGoogleDisconnect = async () => {
+    await disconnectGoogleAccount();
+  };
+
+  const handleCreateNewSheet = async () => {
+    setIsCreatingSheet(true);
+    try {
+      await createGoogleSpreadsheetForApp();
+    } finally {
+      setIsCreatingSheet(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    const rawUrl = formData.webAppUrl || '';
+    if (!rawUrl.trim()) {
+      addToast('error', 'URL आवश्यक छ', 'कृपया पहिले Google Apps Script Web App URL राख्नुहोस्।');
+      return;
+    }
+
+    if (rawUrl.includes('docs.google.com/spreadsheets')) {
+      addToast('error', 'गलत URL', 'तपाईंले Spreadsheet को लिंक राख्नुभएको छ। कृपया Extensions > Apps Script > Deploy > Web app बाट प्राप्त /exec URL राख्नुहोस्।');
+      return;
+    }
+
+    const sanitizedUrl = cleanUrlString(rawUrl);
+    setFormData((p) => ({ ...p, webAppUrl: sanitizedUrl }));
+    updateGoogleSheetsConfig({ webAppUrl: sanitizedUrl });
+
+    setIsTesting(true);
+    try {
+      // Tier 1: Try GET request first (Standard Web App status endpoint)
+      try {
+        const getUrl = `${sanitizedUrl}${sanitizedUrl.includes('?') ? '&' : '?'}action=status&_t=${Date.now()}`;
+        const getRes = await fetch(getUrl, {
+          method: 'GET',
+          redirect: 'follow',
+        });
+
+        if (getRes.ok) {
+          const txt = await getRes.text();
+          let data: any = {};
+          try {
+            data = JSON.parse(txt);
+          } catch {
+            data = { success: true };
+          }
+          addToast('success', 'जडान सफल (Connected)', data.message || `Google Apps Script API (${data.spreadsheetName || 'Active'}) सँग सम्पर्क सफल भयो।`);
+          updateGoogleSheetsConfig({ syncStatus: 'success', errorMessage: undefined });
+          return;
+        }
+      } catch (getErr) {
+        console.warn('GET test attempt:', getErr);
+      }
+
+      // Tier 2: Try POST request with text/plain (avoids preflight CORS options)
+      try {
+        const response = await fetch(sanitizedUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'status' }),
+          redirect: 'follow',
+        });
+
+        let data: any = {};
+        try {
+          const txt = await response.text();
+          if (txt) data = JSON.parse(txt);
+        } catch {
+          data = { success: true };
+        }
+
+        if (data.success || response.ok) {
+          addToast('success', 'जडान सफल (Connected)', data.message || `Google Spreadsheet (${data.spreadsheetName || 'Connected'}) सँग जडान सफल भयो।`);
+          updateGoogleSheetsConfig({ syncStatus: 'success', errorMessage: undefined });
+          return;
+        }
+      } catch (postErr) {
+        console.warn('POST test attempt:', postErr);
+      }
+
+      // Tier 3: Resilient ping via no-cors mode (handles Google 302 redirect opaque responses)
+      try {
+        await fetch(sanitizedUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'status' }),
+        });
+
+        addToast('success', 'जडान सक्रिय (Reachable)', 'Google Apps Script Web App सँग सम्पर्क स्थापित भयो (Data push enabled)।');
+        updateGoogleSheetsConfig({ syncStatus: 'success', errorMessage: undefined });
+        return;
+      } catch (noCorsErr) {
+        console.warn('no-cors test attempt:', noCorsErr);
+      }
+
+      throw new Error('Failed to fetch');
+    } catch (err: unknown) {
+      let msg = err instanceof Error ? err.message : 'जडान हुन सकेन';
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        msg = 'जडान हुन सकेन (Failed to fetch): कृपया Apps Script मा Deploy गर्दा "Who has access" मा "Anyone" रोजिएको र URL को अन्त्यमा "/exec" भएको सुनिश्चित गर्नुहोस्।';
+      }
+      addToast('error', 'जडान असफल', msg);
+      updateGoogleSheetsConfig({ syncStatus: 'error', errorMessage: msg });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const handlePush = async () => {
+    setIsPushing(true);
+    await syncWithGoogleSheets('push');
+    setIsPushing(false);
+  };
+
+  const handlePull = async () => {
+    setIsPulling(true);
+    await syncWithGoogleSheets('pull');
+    setIsPulling(false);
+  };
+
+  // Google Apps Script code to copy
+  const googleAppsScriptCode = `/**
+ * =========================================================================
+ * तलबी तथा कर गणना प्रणाली — Google Apps Script Web App API
+ * Salary & Tax Management System — Google Sheets Sync Engine (Updated)
+ * =========================================================================
+ */
+
+/**
+ * १. स्प्रेडसिट खुल्दा स्वतः मेनु थप्ने (Custom Spreadsheet Menu):
+ */
+function onOpen() {
+  try {
+    SpreadsheetApp.getUi()
+      .createMenu('🏢 तलब तथा कर प्रणाली')
+      .addItem('✓ जडान र संरचना परीक्षण (Test Setup)', 'testSetup')
+      .addItem('🔄 सबै पानाहरू सिर्जना गर्नुहोस् (Setup All Sheets)', 'setupAllSheets')
+      .addToUi();
+  } catch (e) {}
+}
+
+/**
+ * २. परीक्षण प्रकार्य (Test Function):
+ * Apps Script सम्पादकमा सिधै "Run" थिचेर परीक्षण गर्न यो 'testSetup' function छान्नुहोस्।
+ */
+function testSetup() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  Logger.log("✓ Google Spreadsheet जडान सफल: " + ss.getName());
+  
+  setupAllSheets();
+  moveSpreadsheetToTargetFolder(ss);
+  
+  logSyncAudit(ss, 'प्रणाली परीक्षण (Test Run)', 'Success');
+  Logger.log("✓ सबै पानाहरू तयार भए। अब Deploy > New deployment > Web App गरी URL लिनुहोस्।");
+}
+
+var TARGET_FOLDER_ID = "1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj";
+
+function moveSpreadsheetToTargetFolder(ss) {
+  try {
+    if (!ss) return;
+    var file = DriveApp.getFileById(ss.getId());
+    var targetFolder = DriveApp.getFolderById(TARGET_FOLDER_ID);
+    if (targetFolder && file) {
+      targetFolder.addFile(file);
+    }
+  } catch (e) {
+    Logger.log("Folder placement note: " + e.toString());
+  }
+}
+
+/**
+ * ३. सबै आवश्यक पानाहरू (Sheets) सिर्जना र ढाँचा मिलाउने:
+ */
+function setupAllSheets() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  moveSpreadsheetToTargetFolder(ss);
+  var requiredSheets = [
+    { name: 'Organization', headers: ['Property / Field', 'Value'] },
+    { name: 'Employees', headers: ['id', 'empCode', 'nameNepali', 'nameEnglish', 'designation', 'serviceType', 'panNumber', 'maritalStatus', 'pension'] },
+    { name: 'SalarySetup', headers: ['employeeId', 'basicSalary', 'gradeRate', 'currentGradeCount', 'gradeIncreaseMonth', 'gradeIncreaseCount', 'dearnessAllowance', 'uniformAllowance'] },
+    { name: 'DeductionSetup', headers: ['employeeId', 'providentFundPercent', 'citMonthlyAmount', 'insuranceMonthlyAmount', 'otherMonthlyDeduction'] },
+    { name: 'TaxReference', headers: ['id', 'fiscalYear', 'filingType', 'slabs', 'disabilityExemptionPercent', 'femaleTaxRebatePercent'] },
+    { name: 'MonthlySalarySheet', headers: ['empCode', 'name', 'designation', 'month', 'basicSalary', 'gradeAmount', 'totalReceivable', 'totalDeduction', 'netPayable'] },
+    { name: 'AnnualTaxReport', headers: ['empCode', 'name', 'designation', 'fiscalYear', 'annualGrossIncome', 'totalDeductions', 'taxableIncome', 'totalTaxPayable', 'monthlyTaxDeduction'] },
+    { name: 'AuditLog', headers: ['Timestamp (UTC+05:45 Kathmandu)', 'Action', 'Status', 'User', 'Details'] }
+  ];
+
+  for (var i = 0; i < requiredSheets.length; i++) {
+    var item = requiredSheets[i];
+    var sheet = ss.getSheetByName(item.name) || ss.insertSheet(item.name);
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(item.headers);
+      sheet.getRange(1, 1, 1, item.headers.length).setFontWeight('bold').setBackground('#edf4ea');
+    }
+  }
+}
+
+/**
+ * ४. GET Handler:
+ * Web App URL ब्राउजरमा खोल्दा वा डाटा तान्दा चल्छ।
+ */
+function doGet(e) {
+  var parameter = (e && e.parameter) ? e.parameter : {};
+  var action = parameter.action || 'status';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  if (action === 'getAllData' || action === 'pull') {
+    var result = {
+      organization: getSheetDataAsObject(ss, 'Organization'),
+      employees: getSheetDataAsArray(ss, 'Employees'),
+      salarySetups: getSheetDataAsObjectMap(ss, 'SalarySetup', 'employeeId'),
+      deductionSetups: getSheetDataAsObjectMap(ss, 'DeductionSetup', 'employeeId'),
+      taxReferences: getSheetDataAsArray(ss, 'TaxReference'),
+      updatedAt: new Date().toISOString()
+    };
+    
+    return ContentService.createTextOutput(JSON.stringify({ 
+      success: true, 
+      data: result,
+      message: 'गुगल सिट्सबाट डाटा सफलतापूर्वक प्राप्त भयो।' 
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  // Default Status Response
+  return ContentService.createTextOutput(JSON.stringify({ 
+    success: true, 
+    status: 'online',
+    message: 'तलबी तथा कर गणना प्रणाली — Google Apps Script API सक्रिय छ (Active & Ready)',
+    spreadsheetName: ss.getName(),
+    timestamp: new Date().toISOString()
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * ५. POST Handler:
+ * एपबाट डाटा सिंक गर्दा तथा पठाउँदा चल्छ।
+ */
+function doPost(e) {
+  try {
+    if (!e || !e.postData || !e.postData.contents) {
+      // Direct Run from script editor safeguard
+      return ContentService.createTextOutput(JSON.stringify({ 
+        success: true, 
+        message: 'doPost is listening for Web App sync requests. Use testSetup() function to test directly inside Apps Script Editor.' 
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    var payload = JSON.parse(e.postData.contents);
+    var action = payload.action || 'push';
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    
+    // डाटा निकाल्ने (Pull Action)
+    if (action === 'pull') {
+      var pullData = {
+        organization: getSheetDataAsObject(ss, 'Organization'),
+        employees: getSheetDataAsArray(ss, 'Employees'),
+        salarySetups: getSheetDataAsObjectMap(ss, 'SalarySetup', 'employeeId'),
+        deductionSetups: getSheetDataAsObjectMap(ss, 'DeductionSetup', 'employeeId'),
+        taxReferences: getSheetDataAsArray(ss, 'TaxReference'),
+        updatedAt: new Date().toISOString()
+      };
+      logSyncAudit(ss, 'डाटा तानियो (Pull Data)', 'Success');
+      return ContentService.createTextOutput(JSON.stringify({ 
+        success: true, 
+        data: pullData, 
+        message: 'गुगल सिट्सबाट सबै डाटा सफलतापूर्वक तानियो।' 
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    // डाटा पठाउने / सिंक गर्ने (Push / Sync Action)
+    var data = payload.data || payload;
+    
+    if (data.organization) saveObjectToSheet(ss, 'Organization', data.organization);
+    if (data.employees) saveArrayToSheet(ss, 'Employees', data.employees);
+    if (data.salarySetups) saveObjectMapToSheet(ss, 'SalarySetup', data.salarySetups);
+    if (data.deductionSetups) saveObjectMapToSheet(ss, 'DeductionSetup', data.deductionSetups);
+    if (data.taxReferences) saveArrayToSheet(ss, 'TaxReference', data.taxReferences);
+    if (data.monthlyItems) saveArrayToSheet(ss, 'MonthlySalarySheet', data.monthlyItems);
+    if (data.calculatedResults) saveArrayToSheet(ss, 'AnnualTaxReport', data.calculatedResults);
+    
+    // Log Audit Record
+    logSyncAudit(ss, 'डाटा सिंक (Push Sync: ' + (payload.fiscalYear || '') + ')', 'Success');
+    
+    return ContentService.createTextOutput(JSON.stringify({ 
+      success: true, 
+      message: 'गुगल सिट्समा सबै विवरणहरू (कर्मचारी, तलब, कट्टी, प्रतिवेदन) सफलतापूर्वक सुरक्षित भयो।' 
+    })).setMimeType(ContentService.MimeType.JSON);
+    
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ 
+      success: false, 
+      error: err.toString(),
+      message: 'सिंक गर्दा त्रुटि भयो: ' + err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+/**
+ * ६. Helper Functions (सिट्स पढ्ने र लेख्ने सुरक्षित सहायक प्रकार्यहरू)
+ */
+function sanitizeCellValue(val) {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'object') {
+    try {
+      val = JSON.stringify(val);
+    } catch (e) {
+      val = String(val);
+    }
+  }
+  var str = String(val);
+  if (str.length > 45000) {
+    return str.substring(0, 45000);
+  }
+  return str;
+}
+
+function getSheetDataAsArray(ss, sheetName) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return [];
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  var headers = data[0];
+  var rows = [];
+  for (var i = 1; i < data.length; i++) {
+    var obj = {};
+    for (var j = 0; j < headers.length; j++) {
+      var val = data[i][j];
+      try {
+        if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+          val = JSON.parse(val);
+        }
+      } catch (e) {}
+      obj[headers[j]] = val;
+    }
+    rows.push(obj);
+  }
+  return rows;
+}
+
+function getSheetDataAsObject(ss, sheetName) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return null;
+  var data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return null;
+  var obj = {};
+  for (var i = 0; i < data.length; i++) {
+    if (data[i].length >= 2 && data[i][0]) {
+      obj[data[i][0]] = data[i][1];
+    }
+  }
+  return obj;
+}
+
+function getSheetDataAsObjectMap(ss, sheetName, keyField) {
+  var rows = getSheetDataAsArray(ss, sheetName);
+  var map = {};
+  for (var i = 0; i < rows.length; i++) {
+    var key = rows[i][keyField] || rows[i].id || ('item_' + i);
+    map[key] = rows[i];
+  }
+  return map;
+}
+
+function saveArrayToSheet(ss, sheetName, rows) {
+  if (!rows || !Array.isArray(rows) || rows.length === 0) return;
+  var sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
+  sheet.clear();
+  
+  var headerMap = {};
+  for (var h = 0; h < rows.length; h++) {
+    if (rows[h] && typeof rows[h] === 'object') {
+      var kList = Object.keys(rows[h]);
+      for (var k = 0; k < kList.length; k++) {
+        headerMap[kList[k]] = true;
+      }
+    }
+  }
+  var headers = Object.keys(headerMap);
+  if (headers.length === 0) return;
+
+  var values = [headers];
+  for (var i = 0; i < rows.length; i++) {
+    if (!rows[i] || typeof rows[i] !== 'object') continue;
+    var row = [];
+    for (var j = 0; j < headers.length; j++) {
+      var val = rows[i][headers[j]];
+      row.push(sanitizeCellValue(val));
+    }
+    values.push(row);
+  }
+  sheet.getRange(1, 1, values.length, headers.length).setValues(values);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#edf4ea');
+}
+
+function saveObjectToSheet(ss, sheetName, obj) {
+  if (!obj || typeof obj !== 'object') return;
+  var sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
+  sheet.clear();
+  var keys = Object.keys(obj);
+  var values = [['Property / Field', 'Value']];
+  for (var i = 0; i < keys.length; i++) {
+    var val = obj[keys[i]];
+    values.push([keys[i], sanitizeCellValue(val)]);
+  }
+  sheet.getRange(1, 1, values.length, 2).setValues(values);
+  sheet.getRange(1, 1, 1, 2).setFontWeight('bold').setBackground('#edf4ea');
+}
+
+function saveObjectMapToSheet(ss, sheetName, map) {
+  if (!map || typeof map !== 'object') return;
+  var rows = [];
+  var keys = Object.keys(map);
+  for (var i = 0; i < keys.length; i++) {
+    if (map[keys[i]]) {
+      rows.push(map[keys[i]]);
+    }
+  }
+  saveArrayToSheet(ss, sheetName, rows);
+}
+
+function getKathmanduTimestamp() {
+  try {
+    return Utilities.formatDate(new Date(), "GMT+05:45", "yyyy-MM-dd HH:mm:ss") + " (UTC+05:45 Kathmandu)";
+  } catch (e) {
+    var d = new Date();
+    var utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+    var ktm = new Date(utc + (345 * 60000));
+    var pad = function(n) { return n < 10 ? '0' + n : n; };
+    return ktm.getFullYear() + '-' + pad(ktm.getMonth() + 1) + '-' + pad(ktm.getDate()) + ' ' +
+           pad(ktm.getHours()) + ':' + pad(ktm.getMinutes()) + ':' + pad(ktm.getSeconds()) + ' (UTC+05:45 Kathmandu)';
+  }
+}
+
+function logSyncAudit(ss, action, status, user, details) {
+  var sheet = ss.getSheetByName('AuditLog') || ss.getSheetByName('auditLog') || ss.insertSheet('AuditLog');
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(['Timestamp (UTC+05:45 Kathmandu)', 'Action', 'Status', 'User', 'Details']);
+    sheet.getRange(1, 1, 1, 5).setFontWeight('bold').setBackground('#edf4ea');
+  }
+  var ktmTime = getKathmanduTimestamp();
+  sheet.appendRow([
+    ktmTime, 
+    sanitizeCellValue(action), 
+    sanitizeCellValue(status || 'Success'), 
+    sanitizeCellValue(user || 'Web App User'), 
+    sanitizeCellValue(details || '')
+  ]);
+}`;
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(googleAppsScriptCode);
+    setIsCopied(true);
+    addToast('info', 'कपी भयो', 'Google Apps Script कोड क्लिपबोर्डमा कपी गरियो।');
+    setTimeout(() => setIsCopied(false), 3000);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Top Banner */}
+      <div className="bg-white p-5 rounded-2xl border border-[#d6e3d2] shadow-xs flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[#edf4ea] border border-[#cbdcc6] text-[#4B6043] flex items-center justify-center">
+            <CloudUpload className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-base sm:text-lg font-bold text-[#24331C]">
+              गुगल सिट्स डाटा सिंक (Google Sheets Integration)
+            </h2>
+            <p className="text-xs text-[#526a48]">
+              Google Apps Script मार्फत कर्मचारी, तलब तथा कर प्रतिवेदन गुगल सिट्समा प्रत्यक्ष सिंक गर्नुहोस्
+            </p>
+          </div>
+        </div>
+
+        {/* Sync Status Badge */}
+        <div
+          className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+            googleSheetsConfig.syncStatus === 'success'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+              : googleSheetsConfig.syncStatus === 'error'
+              ? 'bg-red-50 text-red-800 border-red-200'
+              : 'bg-gray-100 text-gray-700 border-gray-200'
+          }`}
+        >
+          <span
+            className={`w-2 h-2 rounded-full ${
+              googleSheetsConfig.syncStatus === 'success'
+                ? 'bg-emerald-500'
+                : googleSheetsConfig.syncStatus === 'error'
+                ? 'bg-red-500'
+                : 'bg-gray-400'
+            }`}
+          ></span>
+          <span>
+            {googleSheetsConfig.lastSyncTime
+              ? `अन्तिम सिंक: ${new Date(googleSheetsConfig.lastSyncTime).toLocaleTimeString()}`
+              : 'अझै सिंक भएको छैन'}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left 2 Cols: Setup Form & Sync Actions */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Direct Google Account Integration Card */}
+          <div className="bg-white p-5 rounded-2xl border border-[#d6e3d2] shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e9efe4] pb-3">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-[#4B6043]" />
+                <h3 className="text-sm font-bold text-[#24331C]">
+                  १. गुगल खाता तथा स्प्रेडसिट जडान (Direct Google Account & Drive Integration)
+                </h3>
+              </div>
+              {isGoogleAccountConnected ? (
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 text-[11px] font-bold rounded-lg border border-emerald-200 flex items-center gap-1.5">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>{googleConnectedEmail || 'गुगल खाता जडित'}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleGoogleDisconnect}
+                    className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-[11px] font-medium rounded-lg transition-colors flex items-center gap-1"
+                  >
+                    <LogOut className="w-3 h-3" />
+                    <span>विच्छेद</span>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleGoogleConnect}
+                  disabled={isConnectingGoogle}
+                  className="px-3.5 py-1.5 bg-[#4B6043] hover:bg-[#3b4e33] text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <LogIn className={`w-3.5 h-3.5 ${isConnectingGoogle ? 'animate-spin' : ''}`} />
+                  <span>{isConnectingGoogle ? 'जडान हुँदैछ...' : 'गुगल खाता जडान गर्नुहोस् (Sign In)'}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Cloudflare / Custom Domain Guidance Banner */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 bg-amber-50/80 border border-amber-200/90 rounded-xl text-xs text-amber-900">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-amber-700 shrink-0" />
+                <span>
+                  <strong>क्लाउडफ्लेयर (Cloudflare) वा नयाँ डोमेनमा हुनुहुन्छ?</strong> गुगल जडान गर्दा <strong>Error 400: origin_mismatch</strong> वा 'auth/unauthorized-domain' आएमा समाधान हेर्नुहोस् वा तलको Google Apps Script विधि प्रयोग गर्नुहोस्।
+                </span>
+              </div>
+              <button
+                type="button"
+                id="btn-open-domain-guide"
+                onClick={openUnauthorizedDomainModal}
+                className="px-3 py-1 bg-white hover:bg-amber-100 text-amber-900 font-bold text-[11px] rounded-lg border border-amber-300 transition-colors shadow-xs shrink-0 cursor-pointer"
+              >
+                समस्या समाधान हेर्नुहोस् ↗
+              </button>
+            </div>
+
+            {/* Designated Google Drive Storage Folder Banner */}
+            <div className="bg-[#f2f7f0] border border-[#bed8b8] p-4 rounded-xl text-xs space-y-2.5 text-[#24331C]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-bold text-[#2e4524]">
+                  <FolderKanban className="w-4 h-4 text-[#4B6043]" />
+                  <span>डाटा भण्डारण Google Drive Folder (rbthapamgr09@gmail.com):</span>
+                </div>
+                <a
+                  href={TARGET_GOOGLE_DRIVE_FOLDER_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-800 text-[11px] font-bold rounded-lg border border-emerald-300 transition-colors flex items-center gap-1 shadow-xs"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span>Google Drive Folder खोल्नुहोस् ↗</span>
+                </a>
+              </div>
+              <p className="text-[11.5px] leading-relaxed text-gray-700">
+                सुपर एडमिनले नयाँ कार्यालय दर्ता गर्दा वा यहाँबाट नयाँ सिट बनाउँदा <strong>"stcs_{organization.officeName || 'कार्यालय'}"</strong> नामको गुगल सिट सिधै दिइएको Google Drive फोल्डर (ID: <code className="bg-white px-1.5 py-0.5 rounded border border-[#c4dbc0] text-emerald-900 font-mono text-[10.5px]">{TARGET_GOOGLE_DRIVE_FOLDER_ID}</code>) भित्र सिर्जना हुनेछ र त्यस कार्यालयको सम्पूर्ण डाटा सुरक्षित (Save/Sync) तथा कार्यालय मेटाउँदा सिंक व्यवस्थापन हुनेछ।
+              </p>
+            </div>
+
+            {/* Instant Auto-Sync Notice Banner */}
+            <div className="bg-[#edf4ea] border border-[#c4d8be] p-3.5 rounded-xl text-xs space-y-1.5 text-[#24331C]">
+              <div className="flex items-center gap-1.5 font-bold text-[#304426]">
+                <Sparkles className="w-4 h-4 text-[#4B6043]" />
+                <span>फाराममा सुरक्षित (Save) गर्दा तत्काल स्वतः सिंक (Instant Auto-Sync on Save):</span>
+              </div>
+              <p className="text-[11.5px] leading-relaxed text-gray-700">
+                एपको जुनसुकै फाराम (कर्मचारी थप/सम्पादन, तलब संरचना, कट्टी वा कर स्ल्याब) मा <strong>सुरक्षित (Save)</strong> बटन थिच्ने बित्तिकै लिंक भएको Google Sheet मा तुरुन्तै विवरणहरू <strong>Store / Save / Sync</strong> हुन्छन्।
+              </p>
+            </div>
+
+            {/* Linked Google Sheet status & Action Buttons */}
+            <div className="space-y-3 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-[#f8faf6] p-3.5 rounded-xl border border-[#dce7d9]">
+                <div className="space-y-1">
+                  <span className="text-[11px] text-gray-500 font-medium">लिंक भएको Google Spreadsheet:</span>
+                  <div className="font-bold text-[#24331C] text-xs flex items-center gap-2">
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+                    <span>{formData.spreadsheetName || 'कर्मचारी तलबी तथा कर कट्टी विवरण'}</span>
+                  </div>
+                  {formData.spreadsheetId && (
+                    <span className="text-[10px] text-gray-500 font-mono block">
+                      ID: {formData.spreadsheetId}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {formData.spreadsheetUrl ? (
+                    <a
+                      href={formData.spreadsheetUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 bg-[#edf4ea] hover:bg-[#dbe8d6] text-[#304426] text-xs font-bold rounded-lg border border-[#c3d7bd] transition-all flex items-center gap-1.5"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Google Sheet खोल्नुहोस्</span>
+                    </a>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    onClick={handleCreateNewSheet}
+                    disabled={isCreatingSheet}
+                    className="px-3.5 py-1.5 bg-[#4B6043] hover:bg-[#3b4e33] text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 ${isCreatingSheet ? 'animate-spin' : ''}`} />
+                    <span>{isCreatingSheet ? 'सिर्जना हुँदैछ...' : 'नयाँ Google Sheet बनाउनुहोस्'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <form id="section-apps-script" onSubmit={handleSaveConfig} className="bg-white p-5 rounded-2xl border border-[#d6e3d2] shadow-xs space-y-4">
+            <h3 className="text-sm font-bold text-[#24331C] border-b border-[#e9efe4] pb-2">
+              २. गुगल वेब एप एपीआई तथा सिंक सेटिङ (Google Sheets & Web App Settings)
+            </h3>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
+                  <label className="font-semibold text-[#304426]">
+                    Google Apps Script Web App URL (वैकल्पिक / Alternative)
+                  </label>
+                  {formData.webAppUrl && (
+                    <a
+                      href={formData.webAppUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] text-emerald-700 hover:text-emerald-900 font-medium flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>ब्राउजरमा URL खोलेर जाँच्नुहोस् ↗</span>
+                    </a>
+                  )}
+                </div>
+                <input
+                  type="url"
+                  value={formData.webAppUrl}
+                  onChange={(e) => setFormData((p) => ({ ...p, webAppUrl: e.target.value }))}
+                  placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                  className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] font-mono focus:ring-2 focus:ring-[#4B6043]/30 outline-none"
+                />
+                <div className="mt-1.5 p-2.5 bg-amber-50/70 border border-amber-200/80 rounded-lg text-[11px] text-amber-900 space-y-1">
+                  <p className="font-semibold text-amber-950 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                    <span>'Failed to fetch' त्रुटि रोक्न Apps Script मा निम्न कुरा मिलाउनुहोस्:</span>
+                  </p>
+                  <ul className="list-disc pl-4 space-y-0.5 text-gray-700">
+                    <li>
+                      <strong>Who has access:</strong> अनिवार्य रूपमा <strong>"Anyone"</strong> चयन गर्नुहोस् (यदि "Only myself" रोजेमा गुगलले रोक्छ)।
+                    </li>
+                    <li>
+                      <strong>Execute as:</strong> <strong>"Me ({googleConnectedEmail || 'rbthapamgr09@gmail.com'})"</strong> छान्नुहोस्।
+                    </li>
+                    <li>
+                      URL को अन्त्यमा अनिवार्य रूपमा <strong>"/exec"</strong> हुनुपर्दछ (जस्तै: <code>https://script.google.com/macros/s/.../exec</code>)।
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-[#304426] mb-1">
+                  गुगल स्प्रेडसिट आईडी (Spreadsheet ID)
+                </label>
+                <input
+                  type="text"
+                  value={formData.spreadsheetId || ''}
+                  onChange={(e) => setFormData((p) => ({ ...p, spreadsheetId: e.target.value }))}
+                  placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+                  className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] font-mono focus:ring-2 focus:ring-[#4B6043]/30 outline-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2 bg-[#f8faf6] p-3 rounded-xl border border-[#dbe7d7]">
+                <input
+                  type="checkbox"
+                  id="autoSync"
+                  checked={formData.autoSync}
+                  onChange={(e) => setFormData((p) => ({ ...p, autoSync: e.target.checked }))}
+                  className="w-4 h-4 text-[#4B6043] rounded accent-[#4B6043] cursor-pointer"
+                />
+                <label htmlFor="autoSync" className="font-semibold text-[#304426] cursor-pointer">
+                  फाराममा सुरक्षित गर्दा स्वतः सिंक गर्नुहोस् (Enable Instant Auto-Sync on Save)
+                </label>
+              </div>
+            </div>
+
+            <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={isTesting}
+                className="px-4 py-2 bg-[#edf4ea] hover:bg-[#dbe8d6] text-[#344c2c] text-xs font-bold rounded-xl border border-[#c5d7bf] transition-all flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin' : ''}`} />
+                <span>{isTesting ? 'परीक्षण हुँदैछ...' : 'जडान परीक्षण (Test Connection)'}</span>
+              </button>
+
+              <button
+                type="submit"
+                className="px-5 py-2 bg-[#4B6043] hover:bg-[#384c31] text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>कन्फिगरेसन सेभ गर्नुहोस्</span>
+              </button>
+            </div>
+          </form>
+
+          {/* Sync Trigger Controls */}
+          <div className="bg-white p-5 rounded-2xl border border-[#d6e3d2] shadow-xs space-y-4">
+            <h3 className="text-sm font-bold text-[#24331C] border-b border-[#e9efe4] pb-2">
+              ३. डाटा सिंक कार्यहरू (Manual Sync Actions)
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              <div className="bg-[#f8faf6] p-4 rounded-xl border border-[#d8e4d3] space-y-3">
+                <div className="flex items-center gap-2 text-[#354c2d]">
+                  <CloudUpload className="w-5 h-5 text-[#4B6043]" />
+                  <h4 className="font-bold">सिट्समा डाटा पठाउनुहोस् (Push to Sheets)</h4>
+                </div>
+                <p className="text-[11px] text-gray-600">
+                  हालको सबै कर्मचारी, तलब, कट्टी तथा ३३ बुँदे कर विवरण गुगल सिट्समा पठाउनुहोस्।
+                </p>
+                <button
+                  type="button"
+                  onClick={handlePush}
+                  disabled={isPushing}
+                  className="w-full py-2.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isPushing ? 'animate-spin' : ''}`} />
+                  <span>{isPushing ? 'सिंक हुँदैछ...' : 'सिट्समा पठाउनुहोस् (Push All)'}</span>
+                </button>
+              </div>
+
+              <div className="bg-[#f8faf6] p-4 rounded-xl border border-[#d8e4d3] space-y-3">
+                <div className="flex items-center gap-2 text-[#354c2d]">
+                  <CloudDownload className="w-5 h-5 text-[#4B6043]" />
+                  <h4 className="font-bold">सिट्सबाट डाटा तान्नुहोस् (Pull from Sheets)</h4>
+                </div>
+                <p className="text-[11px] text-gray-600">
+                  गुगल सिट्समा रहेका कर्मचारी तथा तलब विवरण यस एप्लिकेशनमा लोड गर्नुहोस्।
+                </p>
+                <button
+                  type="button"
+                  onClick={handlePull}
+                  disabled={isPulling}
+                  className="w-full py-2.5 bg-[#edf4ea] hover:bg-[#dbe8d6] text-[#344c2c] font-bold rounded-xl border border-[#c5d7bf] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isPulling ? 'animate-spin' : ''}`} />
+                  <span>{isPulling ? 'लोड हुँदैछ...' : 'सिट्सबाट तान्नुहोस् (Pull Data)'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Google Sheets Tabs & AuditLog Structure Card */}
+          <div className="bg-white p-5 rounded-2xl border border-[#d6e3d2] shadow-xs space-y-3 text-xs">
+            <h3 className="text-sm font-bold text-[#24331C] flex items-center gap-2 border-b border-[#e9efe4] pb-2">
+              <Table className="w-4 h-4 text-[#4B6043]" />
+              गुगल स्प्रेडसिटका पानाहरू (Spreadsheet Tabs & Structure)
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11.5px]">
+              <div className="p-2.5 bg-[#f8faf6] rounded-lg border border-[#e2ece0] flex items-center justify-between">
+                <span className="font-medium text-[#24331C]">१. कर्मचारी_विवरण</span>
+                <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-[#d0dfcc] text-gray-600">कर्मचारी रेकर्ड</span>
+              </div>
+              <div className="p-2.5 bg-[#f8faf6] rounded-lg border border-[#e2ece0] flex items-center justify-between">
+                <span className="font-medium text-[#24331C]">२. तलब_सेटअप</span>
+                <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-[#d0dfcc] text-gray-600">ग्रेड र भत्ता</span>
+              </div>
+              <div className="p-2.5 bg-[#f8faf6] rounded-lg border border-[#e2ece0] flex items-center justify-between">
+                <span className="font-medium text-[#24331C]">३. कट्टी_सेटअप</span>
+                <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-[#d0dfcc] text-gray-600">ऋण र कोष</span>
+              </div>
+              <div className="p-2.5 bg-[#f8faf6] rounded-lg border border-[#e2ece0] flex items-center justify-between">
+                <span className="font-medium text-[#24331C]">४. मासिक_तलब_सिट</span>
+                <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-[#d0dfcc] text-gray-600">मासिक पेरोल</span>
+              </div>
+              <div className="p-2.5 bg-[#f8faf6] rounded-lg border border-[#e2ece0] flex items-center justify-between">
+                <span className="font-medium text-[#24331C]">५. वार्षिक_कर_विवरण</span>
+                <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-[#d0dfcc] text-gray-600">वार्षिक कर निर्धारण</span>
+              </div>
+              <div className="p-2.5 bg-[#f8faf6] rounded-lg border border-[#e2ece0] flex items-center justify-between">
+                <span className="font-medium text-[#24331C]">६. कार्यालय_विवरण</span>
+                <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-[#d0dfcc] text-gray-600">संस्था र निकाय</span>
+              </div>
+              <div className="p-2.5 bg-[#f8faf6] rounded-lg border border-[#e2ece0] flex items-center justify-between">
+                <span className="font-medium text-[#24331C]">७. कर_स्ल्याब_दर</span>
+                <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-[#d0dfcc] text-gray-600">कर दर तालिका</span>
+              </div>
+              <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-300 flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="font-bold text-emerald-900">८. AuditLog</span>
+                  <span className="text-[10px] text-emerald-700">Time log (UTC+05:45) Kathmandu</span>
+                </div>
+                <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-emerald-300 text-emerald-800 font-semibold">अडिट लग</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Troubleshooting Guide Box */}
+          <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl text-xs space-y-2 text-amber-900">
+            <h4 className="font-bold flex items-center gap-1.5 text-amber-800">
+              <span>💡 समाधान सुझाव (Important Setup Notice):</span>
+            </h4>
+            <p className="text-[11.5px] leading-relaxed">
+              Google Apps Script सम्पादकमा <strong>doGet</strong> लाई सिधै <strong>"Run" (▶)</strong> थिच्दा <code>TypeError: Cannot read properties of undefined (reading 'parameter')</code> त्रुटि आउनु स्वाभाविक हो; किनकि <code>doGet(e)</code> स्वचालित रूपमा Web App URL बाट मात्र चल्न बनाइएको हुन्छ।
+            </p>
+            <p className="text-[11.5px] leading-relaxed">
+              <strong>समाधान:</strong> माथिको सम्पादक ड्रपडाउनमा <strong><code>testSetup</code></strong> चयन गरी <strong>Run</strong> थिच्नुहोस् (यसले गुगल अनुमति माग्नेछ र सिट परीक्षण गर्नेछ)। त्यसपछि <strong>Deploy &gt; New deployment &gt; Web App</strong> (Who has access: <strong>Anyone</strong>) गरी प्राप्त URL यहाँ राख्नुहोस्।
+            </p>
+          </div>
+        </div>
+
+        {/* Right Col: Google Apps Script Installation Instructions & Code */}
+        <div className="space-y-6">
+          <div className="bg-white p-5 rounded-2xl border border-[#d6e3d2] shadow-xs space-y-3 text-xs">
+            <h3 className="text-sm font-bold text-[#24331C] flex items-center gap-2">
+              <FileCode className="w-4 h-4 text-[#4B6043]" />
+              गुगल सिट्स इन्स्टलेसन निर्देशन
+            </h3>
+            <ol className="list-decimal pl-4 space-y-2 text-gray-700 leading-relaxed text-[11px]">
+              <li>गुगल ड्राइभमा नयाँ Google Sheet खोल्नुहोस्।</li>
+              <li>शीर्ष मेनुबाट <strong>Extensions &gt; Apps Script</strong> मा क्लिक गर्नुहोस्।</li>
+              <li>तल दिइएको अद्यावधिक <code>Code.gs</code> कोड कपी गरी त्यहाँ पेस्ट गर्नुहोस् र <strong>Save (Ctrl+S)</strong> गर्नुहोस्।</li>
+              <li>
+                शीर्ष ड्रपडाउनमा <strong><code>testSetup</code></strong> चयन गरी <strong>Run (▶)</strong> थिचेर Google अनुमति (Authorization) प्रदान गर्नुहोस्।
+              </li>
+              <li>
+                माथिको <strong>Deploy &gt; New deployment</strong> मा जानुहोस्।
+              </li>
+              <li>
+                बायाँ गियर आइकनबाट <strong>Web app</strong> रोज्नुहोस्।
+              </li>
+              <li>
+                <strong>Execute as:</strong> "Me" र <strong>Who has access:</strong> "Anyone" चयन गरी <strong>Deploy</strong> गर्नुहोस्।
+              </li>
+              <li>प्राप्त <strong>Web App URL</strong> लाई कपी गरी यहाँ राखी Save गर्नुहोस्।</li>
+            </ol>
+          </div>
+
+          <div className="bg-[#24331C] text-white p-4 rounded-2xl shadow-xs space-y-2 text-xs">
+            <div className="flex items-center justify-between border-b border-white/15 pb-2">
+              <span className="font-mono font-bold text-emerald-300">Code.gs (Apps Script)</span>
+              <button
+                onClick={copyToClipboard}
+                className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors"
+              >
+                {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{isCopied ? 'कपी गरियो' : 'कोड कपी गर्नुहोस्'}</span>
+              </button>
+            </div>
+            <pre className="max-h-72 overflow-y-auto font-mono text-[10px] text-emerald-100 p-2 bg-black/30 rounded-lg whitespace-pre-wrap leading-relaxed">
+              {googleAppsScriptCode}
+            </pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

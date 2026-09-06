@@ -1,0 +1,8 @@
+{
+  "name": "Remix तलबी प्रतिवेदन तथा कर कट्टी प्रणाली",
+  "description": "कर्मचारीहरुको वार्षिक तथा मासिक तलब, कर गणना एवं प्रतिवेदन प्रणाली (Employee Payroll and Tax Deduction System)",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
