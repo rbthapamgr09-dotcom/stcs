@@ -623,8 +623,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             u.role === 'SUPER_ADMIN' ||
             (!autoCreatedIds.includes(u.id) && !autoCreatedUsernames.includes((u.username || '').toLowerCase()))
         );
+        const resultUsers = [...filtered];
+        DEFAULT_USERS.forEach((defUser) => {
+          const exists = resultUsers.some(
+            (u) =>
+              u.id === defUser.id ||
+              u.username.toLowerCase() === defUser.username.toLowerCase() ||
+              (u.email && defUser.email && u.email.toLowerCase() === defUser.email.toLowerCase())
+          );
+          if (!exists) {
+            resultUsers.push(defUser);
+          }
+        });
         // Ensure default passwords/pins exist for loaded users
-        return filtered.map((u) => ({
+        return resultUsers.map((u) => ({
           ...u,
           password:
             u.password ||
