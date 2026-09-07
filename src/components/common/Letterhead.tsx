@@ -78,8 +78,8 @@ export const Letterhead: React.FC<LetterheadProps> = ({
   title = 'कर्मचारी तलबी तथा कर कट्टी प्रतिवेदन',
   subTitle,
   showSignatureSection = false,
-  showMetadata = true,
-  showLocation = true,
+  showMetadata = false,
+  showLocation = false,
   showReportDate = false,
   compact = false,
   customDateBS,
@@ -277,28 +277,6 @@ export const Letterhead: React.FC<LetterheadProps> = ({
           <div className="mt-3 text-left font-semibold text-xs text-[#1e2a17] space-y-0.5 bg-[#f8faf6] p-2.5 rounded-lg border border-[#e2ece0] print:bg-transparent print:border-none print:p-0">
             {recipientOffice1 && <p>{recipientOffice1}</p>}
             {recipientOffice2 && <p>{recipientOffice2}</p>}
-          </div>
-        )}
-
-        {/* Report Metadata Info Row */}
-        {showMetadata && (
-          <div className="mt-3 flex flex-wrap items-center justify-between text-xs text-[#415538] bg-[#f8faf6] px-3 py-1.5 rounded border border-[#e2ece0]">
-            <div>
-              <span className="font-semibold">आर्थिक वर्ष: </span>
-              <span className="font-bold text-[#2e4225]">{toNepaliDigits(activeFiscalYear)}</span>
-            </div>
-            <div>
-              <span className="font-semibold">प्रतिवेदन मिति: </span>
-              <span>
-                वि.सं. {toNepaliDigits(dateBS)} (ई.सं. {dateAD})
-              </span>
-            </div>
-            {showLocation && (
-              <div className="hidden sm:block">
-                <span className="font-semibold">स्थान: </span>
-                <span>{organization.district || 'कञ्चनपुर'}</span>
-              </div>
-            )}
           </div>
         )}
       </div>

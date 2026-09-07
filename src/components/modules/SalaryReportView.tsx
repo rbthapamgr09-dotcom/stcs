@@ -252,7 +252,6 @@ export const SalaryReportView: React.FC = () => {
                   : 'लिङ्ग अनुसार'
               }`}
               subTitle={`आर्थिक वर्ष ${toNepaliDigits(activeFiscalYear)} को विस्तृत समष्टिगत विश्लेषण`}
-              showMetadata={true}
               showSignatureSection={false}
             />
 
@@ -313,7 +312,6 @@ export const SalaryReportView: React.FC = () => {
           <Letterhead
             title="कर्मचारीगत वार्षिक तलब तथा कर सारांश फाँटवारी"
             subTitle={`आर्थिक वर्ष ${toNepaliDigits(activeFiscalYear)}`}
-            showMetadata={true}
             showSignatureSection={false}
           />
           <div className="overflow-x-auto mt-4 border border-[#cadac4] rounded-xl">

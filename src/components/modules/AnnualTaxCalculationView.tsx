@@ -288,7 +288,6 @@ export const AnnualTaxCalculationView: React.FC = () => {
         <Letterhead
           title="कर्मचारी वार्षिक कर गणना तथा कट्टी प्रतिवेदन"
           subTitle={`आर्थिक वर्ष ${toNepaliDigits(activeFiscalYear)} को वार्षिक कर निर्धारण विवरण`}
-          showMetadata={true}
           showSignatureSection={false}
         />
 
