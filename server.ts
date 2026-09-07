@@ -7,6 +7,7 @@ import { getOrCreateUser, getUsers, getUserByUid, deleteUserByUid } from './src/
 import {
   getOrganizations,
   upsertOrganization,
+  deleteOrganizationById,
   getSystemSetting,
   setSystemSetting,
   getEmployees,
@@ -115,6 +116,16 @@ async function startServer() {
     } catch (error: any) {
       console.error('Failed to save organization:', error);
       res.status(500).json({ error: error.message || 'Failed to save organization' });
+    }
+  });
+
+  app.delete('/api/organization/:id', optionalAuth, async (req, res) => {
+    try {
+      await deleteOrganizationById(req.params.id);
+      res.json({ success: true, message: 'Organization deleted successfully' });
+    } catch (error: any) {
+      console.error('Failed to delete organization:', error);
+      res.status(500).json({ error: error.message || 'Failed to delete organization' });
     }
   });
 

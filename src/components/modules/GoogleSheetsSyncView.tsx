@@ -355,11 +355,11 @@ var TARGET_FOLDER_ID = "${TARGET_GOOGLE_DRIVE_FOLDER_ID}";
 /**
  * स्प्रेडसिट फेला पार्ने युनिभर्सल प्रकार्य (Universal Spreadsheet Resolver):
  */
-function getTargetSpreadsheet() {
-  // १. यदि SPREADSHEET ID तोकिएको छ भने सिधै openById बाट खोल्ने (Standalone script.new mode)
-  if (TARGET_SPREADSHEET_ID && TARGET_SPREADSHEET_ID.trim() !== '' && TARGET_SPREADSHEET_ID !== 'YOUR_SPREADSHEET_ID_HERE') {
+function getTargetSpreadsheet(explicitId) {
+  var idToUse = explicitId || TARGET_SPREADSHEET_ID;
+  if (idToUse && idToUse.trim() !== '' && idToUse !== 'YOUR_SPREADSHEET_ID_HERE') {
     try {
-      var cleanId = TARGET_SPREADSHEET_ID.trim();
+      var cleanId = idToUse.trim();
       var match = cleanId.match(/\\/spreadsheets\\/d\\/([a-zA-Z0-9-_]+)/);
       if (match && match[1]) cleanId = match[1];
       return SpreadsheetApp.openById(cleanId);
@@ -368,13 +368,12 @@ function getTargetSpreadsheet() {
     }
   }
   
-  // २. यदि Extensions > Apps Script भित्र चालु छ भने Active Spreadsheet लिने (Bound mode)
   try {
     var active = SpreadsheetApp.getActiveSpreadsheet();
     if (active) return active;
   } catch (e) {}
 
-  throw new Error("Google Spreadsheet फेला परेन। कृपया कोडको माथि TARGET_SPREADSHEET_ID मा स्प्रेडसिटको ID राख्नुहोस्।");
+  throw new Error("Google Spreadsheet फेला परेन। कृपया कोडको माथि TARGET_SPREADSHEET_ID मा स्प्रेडसिटको ID राख्नुहोस् वा Web App बाट अनुरोध पठाउनुहोस्।");
 }
 
 /**
@@ -398,7 +397,7 @@ function testSetup() {
   var ss = getTargetSpreadsheet();
   Logger.log("✓ Google Spreadsheet जडान सफल: " + ss.getName() + " (ID: " + ss.getId() + ")");
   
-  setupAllSheets();
+  setupAllSheetsForSpreadsheet(ss);
   moveSpreadsheetToTargetFolder(ss);
   
   logSyncAudit(ss, 'प्रणाली परीक्षण (Test Run)', 'Success');
@@ -423,6 +422,11 @@ function moveSpreadsheetToTargetFolder(ss) {
  */
 function setupAllSheets() {
   var ss = getTargetSpreadsheet();
+  setupAllSheetsForSpreadsheet(ss);
+}
+
+function setupAllSheetsForSpreadsheet(ss) {
+  if (!ss) return;
   moveSpreadsheetToTargetFolder(ss);
   var requiredSheets = [
     { name: 'Organization', headers: ['Property / Field', 'Value'] },
@@ -452,9 +456,10 @@ function setupAllSheets() {
 function doGet(e) {
   var parameter = (e && e.parameter) ? e.parameter : {};
   var action = parameter.action || 'status';
-  var ss = getTargetSpreadsheet();
+  var explicitId = parameter.spreadsheetId;
   
   if (action === 'getAllData' || action === 'pull') {
+    var ss = getTargetSpreadsheet(explicitId);
     var result = {
       organization: getSheetDataAsObject(ss, 'Organization'),
       employees: getSheetDataAsArray(ss, 'Employees'),
@@ -471,13 +476,23 @@ function doGet(e) {
     })).setMimeType(ContentService.MimeType.JSON);
   }
   
-  // Default Status Response
+  // Default Status / Connection Test Response
+  var ssName = 'Active & Ready';
+  var ssId = '';
+  try {
+    var ssTest = getTargetSpreadsheet(explicitId);
+    if (ssTest) {
+      ssName = ssTest.getName();
+      ssId = ssTest.getId();
+    }
+  } catch (err) {}
+
   return ContentService.createTextOutput(JSON.stringify({ 
     success: true, 
     status: 'online',
     message: 'तलबी तथा कर गणना प्रणाली — Google Apps Script API सक्रिय छ (Active & Ready)',
-    spreadsheetName: ss.getName(),
-    spreadsheetId: ss.getId(),
+    spreadsheetName: ssName,
+    spreadsheetId: ssId,
     timestamp: new Date().toISOString()
   })).setMimeType(ContentService.MimeType.JSON);
 }
@@ -498,7 +513,47 @@ function doPost(e) {
     
     var payload = JSON.parse(e.postData.contents);
     var action = payload.action || 'push';
-    var ss = getTargetSpreadsheet();
+    
+    // नयाँ कार्यालयको लागि स्वतः Spreadsheet सिर्जना गर्ने (Automated Office Sheet Creation)
+    if (action === 'createSpreadsheet') {
+      var officeName = payload.officeName || 'कार्यालय';
+      var sheetTitle = 'stcs_' + officeName.toString().trim();
+      var newSs = SpreadsheetApp.create(sheetTitle);
+      var folderId = payload.folderId || TARGET_FOLDER_ID;
+      try {
+        if (folderId) {
+          var folder = DriveApp.getFolderById(folderId);
+          var file = DriveApp.getFileById(newSs.getId());
+          if (folder && file) {
+            folder.addFile(file);
+          }
+        }
+      } catch (fErr) {
+        Logger.log('Folder placement note: ' + fErr.toString());
+      }
+      setupAllSheetsForSpreadsheet(newSs);
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        spreadsheetId: newSs.getId(),
+        spreadsheetUrl: newSs.getUrl(),
+        spreadsheetName: sheetTitle,
+        message: 'नयाँ सिट ' + sheetTitle + ' सफलतापूर्वक सिर्जना भयो र फोल्डरमा लिंक गरियो।'
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // जडान परीक्षण (Connection Test)
+    if (action === 'status' || action === 'test') {
+      var testSs = getTargetSpreadsheet(payload.spreadsheetId);
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        status: 'online',
+        spreadsheetName: testSs.getName(),
+        spreadsheetId: testSs.getId(),
+        message: 'Google Spreadsheet (' + testSs.getName() + ') सँग जडान सफल भयो।'
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var ss = getTargetSpreadsheet(payload.spreadsheetId);
     
     // डाटा निकाल्ने (Pull Action)
     if (action === 'pull') {

@@ -199,6 +199,10 @@ export interface OrganizationItem extends OrganizationSetup {
   code?: string; // कार्यालय कोड
   createdAt: string;
   isActive: boolean;
+  webAppUrl?: string;
+  spreadsheetId?: string;
+  spreadsheetUrl?: string;
+  driveFolderUrl?: string;
 }
 
 export interface OrganizationDataStore {

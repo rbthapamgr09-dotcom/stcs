@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode, useCallback, useRef } from 'react';
 import {
   Employee,
   SalarySetup,
@@ -54,6 +54,8 @@ import {
   listUserSpreadsheets,
   getKathmanduTimestamp,
   AppSyncDataPayload,
+  TARGET_GOOGLE_DRIVE_FOLDER_ID,
+  TARGET_GOOGLE_DRIVE_FOLDER_URL,
 } from '../services/googleSheetsService';
 import {
   saveCloudAppConnection,
@@ -63,7 +65,15 @@ import {
   deleteCloudUser,
   saveCloudSupportContact,
   getCloudSupportContact,
+  saveCloudOrganization,
+  saveCloudOrganizations,
+  getCloudOrganizations,
+  deleteCloudOrganization,
+  saveOrgSheetsConfig,
+  getOrgSheetsConfig,
+  db,
 } from '../services/cloudSyncService';
+import { doc, onSnapshot } from 'firebase/firestore';
 import {
   hashPasswordSync,
   verifyPasswordSync,
@@ -276,7 +286,11 @@ interface AppContextType {
   connectGoogleAccount: () => Promise<boolean>;
   connectDirectAccount: (email?: string, displayName?: string) => Promise<boolean>;
   disconnectGoogleAccount: () => Promise<void>;
-  createGoogleSpreadsheetForApp: () => Promise<{ success: boolean; spreadsheetId?: string; url?: string; message: string }>;
+  createGoogleSpreadsheetForApp: (options?: {
+    officeNameOverride?: string;
+    orgIdOverride?: string;
+    webAppUrlOverride?: string;
+  }) => Promise<{ success: boolean; spreadsheetId?: string; url?: string; message: string }>;
   triggerAutoSyncOnSave: (overrides?: {
     overrideEmployees?: Employee[];
     overrideSalarySetups?: Record<string, SalarySetup>;
@@ -998,6 +1012,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return undefined;
   });
   const [isAutoLoadingGoogleData, setIsAutoLoadingGoogleData] = useState(false);
+  const postLoginSheetsAutomationRef = useRef<((loggedUser: User) => Promise<void>) | null>(null);
 
   // Initialize Firebase Google Auth listener
   useEffect(() => {
@@ -1050,93 +1065,144 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   };
 
-  // Multi-Device Cloud State Sync on Mount
+  // Multi-Device Cloud State Sync on Mount & Real-time Listeners
   useEffect(() => {
     let isMounted = true;
-    const initCloudState = async () => {
-      try {
-        // 1. Sync registered user accounts from Cloud
-        const cloudUsers = await getCloudUsers();
-        if (cloudUsers && cloudUsers.length > 0 && isMounted) {
-          setUsers((prev) => {
-            const merged = [...prev];
-            for (const cu of cloudUsers) {
-              const idx = merged.findIndex(
-                (u) => u.id === cu.id || u.username.toLowerCase() === cu.username.toLowerCase()
-              );
-              if (idx >= 0) {
-                merged[idx] = { ...merged[idx], ...cu };
-              } else {
-                merged.push(cu);
-              }
+
+    // 1. High-Priority Independent Support Contact Sync
+    getCloudSupportContact().then((cloudSupport) => {
+      if (cloudSupport && isMounted) {
+        const cleaned = cleanSupportContact(cloudSupport);
+        if (cleaned.phone || cleaned.email || cleaned.whatsapp || cleaned.supportNote) {
+          setSupportContact(cleaned);
+          try {
+            localStorage.setItem(STORAGE_KEYS.SUPPORT_CONTACT, JSON.stringify(cleaned));
+          } catch {}
+        }
+      }
+    }).catch((e) => console.warn('Support contact sync notice:', e));
+
+    // Real-time Firestore Listener for Support Contact (Instant Cross-Device Updates)
+    let unsubscribeSupport: (() => void) | undefined;
+    try {
+      const contactDocRef = doc(db, 'system_connections', 'system_support_contact');
+      unsubscribeSupport = onSnapshot(contactDocRef, (snap) => {
+        if (snap.exists() && isMounted) {
+          const d = snap.data();
+          if (d) {
+            const cleaned = cleanSupportContact(d as SystemSupportContact);
+            if (cleaned.phone || cleaned.email || cleaned.whatsapp || cleaned.supportNote) {
+              setSupportContact(cleaned);
+              try {
+                localStorage.setItem(STORAGE_KEYS.SUPPORT_CONTACT, JSON.stringify(cleaned));
+              } catch {}
             }
-            return merged;
+          }
+        }
+      }, (err) => console.warn('Support contact onSnapshot notice:', err));
+    } catch (listenerErr) {
+      console.warn('Real-time listener setup notice:', listenerErr);
+    }
+
+    // 2. Multi-Organization Cloud Sync across Devices
+    getCloudOrganizations().then((cloudOrgs) => {
+      if (cloudOrgs && cloudOrgs.length > 0 && isMounted) {
+        setOrganizations((prev) => {
+          const merged = [...prev];
+          for (const co of cloudOrgs) {
+            const idx = merged.findIndex((o) => o.id === co.id);
+            if (idx >= 0) {
+              merged[idx] = { ...merged[idx], ...co };
+            } else {
+              merged.push(co);
+            }
+          }
+          return merged;
+        });
+
+        // Ensure org databases exist for all loaded organizations
+        setOrgDatabases((prev) => {
+          const updated = { ...prev };
+          for (const co of cloudOrgs) {
+            if (!updated[co.id]) {
+              updated[co.id] = {
+                organization: { ...co },
+                fiscalYears: DEFAULT_FY_LIST,
+                activeFiscalYear: '२०८१/८२',
+                fyDatabase: {
+                  '२०८१/८२': {
+                    employees: [],
+                    salarySetups: {},
+                    deductionSetups: {},
+                    taxReferences: DEFAULT_TAX_REFERENCES,
+                  },
+                },
+                googleSheetsConfig: DEFAULT_GOOGLE_SHEETS_CONFIG,
+              };
+            }
+          }
+          return updated;
+        });
+      }
+    }).catch((e) => console.warn('Cloud organizations sync notice:', e));
+
+    // 3. User Accounts Cloud Sync
+    getCloudUsers().then((cloudUsers) => {
+      if (cloudUsers && cloudUsers.length > 0 && isMounted) {
+        setUsers((prev) => {
+          const merged = [...prev];
+          for (const cu of cloudUsers) {
+            const idx = merged.findIndex(
+              (u) => u.id === cu.id || u.username.toLowerCase() === cu.username.toLowerCase()
+            );
+            if (idx >= 0) {
+              merged[idx] = { ...merged[idx], ...cu };
+            } else {
+              merged.push(cu);
+            }
+          }
+          return merged;
+        });
+      }
+    }).catch((e) => console.warn('Cloud users sync notice:', e));
+
+    // 4. Google Sheets Configuration Sync
+    getCloudAppConnection(currentUser?.username || currentUser?.id).then((cloudConn) => {
+      if (cloudConn && isMounted) {
+        if (cloudConn.connectedAccountEmail) {
+          setIsGoogleAccountConnected(true);
+          setGoogleConnectedEmail(cloudConn.connectedAccountEmail);
+        }
+        if (cloudConn.webAppUrl || cloudConn.spreadsheetId || cloudConn.connectedAccountEmail || cloudConn.spreadsheetName) {
+          setGoogleSheetsConfig((prev) => {
+            const updated = {
+              ...prev,
+              webAppUrl: cloudConn.webAppUrl || prev.webAppUrl,
+              spreadsheetId: cloudConn.spreadsheetId || prev.spreadsheetId,
+              spreadsheetUrl: cloudConn.spreadsheetUrl || prev.spreadsheetUrl,
+              spreadsheetName: cloudConn.spreadsheetName || prev.spreadsheetName,
+              connectedAccountEmail: cloudConn.connectedAccountEmail || prev.connectedAccountEmail,
+              autoSync: cloudConn.autoSync ?? true,
+              syncMode: cloudConn.syncMode || 'auto',
+              authMethod: prev.authMethod || (cloudConn.webAppUrl ? (cloudConn.connectedAccountEmail ? 'both' : 'apps_script') : 'oauth'),
+            };
+            return updated;
           });
         }
-
-        // 2. Fetch persistent Google Sheets configuration across devices
-        const cloudConn = await getCloudAppConnection(currentUser?.username || currentUser?.id);
-        if (cloudConn && isMounted) {
-          if (cloudConn.connectedAccountEmail) {
-            setIsGoogleAccountConnected(true);
-            setGoogleConnectedEmail(cloudConn.connectedAccountEmail);
-          }
-          if (cloudConn.webAppUrl || cloudConn.spreadsheetId || cloudConn.connectedAccountEmail || cloudConn.spreadsheetName) {
-            setGoogleSheetsConfig((prev) => {
-              const updated = {
-                ...prev,
-                webAppUrl: cloudConn.webAppUrl || prev.webAppUrl,
-                spreadsheetId: cloudConn.spreadsheetId || prev.spreadsheetId,
-                spreadsheetUrl: cloudConn.spreadsheetUrl || prev.spreadsheetUrl,
-                spreadsheetName: cloudConn.spreadsheetName || prev.spreadsheetName,
-                connectedAccountEmail: cloudConn.connectedAccountEmail || prev.connectedAccountEmail,
-                autoSync: cloudConn.autoSync ?? true,
-                syncMode: cloudConn.syncMode || 'auto',
-                authMethod: prev.authMethod || (cloudConn.webAppUrl ? (cloudConn.connectedAccountEmail ? 'both' : 'apps_script') : 'oauth'),
-              };
-              return updated;
-            });
-          }
-          if (cloudConn.organization) {
-            setOrganization((prev) => ({
-              ...prev,
-              ...cloudConn.organization,
-            }));
-          }
-          if (cloudConn.supportContact && isMounted) {
-            const cleaned = cleanSupportContact(cloudConn.supportContact);
-            if (cleaned.phone || cleaned.email || cleaned.whatsapp || cleaned.supportNote) {
-              setSupportContact(cleaned);
-              try {
-                localStorage.setItem(STORAGE_KEYS.SUPPORT_CONTACT, JSON.stringify(cleaned));
-              } catch {}
-            }
-          }
+        if (cloudConn.organization) {
+          setOrganization((prev) => ({
+            ...prev,
+            ...cloudConn.organization,
+          }));
         }
-
-        // 3. Fetch persistent Support Contact across devices (Cloud SQL & Firestore)
-        try {
-          const cloudSupport = await getCloudSupportContact();
-          if (cloudSupport && isMounted) {
-            const cleaned = cleanSupportContact(cloudSupport);
-            if (cleaned.phone || cleaned.email || cleaned.whatsapp || cleaned.supportNote) {
-              setSupportContact(cleaned);
-              try {
-                localStorage.setItem(STORAGE_KEYS.SUPPORT_CONTACT, JSON.stringify(cleaned));
-              } catch {}
-            }
-          }
-        } catch (supportErr) {
-          console.warn('Initial cloud support contact sync notice:', supportErr);
-        }
-      } catch (err) {
-        console.warn('Initial cloud sync notice:', err);
       }
-    };
+    }).catch((e) => console.warn('Cloud app connection sync notice:', e));
 
-    initCloudState();
     return () => {
       isMounted = false;
+      if (unsubscribeSupport) {
+        unsubscribeSupport();
+      }
     };
   }, [currentUser]);
 
@@ -1537,37 +1603,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setActiveOrganizationId(found.organizationId);
     }
 
-    // Auto-fetch Google Sheets connection & auto-load data across devices
-    setTimeout(async () => {
-      try {
-        const cloudConn = await getCloudAppConnection(found.username || found.id);
-        let activeConfig = googleSheetsConfig;
-        if (cloudConn && (cloudConn.webAppUrl || cloudConn.spreadsheetId)) {
-          activeConfig = {
-            ...googleSheetsConfig,
-            webAppUrl: cloudConn.webAppUrl || googleSheetsConfig.webAppUrl,
-            spreadsheetId: cloudConn.spreadsheetId || googleSheetsConfig.spreadsheetId,
-            spreadsheetUrl: cloudConn.spreadsheetUrl || googleSheetsConfig.spreadsheetUrl,
-            autoSync: cloudConn.autoSync ?? true,
-            syncMode: cloudConn.syncMode || 'auto',
-          };
-          setGoogleSheetsConfig(activeConfig);
-          if (cloudConn.organization) {
-            setOrganization((prev) => ({ ...prev, ...cloudConn.organization }));
-          }
-        }
-
-        if (activeConfig.webAppUrl || activeConfig.spreadsheetId) {
-          setIsAutoLoadingGoogleData(true);
-          await syncWithGoogleSheets('pull', {
-            isAutoSync: true,
-            spreadsheetIdOverride: activeConfig.spreadsheetId,
-          });
-          setIsAutoLoadingGoogleData(false);
-        }
-      } catch (err) {
-        console.warn('Auto-pull on login notice:', err);
-        setIsAutoLoadingGoogleData(false);
+    // Automated Google Sheets setup & sync upon successful login
+    setTimeout(() => {
+      if (postLoginSheetsAutomationRef.current) {
+        postLoginSheetsAutomationRef.current(found).catch((err) => {
+          console.warn('Post login sheets automation notice:', err);
+        });
       }
     }, 150);
 
@@ -1613,7 +1654,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       lastLogin: new Date().toLocaleString('ne-NP'),
     };
 
-    setUsers((prev) => prev.map((u) => (u.id === userId ? updatedUser : u)));
+    setUsers((prev) => {
+      const updatedList = prev.map((u) => (u.id === userId ? updatedUser : u));
+      saveCloudUsers(updatedList).catch((e) => console.warn('Could not save updated user to cloud:', e));
+      return updatedList;
+    });
     setCurrentUser(updatedUser);
     setIsAuthenticated(true);
     setIsScreenLocked(false);
@@ -1625,6 +1670,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch {
       // Storage error ignore
     }
+
+    // Switch organization if user belongs to a specific organization
+    if (updatedUser.organizationId && updatedUser.organizationId !== 'all' && updatedUser.organizationId !== activeOrganizationId) {
+      setActiveOrganizationId(updatedUser.organizationId);
+    }
+
+    // Automated Google Sheets setup & sync upon first-time password setup completion
+    setTimeout(() => {
+      if (postLoginSheetsAutomationRef.current) {
+        postLoginSheetsAutomationRef.current(updatedUser).catch((err) => {
+          console.warn('Post first-time password setup automation notice:', err);
+        });
+      }
+    }, 150);
 
     logSecurityEvent({
       action: 'PASSWORD_CHANGED',
@@ -3206,6 +3265,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       isActive: true,
     };
 
+    const initialSheetsConfig: GoogleSheetsConfig = {
+      ...DEFAULT_GOOGLE_SHEETS_CONFIG,
+      webAppUrl: orgData.webAppUrl || googleSheetsConfig.webAppUrl || '',
+      spreadsheetId: orgData.spreadsheetId || '',
+      spreadsheetUrl: orgData.spreadsheetUrl || '',
+      spreadsheetName: `stcs_${newOrg.officeName}`,
+      autoSync: true,
+      syncMode: 'auto',
+    };
+
     const newOrgStore: OrganizationDataStore = {
       organization: { ...newOrg },
       fiscalYears: DEFAULT_FY_LIST,
@@ -3218,11 +3287,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           taxReferences: DEFAULT_TAX_REFERENCES,
         },
       },
-      googleSheetsConfig: DEFAULT_GOOGLE_SHEETS_CONFIG,
+      googleSheetsConfig: initialSheetsConfig,
     };
 
-    setOrganizations((prev) => [...prev, newOrg]);
+    setOrganizations((prev) => {
+      const updated = [...prev, newOrg];
+      saveCloudOrganizations(updated).catch(() => {});
+      return updated;
+    });
     setOrgDatabases((prev) => ({ ...prev, [orgId]: newOrgStore }));
+    saveCloudOrganization(newOrg).catch((e) => console.warn('Cloud save org notice:', e));
+    saveOrgSheetsConfig(orgId, initialSheetsConfig).catch(() => {});
 
     if (initialAdmin && initialAdmin.username.trim()) {
       const adminUser: User = {
@@ -3244,7 +3319,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isFirstLogin: true,
         createdAt: new Date().toLocaleDateString('ne-NP'),
       };
-      setUsers((prev) => [...prev, adminUser]);
+      setUsers((prev) => {
+        const updatedUsers = [...prev, adminUser];
+        saveCloudUsers(updatedUsers).catch((e) => console.warn('Cloud save user notice:', e));
+        return updatedUsers;
+      });
     }
 
     addToast(
@@ -3263,9 +3342,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return false;
     }
 
-    setOrganizations((prev) =>
-      prev.map((o) => (o.id === orgId ? { ...o, ...orgData } : o))
-    );
+    setOrganizations((prev) => {
+      const updated = prev.map((o) => (o.id === orgId ? { ...o, ...orgData } : o));
+      saveCloudOrganizations(updated).catch(() => {});
+      return updated;
+    });
+
+    const existingOrg = organizations.find((o) => o.id === orgId);
+    if (existingOrg) {
+      saveCloudOrganization({ ...existingOrg, ...orgData, id: orgId }).catch(() => {});
+    }
 
     if (orgId === activeOrganizationId) {
       setOrganization((prev) => ({ ...prev, ...orgData }));
@@ -3312,7 +3398,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
-    setOrganizations((prev) => prev.filter((o) => o.id !== orgId));
+    setOrganizations((prev) => {
+      const filtered = prev.filter((o) => o.id !== orgId);
+      saveCloudOrganizations(filtered).catch(() => {});
+      return filtered;
+    });
+    deleteCloudOrganization(orgId).catch(() => {});
     setOrgDatabases((prev) => {
       const copy = { ...prev };
       delete copy[orgId];
@@ -3674,15 +3765,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     addToast('info', 'गुगल खाता विच्छेद भयो', 'गुगल खाता सफलतापूर्वक विच्छेद गरियो।');
   };
 
-  const createGoogleSpreadsheetForApp = async (): Promise<{
+  const createGoogleSpreadsheetForApp = async (options?: {
+    officeNameOverride?: string;
+    orgIdOverride?: string;
+    webAppUrlOverride?: string;
+  }): Promise<{
     success: boolean;
     isScopeError?: boolean;
     spreadsheetId?: string;
     url?: string;
     message: string;
   }> => {
+    const targetOrgId = options?.orgIdOverride || activeOrganizationId;
+    const targetOrgObj = organizations.find((o) => o.id === targetOrgId) || organization;
+    const officeName = options?.officeNameOverride || targetOrgObj.officeName || targetOrgObj.name || 'कार्यालय';
+    const targetTitle = `stcs_${officeName}`;
+
     // 1. If webAppUrl is present, attempt creation via Google Apps Script Web App
-    const rawWebAppUrl = (googleSheetsConfig.webAppUrl || '').trim();
+    const rawWebAppUrl = (options?.webAppUrlOverride || googleSheetsConfig.webAppUrl || '').trim();
     if (rawWebAppUrl) {
       try {
         addToast('info', 'Apps Script मार्फत प्रयास...', 'Google Apps Script बाट सिट सिर्जना गरिँदै...');
@@ -3691,7 +3791,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({
             action: 'createSpreadsheet',
-            officeName: organization.officeName || organization.name,
+            officeName: officeName,
+            folderId: TARGET_GOOGLE_DRIVE_FOLDER_ID,
             fiscalYear: activeFiscalYear,
           }),
         });
@@ -3699,9 +3800,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const data = await res.json().catch(() => ({}));
           if (data?.success && data?.spreadsheetId) {
             const sheetUrl = data.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${data.spreadsheetId}/edit`;
-            const title = data.spreadsheetName || `stcs_${organization.officeName || organization.name || 'कार्यालय'}`;
+            const title = data.spreadsheetName || targetTitle;
             const updatedConfig: GoogleSheetsConfig = {
               ...googleSheetsConfig,
+              webAppUrl: rawWebAppUrl,
               spreadsheetId: data.spreadsheetId,
               spreadsheetUrl: sheetUrl,
               spreadsheetName: title,
@@ -3709,10 +3811,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               syncMode: 'auto',
             };
             setGoogleSheetsConfig(updatedConfig);
+            saveOrgSheetsConfig(targetOrgId, updatedConfig).catch(() => {});
             saveCloudAppConnection(
               updatedConfig,
-              organization,
-              activeOrganizationId,
+              targetOrgObj,
+              targetOrgId,
               currentUser?.username || googleConnectedEmail || 'admin'
             ).catch(() => {});
             addToast('success', 'नयाँ सिट सिर्जना भयो', `Apps Script मार्फत '${title}' तयार भयो र लिंक गरियो।`);
@@ -3736,12 +3839,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addToast('info', 'सिट तयार गरिँदै...', 'गुगल ड्राइभमा नयाँ स्प्रेडसिट सिर्जना हुँदैछ...');
         const sheet = await createAppSpreadsheet(
           token,
-          organization.officeName || organization.name,
+          officeName,
           activeFiscalYear
         );
 
         const updatedConfig: GoogleSheetsConfig = {
           ...googleSheetsConfig,
+          webAppUrl: rawWebAppUrl || googleSheetsConfig.webAppUrl,
           spreadsheetId: sheet.id,
           spreadsheetUrl: sheet.url,
           spreadsheetName: sheet.title,
@@ -3750,10 +3854,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         };
 
         setGoogleSheetsConfig(updatedConfig);
+        saveOrgSheetsConfig(targetOrgId, updatedConfig).catch(() => {});
         saveCloudAppConnection(
           updatedConfig,
-          organization,
-          activeOrganizationId,
+          targetOrgObj,
+          targetOrgId,
           currentUser?.username || googleConnectedEmail || 'admin'
         ).catch(() => {});
 
@@ -4186,6 +4291,148 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('Auto sync on save error:', err);
     }
   };
+
+  // Automated Google Sheets setup & sync upon successful Admin login
+  const handlePostLoginSheetsAutomation = useCallback(
+    async (loggedUser: User) => {
+      try {
+        const userOrgId = loggedUser.organizationId;
+        if (!userOrgId || userOrgId === 'all') {
+          const cloudConn = await getCloudAppConnection(loggedUser.username || loggedUser.id);
+          if (cloudConn && (cloudConn.webAppUrl || cloudConn.spreadsheetId)) {
+            setGoogleSheetsConfig((prev) => ({
+              ...prev,
+              webAppUrl: cloudConn.webAppUrl || prev.webAppUrl,
+              spreadsheetId: cloudConn.spreadsheetId || prev.spreadsheetId,
+              spreadsheetUrl: cloudConn.spreadsheetUrl || prev.spreadsheetUrl,
+              autoSync: cloudConn.autoSync ?? true,
+            }));
+          }
+          return;
+        }
+
+        const orgDetails = organizations.find((o) => o.id === userOrgId);
+        const officeName = orgDetails?.officeName || loggedUser.organizationName || 'कार्यालय';
+        const orgConfig = await getOrgSheetsConfig(userOrgId);
+        const userCloudConn = await getCloudAppConnection(loggedUser.username || loggedUser.id);
+
+        let currentConfig: GoogleSheetsConfig = {
+          ...googleSheetsConfig,
+          webAppUrl:
+            orgConfig?.webAppUrl ||
+            userCloudConn?.webAppUrl ||
+            orgDetails?.webAppUrl ||
+            googleSheetsConfig.webAppUrl ||
+            '',
+          spreadsheetId:
+            orgConfig?.spreadsheetId ||
+            userCloudConn?.spreadsheetId ||
+            orgDetails?.spreadsheetId ||
+            '',
+          spreadsheetUrl:
+            orgConfig?.spreadsheetUrl ||
+            userCloudConn?.spreadsheetUrl ||
+            orgDetails?.spreadsheetUrl ||
+            '',
+          spreadsheetName: orgConfig?.spreadsheetName || `stcs_${officeName}`,
+          autoSync: true,
+          syncMode: 'auto',
+        };
+
+        // If spreadsheetId is not yet created, automate spreadsheet creation
+        if (!currentConfig.spreadsheetId && currentConfig.webAppUrl) {
+          addToast(
+            'info',
+            'सिट स्वचालित सेटअप हुँदैछ',
+            `'stcs_${officeName}' गुगल ड्राइभमा सिर्जना तथा जडान गरिँदैछ...`
+          );
+
+          const created = await createGoogleSpreadsheetForApp({
+            officeNameOverride: officeName,
+            orgIdOverride: userOrgId,
+            webAppUrlOverride: currentConfig.webAppUrl,
+          });
+
+          if (created.success && created.spreadsheetId) {
+            currentConfig = {
+              ...currentConfig,
+              spreadsheetId: created.spreadsheetId,
+              spreadsheetUrl:
+                created.url ||
+                `https://docs.google.com/spreadsheets/d/${created.spreadsheetId}/edit`,
+              spreadsheetName: `stcs_${officeName}`,
+            };
+            setGoogleSheetsConfig(currentConfig);
+            await saveOrgSheetsConfig(userOrgId, currentConfig);
+            updateOrganizationDetails(userOrgId, {
+              spreadsheetId: currentConfig.spreadsheetId,
+              spreadsheetUrl: currentConfig.spreadsheetUrl,
+              webAppUrl: currentConfig.webAppUrl,
+            });
+          }
+        } else {
+          setGoogleSheetsConfig(currentConfig);
+        }
+
+        // Connection test and sync
+        if (currentConfig.webAppUrl || currentConfig.spreadsheetId) {
+          setIsAutoLoadingGoogleData(true);
+          if (currentConfig.webAppUrl) {
+            try {
+              const testRes = await fetch(
+                `${currentConfig.webAppUrl}${
+                  currentConfig.webAppUrl.includes('?') ? '&' : '?'
+                }action=status&spreadsheetId=${encodeURIComponent(
+                  currentConfig.spreadsheetId || ''
+                )}&_t=${Date.now()}`,
+                {
+                  method: 'GET',
+                  redirect: 'follow',
+                }
+              );
+              if (testRes.ok) {
+                setGoogleSheetsConfig((prev) => ({
+                  ...prev,
+                  syncStatus: 'success',
+                  errorMessage: undefined,
+                }));
+              }
+            } catch (testErr) {
+              console.warn('Silent connection test notice:', testErr);
+            }
+          }
+
+          const pullRes = await syncWithGoogleSheets('pull', {
+            isAutoSync: true,
+            spreadsheetIdOverride: currentConfig.spreadsheetId,
+          });
+
+          if (!pullRes.success) {
+            await syncWithGoogleSheets('push', {
+              isAutoSync: true,
+              spreadsheetIdOverride: currentConfig.spreadsheetId,
+            });
+          }
+          setIsAutoLoadingGoogleData(false);
+        }
+      } catch (automationErr) {
+        console.warn('Post login sheets automation error:', automationErr);
+        setIsAutoLoadingGoogleData(false);
+      }
+    },
+    [
+      organizations,
+      googleSheetsConfig,
+      createGoogleSpreadsheetForApp,
+      syncWithGoogleSheets,
+      updateOrganizationDetails,
+      addToast,
+    ]
+  );
+
+  useEffect(() => {
+    postLoginSheetsAutomationRef.current = handlePostLoginSheetsAutomation;
+  }, [handlePostLoginSheetsAutomation]);
 
   const resetToDemoData = () => {
     showConfirmation({
