@@ -264,11 +264,6 @@ export const Letterhead: React.FC<LetterheadProps> = ({
                 {subTitle}
               </p>
             )}
-            {showReportDate && (
-              <p className="text-xs text-[#48603f] mt-1 font-medium text-center">
-                प्रतिवेदन मिति: वि.सं. {toNepaliDigits(dateBS)} (ई.सं. {dateAD})
-              </p>
-            )}
           </div>
         ) : null}
 
