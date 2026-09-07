@@ -176,35 +176,50 @@ export const Letterhead: React.FC<LetterheadProps> = ({
       {/* Official Top Letterhead Box */}
       <div className={`border-b-2 border-[#800000] ${compact ? 'pb-1 mb-1' : 'pb-4 mb-4'}`}>
         <div
-          className={`w-full ${
+          className={`relative w-full ${
             organization.alignment === 'left'
-              ? 'flex items-start justify-start gap-3 sm:gap-4'
+              ? 'flex items-start justify-start gap-8 sm:gap-10 print:gap-8'
               : organization.alignment === 'right'
-              ? 'flex items-start justify-end flex-row-reverse gap-3 sm:gap-4'
-              : 'flex items-center justify-center gap-3.5 sm:gap-5 md:gap-6 print:gap-4'
+              ? 'flex items-start justify-end flex-row-reverse gap-8 sm:gap-10 print:gap-8'
+              : 'flex items-start justify-center'
           }`}
         >
-          {/* Logo / Coat of Arms / Emblem SVG (Snug adjacent positioning to text in Portrait & Landscape) */}
-          <div
-            className={`${
-              compact
-                ? 'w-14 h-14 sm:w-16 sm:h-16 print:w-14 print:h-14'
-                : 'w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 print:w-20 print:h-20'
-            } shrink-0 flex items-center justify-center self-center`}
-          >
-            <LetterheadLogoImage logoUrl={organization.logoUrl} compact={compact} />
-          </div>
+          {/* Logo for Left or Right Alignment modes */}
+          {(organization.alignment === 'left' || organization.alignment === 'right') && (
+            <div
+              className={`${
+                compact
+                  ? 'w-14 h-14 sm:w-16 sm:h-16 print:w-14 print:h-14'
+                  : 'w-18 h-18 sm:w-22 sm:h-22 md:w-24 md:h-24 print:w-20 print:h-20'
+              } shrink-0 flex items-start justify-center pt-0`}
+            >
+              <LetterheadLogoImage logoUrl={organization.logoUrl} compact={compact} />
+            </div>
+          )}
 
-          {/* Center/Office Details in Dark Red (#800000) with precise pt font sizes */}
+          {/* Center/Office Details Column: When centered, text is 100% exactly in the center of the page */}
           <div
-            className={`flex flex-col ${
+            className={`relative flex flex-col ${
               organization.alignment === 'left'
                 ? 'text-left items-start'
                 : organization.alignment === 'right'
                 ? 'text-right items-end'
-                : 'text-center items-center justify-center'
+                : 'text-center items-center justify-center max-w-full'
             }`}
           >
+            {/* Logo for Center Alignment: Positioned to the left of the centered text with top-alignment matching 'नेपाल सरकार' and generous spacing */}
+            {(!organization.alignment || organization.alignment === 'center') && (
+              <div
+                className={`absolute right-full top-0 mr-8 sm:mr-10 md:mr-14 lg:mr-16 print:mr-12 shrink-0 flex items-start justify-center pt-0 ${
+                  compact
+                    ? 'w-14 h-14 sm:w-16 sm:h-16 print:w-14 print:h-14'
+                    : 'w-18 h-18 sm:w-22 sm:h-22 md:w-24 md:h-24 print:w-20 print:h-20'
+                }`}
+              >
+                <LetterheadLogoImage logoUrl={organization.logoUrl} compact={compact} />
+              </div>
+            )}
+
             {/* Level 1: संस्था / निकाय / सरकारको तह (9 pt) */}
             <h1
               style={{ fontSize: '9pt', lineHeight: 1.3 }}
