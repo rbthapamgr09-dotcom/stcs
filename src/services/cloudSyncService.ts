@@ -6,7 +6,7 @@ import {
   setDoc,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { GoogleSheetsConfig, OrganizationSetup, User } from '../types';
+import { GoogleSheetsConfig, OrganizationSetup, User, SystemSupportContact } from '../types';
 
 // Initialize Firebase App safely
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -22,6 +22,7 @@ export interface CloudAppConnectionData {
   syncMode?: 'auto' | 'manual';
   organization?: OrganizationSetup;
   activeOrgId?: string;
+  supportContact?: SystemSupportContact;
   updatedAt?: string;
   lastUpdatedBy?: string;
 }
@@ -38,7 +39,8 @@ export async function saveCloudAppConnection(
   config: GoogleSheetsConfig,
   organization?: OrganizationSetup,
   activeOrgId?: string,
-  updatedBy?: string
+  updatedBy?: string,
+  supportContact?: SystemSupportContact
 ): Promise<boolean> {
   const data: CloudAppConnectionData = {
     webAppUrl: (config.webAppUrl || '').trim(),
@@ -50,6 +52,7 @@ export async function saveCloudAppConnection(
     syncMode: config.syncMode || 'auto',
     organization: organization || undefined,
     activeOrgId: activeOrgId || 'org_default',
+    supportContact: supportContact || undefined,
     updatedAt: new Date().toISOString(),
     lastUpdatedBy: updatedBy || 'system',
   };
@@ -232,5 +235,112 @@ export async function deleteCloudUser(userId: string): Promise<void> {
     });
   } catch (err) {
     console.warn('Could not delete user from Cloud SQL API:', err);
+  }
+}
+
+/**
+ * Persists System Support Contact (help phone, email, whatsapp, note) to Cloud SQL and Firestore
+ */
+export async function saveCloudSupportContact(
+  contact: SystemSupportContact,
+  updatedBy?: string
+): Promise<boolean> {
+  const cleanContact: SystemSupportContact = {
+    phone: (contact.phone || '').trim(),
+    email: (contact.email || '').trim(),
+    whatsapp: (contact.whatsapp || '').trim(),
+    supportNote: (contact.supportNote || '').trim(),
+  };
+
+  // 1. Sync to Cloud SQL via backend API
+  try {
+    await fetch('/api/settings/system_support_contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: cleanContact, updatedBy }),
+    });
+  } catch (sqlErr) {
+    console.warn('Could not save support contact to Cloud SQL API:', sqlErr);
+  }
+
+  // 2. Sync to Firestore
+  try {
+    const contactDocRef = doc(db, CONNECTIONS_COLLECTION, 'system_support_contact');
+    await setDoc(
+      contactDocRef,
+      { ...cleanContact, updatedAt: new Date().toISOString(), lastUpdatedBy: updatedBy || 'system' },
+      { merge: true }
+    );
+
+    // Also update main config doc
+    const mainDocRef = doc(db, CONNECTIONS_COLLECTION, MAIN_CONFIG_DOC);
+    await setDoc(
+      mainDocRef,
+      { supportContact: cleanContact, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+    return true;
+  } catch (err) {
+    console.warn('Could not save support contact to Cloud Firestore:', err);
+    return true;
+  }
+}
+
+/**
+ * Retrieves the persisted System Support Contact from Cloud SQL or Firestore.
+ */
+export async function getCloudSupportContact(): Promise<SystemSupportContact | null> {
+  // 1. Try fetching from Cloud SQL backend API
+  try {
+    const res = await fetch('/api/settings/system_support_contact');
+    if (res.ok) {
+      const json = await res.json();
+      if (json.data && (json.data.phone || json.data.email || json.data.whatsapp || json.data.supportNote)) {
+        return {
+          phone: json.data.phone || '',
+          email: json.data.email || '',
+          whatsapp: json.data.whatsapp || '',
+          supportNote: json.data.supportNote || '',
+        };
+      }
+    }
+  } catch (sqlErr) {
+    console.warn('Could not fetch support contact from Cloud SQL API:', sqlErr);
+  }
+
+  // 2. Try Firestore fallback
+  try {
+    const contactDocRef = doc(db, CONNECTIONS_COLLECTION, 'system_support_contact');
+    const snap = await getDoc(contactDocRef);
+    if (snap.exists()) {
+      const d = snap.data();
+      if (d && (d.phone || d.email || d.whatsapp || d.supportNote)) {
+        return {
+          phone: d.phone || '',
+          email: d.email || '',
+          whatsapp: d.whatsapp || '',
+          supportNote: d.supportNote || '',
+        };
+      }
+    }
+
+    // Try main config doc fallback
+    const mainDocRef = doc(db, CONNECTIONS_COLLECTION, MAIN_CONFIG_DOC);
+    const mainSnap = await getDoc(mainDocRef);
+    if (mainSnap.exists()) {
+      const md = mainSnap.data();
+      if (md?.supportContact && (md.supportContact.phone || md.supportContact.email || md.supportContact.whatsapp || md.supportContact.supportNote)) {
+        return {
+          phone: md.supportContact.phone || '',
+          email: md.supportContact.email || '',
+          whatsapp: md.supportContact.whatsapp || '',
+          supportNote: md.supportContact.supportNote || '',
+        };
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn('Could not fetch support contact from Cloud Firestore:', err);
+    return null;
   }
 }

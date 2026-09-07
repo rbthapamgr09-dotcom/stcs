@@ -61,6 +61,8 @@ import {
   saveCloudUsers,
   getCloudUsers,
   deleteCloudUser,
+  saveCloudSupportContact,
+  getCloudSupportContact,
 } from '../services/cloudSyncService';
 import {
   hashPasswordSync,
@@ -619,15 +621,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [users, setUsers] = useState<User[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.USERS);
-      const autoCreatedIds = ['user_admin', 'user_general', 'user_accountant', 'user_viewer', 'user_new_staff'];
-      const autoCreatedUsernames = ['admin', 'user', 'accountant', 'viewer', 'newuser'];
+      const autoCreatedIds = ['user_admin', 'user_general', 'user_accountant', 'user_viewer', 'user_new_staff', 'user_rbthapa_mgr', 'user_rbthapa_mgf'];
+      const autoCreatedUsernames = ['admin', 'user', 'accountant', 'viewer', 'newuser', 'rbthapamgr09', 'rbthapamgf09'];
 
       if (saved) {
         const parsed: User[] = JSON.parse(saved);
         const filtered = parsed.filter(
           (u) =>
-            u.role === 'SUPER_ADMIN' ||
-            (!autoCreatedIds.includes(u.id) && !autoCreatedUsernames.includes((u.username || '').toLowerCase()))
+            !autoCreatedIds.includes(u.id) &&
+            !autoCreatedUsernames.includes((u.username || '').toLowerCase())
         );
         const resultUsers = [...filtered];
         DEFAULT_USERS.forEach((defUser) => {
@@ -641,8 +643,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             resultUsers.push(defUser);
           }
         });
+
         // Ensure default passwords/pins exist for loaded users
-        return resultUsers.map((u) => ({
+        const finalUsers = resultUsers.map((u) => ({
           ...u,
           password:
             u.password ||
@@ -663,6 +666,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             u.securityAnswer ||
             (u.role === 'SUPER_ADMIN' ? 'नेपाल' : u.role === 'ACCOUNTANT' ? 'काठमाडौँ' : 'हरियो'),
         }));
+
+        try {
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(finalUsers));
+        } catch {}
+
+        return finalUsers;
       }
       return DEFAULT_USERS;
     } catch {
@@ -686,6 +695,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const saved = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
       if (session === 'true' && saved) {
         const parsed = JSON.parse(saved);
+        if (parsed.id === 'user_rbthapa_mgr' || parsed.id === 'user_rbthapa_mgf' || parsed.username === 'rbthapamgr09' || parsed.username === 'rbthapamgf09') {
+          return DEFAULT_USERS[0];
+        }
         return {
           ...parsed,
           password: parsed.password || 'admin123',
@@ -1015,6 +1027,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, []);
 
+  // Helper to remove legacy dummy demo text from support contact
+  const cleanSupportContact = (c: any): SystemSupportContact => {
+    if (!c || typeof c !== 'object') {
+      return { phone: '', email: '', whatsapp: '', supportNote: '' };
+    }
+    const isDemo = (val?: any) => {
+      if (!val) return true;
+      const t = String(val).trim();
+      return (
+        t === '०१-४२०००००, ९८५१०००००१' ||
+        t === 'support.payroll@gov.np' ||
+        t === '+९७७-९८५१०००००१' ||
+        t === 'कार्यालय समय (१०:०० देखि ५:०० सम्म) प्राविधिक तथा प्रणाली सहायताका लागि सम्पर्क गर्नुहोस्।'
+      );
+    };
+    return {
+      phone: isDemo(c.phone) ? '' : String(c.phone || '').trim(),
+      email: isDemo(c.email) ? '' : String(c.email || '').trim(),
+      whatsapp: isDemo(c.whatsapp) ? '' : String(c.whatsapp || '').trim(),
+      supportNote: isDemo(c.supportNote) ? '' : String(c.supportNote || '').trim(),
+    };
+  };
+
   // Multi-Device Cloud State Sync on Mount
   useEffect(() => {
     let isMounted = true;
@@ -1068,6 +1103,31 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               ...cloudConn.organization,
             }));
           }
+          if (cloudConn.supportContact && isMounted) {
+            const cleaned = cleanSupportContact(cloudConn.supportContact);
+            if (cleaned.phone || cleaned.email || cleaned.whatsapp || cleaned.supportNote) {
+              setSupportContact(cleaned);
+              try {
+                localStorage.setItem(STORAGE_KEYS.SUPPORT_CONTACT, JSON.stringify(cleaned));
+              } catch {}
+            }
+          }
+        }
+
+        // 3. Fetch persistent Support Contact across devices (Cloud SQL & Firestore)
+        try {
+          const cloudSupport = await getCloudSupportContact();
+          if (cloudSupport && isMounted) {
+            const cleaned = cleanSupportContact(cloudSupport);
+            if (cleaned.phone || cleaned.email || cleaned.whatsapp || cleaned.supportNote) {
+              setSupportContact(cleaned);
+              try {
+                localStorage.setItem(STORAGE_KEYS.SUPPORT_CONTACT, JSON.stringify(cleaned));
+              } catch {}
+            }
+          }
+        } catch (supportErr) {
+          console.warn('Initial cloud support contact sync notice:', supportErr);
         }
       } catch (err) {
         console.warn('Initial cloud sync notice:', err);
@@ -1124,7 +1184,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [supportContact, setSupportContact] = useState<SystemSupportContact>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.SUPPORT_CONTACT);
-      return saved ? JSON.parse(saved) : DEFAULT_SUPPORT_CONTACT;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const cleaned = cleanSupportContact(parsed);
+        // Persist cleaned version if changed
+        try {
+          localStorage.setItem(STORAGE_KEYS.SUPPORT_CONTACT, JSON.stringify(cleaned));
+        } catch {}
+        return cleaned;
+      }
+      return DEFAULT_SUPPORT_CONTACT;
     } catch {
       return DEFAULT_SUPPORT_CONTACT;
     }
@@ -3259,14 +3328,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       addToast('error', 'अनाधिकृत कार्य', 'सहायता तथा सम्पर्क विवरण सम्पादन गर्न सुपर एडमिन वा एडमिनको अधिकार आवश्यक छ।');
       return;
     }
-    setSupportContact((prev) => {
-      const updated = { ...prev, ...contact };
-      try {
-        localStorage.setItem(STORAGE_KEYS.SUPPORT_CONTACT, JSON.stringify(updated));
-      } catch {}
-      return updated;
+    const updated: SystemSupportContact = {
+      phone: (contact.phone !== undefined ? contact.phone : supportContact.phone || '').trim(),
+      email: (contact.email !== undefined ? contact.email : supportContact.email || '').trim(),
+      whatsapp: (contact.whatsapp !== undefined ? contact.whatsapp : supportContact.whatsapp || '').trim(),
+      supportNote: (contact.supportNote !== undefined ? contact.supportNote : supportContact.supportNote || '').trim(),
+    };
+
+    setSupportContact(updated);
+    try {
+      localStorage.setItem(STORAGE_KEYS.SUPPORT_CONTACT, JSON.stringify(updated));
+    } catch {}
+
+    // Persist to Cloud SQL and Firestore across all devices
+    saveCloudSupportContact(updated, currentUser?.username || 'admin').catch((err) => {
+      console.warn('Could not save support contact to cloud:', err);
     });
-    addToast('success', 'सम्पर्क विवरण सुरक्षित भयो', 'लगइन पृष्ठ तथा सहायता सन्देशको सम्पर्क विवरण अपडेट गरियो।');
+
+    addToast('success', 'सम्पर्क विवरण सुरक्षित भयो', 'लगइन पृष्ठ तथा सहायता सन्देशको सम्पर्क विवरण सफलतापूर्वक सुरक्षित गरियो।');
   };
 
   const updateOrganization = (org: Partial<OrganizationSetup>) => {
@@ -3883,8 +3962,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
             if (Array.isArray(pullData.users) && pullData.users.length > 0) {
               setUsers((prev) => {
+                const ignoredIds = ['user_rbthapa_mgr', 'user_rbthapa_mgf'];
+                const ignoredUsernames = ['rbthapamgr09', 'rbthapamgf09'];
+                const validIncoming = pullData.users!.filter(
+                  (u) =>
+                    !ignoredIds.includes(u.id) &&
+                    !ignoredUsernames.includes((u.username || '').toLowerCase())
+                );
                 const merged = [...prev];
-                for (const u of pullData.users!) {
+                for (const u of validIncoming) {
                   const idx = merged.findIndex(
                     (m) => m.id === u.id || (m.username && u.username && m.username.toLowerCase() === u.username.toLowerCase())
                   );
@@ -3996,8 +4082,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
             if (Array.isArray(resData.data.users) && resData.data.users.length > 0) {
               setUsers((prev) => {
+                const ignoredIds = ['user_rbthapa_mgr', 'user_rbthapa_mgf'];
+                const ignoredUsernames = ['rbthapamgr09', 'rbthapamgf09'];
+                const validIncoming = resData.data.users.filter(
+                  (u: any) =>
+                    !ignoredIds.includes(u.id) &&
+                    !ignoredUsernames.includes((u.username || '').toLowerCase())
+                );
                 const merged = [...prev];
-                for (const u of resData.data.users) {
+                for (const u of validIncoming) {
                   const idx = merged.findIndex(
                     (m) => m.id === u.id || (m.username && u.username && m.username.toLowerCase() === u.username.toLowerCase())
                   );

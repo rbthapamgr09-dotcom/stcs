@@ -1564,48 +1564,46 @@ export const SettingsView: React.FC = () => {
                   <div className="space-y-1">
                     <label className="font-bold text-gray-700 flex items-center gap-1">
                       <Phone className="w-3.5 h-3.5 text-[#4B6043]" />
-                      <span>सम्पर्क नं. (Contact No. / Phone): <span className="text-red-500 font-bold">*</span></span>
+                      <span>सम्पर्क नं. (Contact No. / Phone):</span>
                     </label>
                     <input
                       type="text"
-                      required
                       value={supportForm.phone}
                       onChange={(e) => setSupportForm({ ...supportForm, phone: e.target.value })}
                       placeholder="जस्तै: ९८५६०६१५६५ वा ०६४-४२०१२३"
                       className="w-full p-2.5 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
-                    <p className="text-[10px] text-gray-500">लगइन पृष्ठमा प्रत्यक्ष डायल गर्न मिल्ने सम्पर्क नम्बर</p>
+                    <p className="text-[10px] text-gray-500">लगइन पृष्ठमा प्रदर्शित हुने सम्पर्क फोन वा मोबाइल नम्बर</p>
                   </div>
 
                   <div className="space-y-1">
                     <label className="font-bold text-gray-700 flex items-center gap-1">
                       <Mail className="w-3.5 h-3.5 text-blue-600" />
-                      <span>इमेल (Email): <span className="text-red-500 font-bold">*</span></span>
+                      <span>इमेल (Email):</span>
                     </label>
                     <input
                       type="email"
-                      required
                       value={supportForm.email}
                       onChange={(e) => setSupportForm({ ...supportForm, email: e.target.value })}
-                      placeholder="जस्तै: unit.roman@gmail.com"
+                      placeholder="जस्तै: info.payroll@office.gov.np"
                       className="w-full p-2.5 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
+                    <p className="text-[10px] text-gray-500">लगइन पृष्ठमा प्रदर्शित हुने आधिकारिक सहायता इमेल</p>
                   </div>
 
                   <div className="space-y-1">
                     <label className="font-bold text-gray-700 flex items-center gap-1">
                       <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>वाट्सएप (WhatsApp No.): <span className="text-red-500 font-bold">*</span></span>
+                      <span>वाट्सएप (WhatsApp No.):</span>
                     </label>
                     <input
                       type="text"
-                      required
                       value={supportForm.whatsapp}
                       onChange={(e) => setSupportForm({ ...supportForm, whatsapp: e.target.value })}
                       placeholder="जस्तै: ९८५६०६१५६५ वा 9856061565"
                       className="w-full p-2.5 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
-                    <p className="text-[10px] text-emerald-700">प्रयोगकर्ताले एक क्लिकमा WhatsApp च्याट सुरु गर्न सक्नुहुनेछ</p>
+                    <p className="text-[10px] text-emerald-700">प्रयोगकर्ताले एक क्लिकमा WhatsApp च्याट सुरु गर्न सक्ने नम्बर</p>
                   </div>
 
                   <div className="space-y-1">
@@ -1616,7 +1614,7 @@ export const SettingsView: React.FC = () => {
                       rows={3}
                       value={supportForm.supportNote}
                       onChange={(e) => setSupportForm({ ...supportForm, supportNote: e.target.value })}
-                      placeholder="लगइन तथा पासवर्ड सम्बन्धी कुनै समस्या भएमा सम्पर्क गर्नुहोस्।"
+                      placeholder="जस्तै: कार्यालय समय (१०:०० देखि ५:०० सम्म) प्राविधिक सहायताका लागि सम्पर्क गर्नुहोस्।"
                       className="w-full p-2.5 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
@@ -1640,49 +1638,60 @@ export const SettingsView: React.FC = () => {
                   <span>लगइन पृष्ठमा देखिने प्रत्यक्ष रूप (Live Login Page Preview)</span>
                 </div>
 
-                {/* Login Page Card Replica */}
-                <div className="p-4 bg-[#f8faf6] rounded-2xl border border-[#d6e3d2] shadow-xs space-y-3">
-                  <div className="text-center space-y-0.5">
-                    <h5 className="font-bold text-xs text-[#24331C]">
-                      सहायता तथा सम्पर्क (Help & Support)
-                    </h5>
-                    <p className="text-[10px] text-gray-500">
-                      {supportForm.supportNote || 'लगइन वा पासवर्ड सम्बन्धी समस्या परेमा सम्पर्क गर्नुहोस्'}
-                    </p>
+                {/* Login Page Card Replica matching LoginPage.tsx */}
+                <div className="bg-[#1A2616] rounded-xl p-4 border border-white/10 text-white text-xs space-y-2 shadow-inner">
+                  <h5 className="font-bold text-xs text-emerald-200 tracking-wide border-b border-white/10 pb-1 flex items-center justify-between">
+                    <span>सहायता तथा सम्पर्क</span>
+                    <span className="text-[9px] font-mono text-emerald-300/80 bg-white/5 px-1.5 py-0.5 rounded border border-white/10">
+                      Support
+                    </span>
+                  </h5>
+
+                  <div className="space-y-2 font-medium text-[11px] leading-relaxed text-emerald-50 pt-1">
+                    {Boolean(supportForm.phone?.trim()) && (
+                      <div className="flex items-start gap-1.5">
+                        <span className="font-bold text-white shrink-0">सम्पर्क नं. (Contact No.):</span>
+                        <a href={`tel:${supportForm.phone.trim()}`} className="font-mono text-emerald-100 hover:underline">
+                          {supportForm.phone.trim()}
+                        </a>
+                      </div>
+                    )}
+
+                    {Boolean(supportForm.email?.trim()) && (
+                      <div className="flex items-start gap-1.5">
+                        <span className="font-bold text-white shrink-0">इमेल (Email):</span>
+                        <a href={`mailto:${supportForm.email.trim()}`} className="font-mono text-[10px] text-emerald-100 hover:underline">
+                          {supportForm.email.trim()}
+                        </a>
+                      </div>
+                    )}
+
+                    {Boolean(supportForm.whatsapp?.trim()) && (
+                      <div className="flex items-start gap-1.5">
+                        <span className="font-bold text-white shrink-0">वाट्सएप (WhatsApp):</span>
+                        <a
+                          href={`https://wa.me/${supportForm.whatsapp.trim().replace(/[^0-9]/g, '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-mono text-[10px] text-emerald-100 hover:underline"
+                        >
+                          {supportForm.whatsapp.trim()}
+                        </a>
+                      </div>
+                    )}
+
+                    {Boolean(supportForm.supportNote?.trim()) && (
+                      <p className="text-[10px] text-emerald-100/90 leading-tight pt-0.5 italic">
+                        {supportForm.supportNote.trim()}
+                      </p>
+                    )}
+
+                    {!supportForm.phone?.trim() && !supportForm.email?.trim() && !supportForm.whatsapp?.trim() && !supportForm.supportNote?.trim() && (
+                      <div className="text-[10px] text-emerald-100/75 py-2 text-center bg-white/5 rounded-lg border border-white/5">
+                        कुनै सहायता सम्पर्क विवरण भरिएको छैन। लगइन पृष्ठमा सामान्य सहायता सन्देश मात्र देखिनेछ।
+                      </div>
+                    )}
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    {/* Call Button */}
-                    <a
-                      href={`tel:${supportForm.phone}`}
-                      className="flex items-center justify-center gap-1.5 p-2 bg-white rounded-xl border border-[#c8d7c2] text-[#24331C] font-semibold shadow-2xs hover:bg-[#edf4ea] transition-colors"
-                    >
-                      <Phone className="w-3.5 h-3.5 text-[#4B6043]" />
-                      <span className="truncate">{supportForm.phone || 'सम्पर्क नं.'}</span>
-                    </a>
-
-                    {/* WhatsApp Button */}
-                    <a
-                      href={`https://wa.me/${supportForm.whatsapp?.replace(/[^0-9]/g, '')}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-1.5 p-2 bg-emerald-600 text-white rounded-xl font-bold shadow-2xs hover:bg-emerald-700 transition-colors"
-                    >
-                      <MessageSquare className="w-3.5 h-3.5" />
-                      <span>WhatsApp</span>
-                    </a>
-                  </div>
-
-                  {/* Email */}
-                  {supportForm.email && (
-                    <a
-                      href={`mailto:${supportForm.email}`}
-                      className="flex items-center justify-center gap-1.5 p-2 bg-white rounded-xl border border-[#c8d7c2] text-gray-700 font-medium text-xs shadow-2xs hover:bg-gray-50 transition-colors"
-                    >
-                      <Mail className="w-3.5 h-3.5 text-blue-600" />
-                      <span className="truncate">{supportForm.email}</span>
-                    </a>
-                  )}
                 </div>
               </div>
             </div>

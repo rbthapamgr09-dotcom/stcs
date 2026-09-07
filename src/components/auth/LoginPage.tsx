@@ -312,30 +312,41 @@ export const LoginPage: React.FC = () => {
                 </span>
               </h3>
               <div className="space-y-1.5 font-medium text-[11px] leading-relaxed text-emerald-50">
-                {(supportContact?.phone || organization.phone) && (
+                {Boolean(supportContact?.phone?.trim()) && (
                   <div className="flex items-start gap-1.5">
                     <span className="font-bold text-white shrink-0">सम्पर्क नं. (Contact No.):</span>
-                    <span className="font-mono text-emerald-100">{supportContact?.phone || organization.phone}</span>
+                    <a href={`tel:${supportContact.phone.trim()}`} className="font-mono text-emerald-100 hover:underline">
+                      {supportContact.phone.trim()}
+                    </a>
                   </div>
                 )}
-                {(supportContact?.email || organization.email) && (
+                {Boolean(supportContact?.email?.trim()) && (
                   <div className="flex items-start gap-1.5">
                     <span className="font-bold text-white shrink-0">इमेल (Email):</span>
-                    <span className="font-mono text-[10px] text-emerald-100">{supportContact?.email || organization.email}</span>
+                    <a href={`mailto:${supportContact.email.trim()}`} className="font-mono text-[10px] text-emerald-100 hover:underline">
+                      {supportContact.email.trim()}
+                    </a>
                   </div>
                 )}
-                {(supportContact?.whatsapp || organization.whatsapp) && (
+                {Boolean(supportContact?.whatsapp?.trim()) && (
                   <div className="flex items-start gap-1.5">
                     <span className="font-bold text-white shrink-0">वाट्सएप (WhatsApp):</span>
-                    <span className="font-mono text-[10px] text-emerald-100">{supportContact?.whatsapp || organization.whatsapp}</span>
+                    <a
+                      href={`https://wa.me/${supportContact.whatsapp.trim().replace(/[^0-9]/g, '')}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-[10px] text-emerald-100 hover:underline"
+                    >
+                      {supportContact.whatsapp.trim()}
+                    </a>
                   </div>
                 )}
-                {supportContact?.supportNote && (
+                {Boolean(supportContact?.supportNote?.trim()) && (
                   <p className="text-[10px] text-emerald-100/90 leading-tight pt-0.5 italic">
-                    {supportContact.supportNote}
+                    {supportContact.supportNote!.trim()}
                   </p>
                 )}
-                {!supportContact?.phone && !supportContact?.email && !supportContact?.whatsapp && !organization.phone && !organization.email && (
+                {!supportContact?.phone?.trim() && !supportContact?.email?.trim() && !supportContact?.whatsapp?.trim() && !supportContact?.supportNote?.trim() && (
                   <div className="text-[10px] text-emerald-100/85">
                     प्रणाली सम्बन्धी सहायताको लागि सुपर एडमिन वा कार्यालय प्रशासकमा सम्पर्क राख्नुहोस्।
                   </div>
