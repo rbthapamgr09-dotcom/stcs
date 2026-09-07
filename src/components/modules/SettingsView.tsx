@@ -1365,7 +1365,19 @@ export const SettingsView: React.FC = () => {
                                 u.role !== 'SUPER_ADMIN' &&
                                 u.role !== 'ADMIN')) && (
                               <button
-                                onClick={() => deleteUser(u.id)}
+                                onClick={() => {
+                                  showConfirmation({
+                                    title: 'प्रयोगकर्ता हटाउने पुष्टि',
+                                    message: `के तपाईं प्रयोगकर्ता '${u.fullName}' (${u.username}) लाई हटाउन निश्चित हुनुहुन्छ? हटाए पश्चात सम्बन्धित कार्यालयको गुगल सिटमा पनि यो रेकर्ड स्वतः अद्यावधिक (Auto Save) हुनेछ।`,
+                                    confirmText: 'मेटाउनुहोस्',
+                                    cancelText: 'रद्द गर्नुहोस्',
+                                    isDangerous: true,
+                                    onConfirm: () => {
+                                      deleteUser(u.id);
+                                      hideConfirmation();
+                                    },
+                                  });
+                                }}
                                 className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                                 title="प्रयोगकर्ता हटाउनुहोस्"
                               >

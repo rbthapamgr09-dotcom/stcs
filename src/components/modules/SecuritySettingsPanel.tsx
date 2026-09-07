@@ -21,6 +21,10 @@ import {
   Server,
   Activity,
   UserCheck,
+  ExternalLink,
+  CloudUpload,
+  CloudDownload,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
@@ -28,6 +32,9 @@ import {
   getSecurityAuditLogs,
   clearSecurityAuditLogs,
   logSecurityEvent,
+  downloadAuditLogsCsv,
+  downloadAuditLogsJson,
+  mergeSecurityAuditLogs,
 } from '../../utils/securityUtils';
 import { toNepaliDigits } from '../../utils/nepaliCalendar';
 
@@ -41,6 +48,9 @@ export const SecuritySettingsPanel: React.FC = () => {
     lockScreen,
     inactivityTimeoutMinutes,
     setInactivityTimeoutMinutes,
+    googleSheetsConfig,
+    syncWithGoogleSheets,
+    organization,
     addToast,
   } = useApp();
 
@@ -49,6 +59,7 @@ export const SecuritySettingsPanel: React.FC = () => {
   );
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  const [isSyncingWithSheets, setIsSyncingWithSheets] = useState(false);
 
   const refreshLogs = () => {
     setAuditLogs(getSecurityAuditLogs());
@@ -76,21 +87,65 @@ export const SecuritySettingsPanel: React.FC = () => {
     }
   };
 
-  const handleExportLogs = () => {
-    const dataStr =
-      'data:text/json;charset=utf-8,' +
-      encodeURIComponent(JSON.stringify(auditLogs, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute(
-      'download',
-      `security_audit_logs_${new Date().toISOString().slice(0, 10)}.json`
-    );
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+  const handleDownloadCsv = () => {
+    try {
+      const officeName = (organization.officeName || organization.name || 'Office').replace(/\s+/g, '_');
+      const filename = `${officeName}_सुरक्षा_अडिट_लग_${new Date().toISOString().slice(0, 10)}.csv`;
+      downloadAuditLogsCsv(filteredLogs, filename);
+      addToast('success', 'Excel/CSV डाउनलोड भयो', 'सुरक्षा अडिट लग सफलतापूर्वक Excel/CSV फाइलमा डाउनलोड भयो।');
+    } catch (err: any) {
+      addToast('error', 'डाउनलोड असफल', err?.message || 'CSV फाइल डाउनलोड हुन सकेन।');
+    }
+  };
 
-    addToast('success', 'लग डाउनलोड भयो', 'सुरक्षा अडिट लग सफलतापूर्वक डाउनलोड भयो।');
+  const handleDownloadJson = () => {
+    try {
+      const officeName = (organization.officeName || organization.name || 'Office').replace(/\s+/g, '_');
+      const filename = `${officeName}_security_audit_logs_${new Date().toISOString().slice(0, 10)}.json`;
+      downloadAuditLogsJson(filteredLogs, filename);
+      addToast('success', 'JSON डाउनलोड भयो', 'सुरक्षा अडिट लग JSON ढाँचामा डाउनलोड भयो।');
+    } catch (err: any) {
+      addToast('error', 'डाउनलोड असफल', err?.message || 'JSON फाइल डाउनलोड हुन सकेन।');
+    }
+  };
+
+  const handleSyncToSheets = async () => {
+    setIsSyncingWithSheets(true);
+    try {
+      const res = await syncWithGoogleSheets('push');
+      if (res.success) {
+        addToast('success', 'गुगल सिटमा सुरक्षित', 'सुरक्षा तथा गतिविधि अडिट लग गुगल सिटमा सफलतापूर्वक अपडेट भयो।');
+      }
+    } catch (err: any) {
+      addToast('error', 'सिंक असफल', err?.message || 'गुगल सिटमा लग पठाउन सकिएन।');
+    } finally {
+      setIsSyncingWithSheets(false);
+    }
+  };
+
+  const handlePullFromSheets = async () => {
+    setIsSyncingWithSheets(true);
+    try {
+      const res = await syncWithGoogleSheets('pull');
+      if (res.success) {
+        setAuditLogs(getSecurityAuditLogs());
+        addToast('success', 'गुगल सिटबाट प्राप्त', 'गुगल सिटमा रहेका अडिट लगहरू सफलतापूर्वक एपमा लोड र मर्ज गरियो।');
+      }
+    } catch (err: any) {
+      addToast('error', 'डाटा तान्न असफल', err?.message || 'गुगल सिटबाट लग तान्न सकिएन।');
+    } finally {
+      setIsSyncingWithSheets(false);
+    }
+  };
+
+  const openGoogleSheet = () => {
+    if (googleSheetsConfig.spreadsheetUrl) {
+      window.open(googleSheetsConfig.spreadsheetUrl, '_blank', 'noopener,noreferrer');
+    } else if (googleSheetsConfig.spreadsheetId) {
+      window.open(`https://docs.google.com/spreadsheets/d/${googleSheetsConfig.spreadsheetId}/edit`, '_blank', 'noopener,noreferrer');
+    } else {
+      addToast('warning', 'सिट लिंक छैन', 'पहिले गुगल स्प्रेडसिट लिंक वा जडान गर्नुहोस्।');
+    }
   };
 
   // Calculate Security Health Score
@@ -301,7 +356,7 @@ export const SecuritySettingsPanel: React.FC = () => {
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={refreshLogs}
               className="p-2 border border-[#cadac4] hover:bg-[#eef4ea] rounded-xl text-xs font-semibold text-[#24331C] transition-colors cursor-pointer"
@@ -309,14 +364,66 @@ export const SecuritySettingsPanel: React.FC = () => {
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
+
+            {/* Google Sheet Direct View Button */}
+            {(googleSheetsConfig.spreadsheetId || googleSheetsConfig.spreadsheetUrl) && (
+              <button
+                onClick={openGoogleSheet}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f4f8f1] hover:bg-[#e6efe1] border border-[#cadac4] text-[#24331C] rounded-xl text-xs font-semibold transition-all shadow-xs cursor-pointer"
+                title="गुगल सिटमा सुरक्षा लग हेर्नुहोस् (Open Google Sheet)"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-[#4B6043]" />
+                <span>गुगल सिटमा हेर्नुहोस्</span>
+                <ExternalLink className="w-3 h-3 text-gray-400" />
+              </button>
+            )}
+
+            {/* Sync to Google Sheets */}
+            {(googleSheetsConfig.spreadsheetId || googleSheetsConfig.webAppUrl) && (
+              <button
+                onClick={handleSyncToSheets}
+                disabled={isSyncingWithSheets}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f4f8f1] hover:bg-[#e6efe1] border border-[#cadac4] text-[#24331C] rounded-xl text-xs font-semibold transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                title="गुगल सिटमा सुरक्षा लग सुरक्षित गर्नुहोस्"
+              >
+                <CloudUpload className={`w-3.5 h-3.5 text-[#4B6043] ${isSyncingWithSheets ? 'animate-bounce' : ''}`} />
+                <span>{isSyncingWithSheets ? 'सिंक हुँदै...' : 'सिटमा पठाउनुहोस्'}</span>
+              </button>
+            )}
+
+            {/* Pull from Google Sheets */}
+            {(googleSheetsConfig.spreadsheetId || googleSheetsConfig.webAppUrl) && (
+              <button
+                onClick={handlePullFromSheets}
+                disabled={isSyncingWithSheets}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f4f8f1] hover:bg-[#e6efe1] border border-[#cadac4] text-[#24331C] rounded-xl text-xs font-semibold transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                title="गुगल सिटबाट सुरक्षा लग तान्नुहोस्"
+              >
+                <CloudDownload className="w-3.5 h-3.5 text-[#4B6043]" />
+                <span>सिटबाट तान्नुहोस्</span>
+              </button>
+            )}
+
+            {/* Download CSV / Excel */}
             <button
-              onClick={handleExportLogs}
+              onClick={handleDownloadCsv}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#4B6043] hover:bg-[#3d5137] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
-              title="लग JSON फाइलको रूपमा डाउनलोड गर्नुहोस्"
+              title="सुरक्षा लग Excel/CSV फाइलमा डाउनलोड गर्नुहोस्"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>लग डाउनलोड</span>
+              <span>CSV/Excel डाउनलोड</span>
             </button>
+
+            {/* Download JSON */}
+            <button
+              onClick={handleDownloadJson}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              title="लग JSON फाइलको रूपमा डाउनलोड गर्नुहोस्"
+            >
+              <FileText className="w-3.5 h-3.5 text-gray-500" />
+              <span>JSON</span>
+            </button>
+
             {hasPermission('MANAGE_SETTINGS') && (
               <button
                 onClick={handleClearLogs}

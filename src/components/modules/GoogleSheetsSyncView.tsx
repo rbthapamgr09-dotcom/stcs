@@ -1201,8 +1201,8 @@ function logSyncAudit(ss, action, status, user, details) {
               </div>
               <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-300 flex items-center justify-between">
                 <div className="flex flex-col">
-                  <span className="font-bold text-emerald-900">८. AuditLog</span>
-                  <span className="text-[10px] text-emerald-700">Time log (UTC+05:45) Kathmandu</span>
+                  <span className="font-bold text-emerald-900">८. सुरक्षा_तथा_गतिविधि_लग (AuditLog)</span>
+                  <span className="text-[10px] text-emerald-700">Time log (UTC+05:45) Kathmandu & Security Trail</span>
                 </div>
                 <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-emerald-300 text-emerald-800 font-semibold">अडिट लग</span>
               </div>

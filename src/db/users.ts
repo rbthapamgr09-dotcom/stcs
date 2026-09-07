@@ -58,3 +58,13 @@ export async function getUserByUid(uid: string) {
     throw new Error('Failed to retrieve user from database.', { cause: error });
   }
 }
+
+export async function deleteUserByUid(uid: string) {
+  try {
+    const result = await db.delete(users).where(eq(users.uid, uid)).returning();
+    return result[0] || null;
+  } catch (error) {
+    console.error('Database query failed in deleteUserByUid:', error);
+    throw new Error('Failed to delete user from database.', { cause: error });
+  }
+}

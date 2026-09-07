@@ -291,19 +291,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                     {isExpanded && (
                       <div className="min-w-0 flex-1">
-                        {/* Nepali Menu Title: 12pt, Bold */}
+                        {/* Nepali Menu Title: 10pt, Bold as requested */}
                         <p
-                          style={{ fontSize: '12pt', lineHeight: 1.25 }}
-                          className={`font-bold truncate ${
+                          style={{ fontSize: '10pt', lineHeight: 1.3 }}
+                          className={`font-bold leading-tight ${
                             isActive ? 'text-white' : 'text-[#E8F1E5] group-hover:text-white'
                           }`}
+                          title={item.nepali}
                         >
                           {item.nepali}
                         </p>
                         
                         {/* English Menu Sub-title: Below Nepali Text */}
                         <p
-                          className={`text-xs truncate font-medium leading-tight mt-0.5 ${
+                          className={`text-[11px] truncate font-medium leading-tight mt-0.5 ${
                             isActive ? 'text-emerald-200' : 'text-emerald-300/80 group-hover:text-emerald-200'
                           }`}
                         >

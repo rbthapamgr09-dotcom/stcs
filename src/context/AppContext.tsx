@@ -60,6 +60,7 @@ import {
   getCloudAppConnection,
   saveCloudUsers,
   getCloudUsers,
+  deleteCloudUser,
 } from '../services/cloudSyncService';
 import {
   hashPasswordSync,
@@ -71,6 +72,8 @@ import {
   logSecurityEvent,
   generateDataChecksum,
   verifyDataChecksum,
+  getSecurityAuditLogs,
+  mergeSecurityAuditLogs,
 } from '../utils/securityUtils';
 
 interface ConfirmationDialogState {
@@ -264,6 +267,7 @@ interface AppContextType {
       overrideDeductionSetups?: Record<string, DeductionSetup>;
       overrideTaxReferences?: TaxReference[];
       overrideOrganization?: OrganizationSetup;
+      overrideUsers?: User[];
     }
   ) => Promise<{ success: boolean; message: string }>;
   isGoogleAccountConnected: boolean;
@@ -278,6 +282,7 @@ interface AppContextType {
     overrideDeductionSetups?: Record<string, DeductionSetup>;
     overrideTaxReferences?: TaxReference[];
     overrideOrganization?: OrganizationSetup;
+    overrideUsers?: User[];
   }) => Promise<void>;
   isAutoLoadingGoogleData: boolean;
   pullDataFromGoogle: (isSilent?: boolean) => Promise<boolean>;
@@ -1639,7 +1644,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: `user_${Date.now()}`,
       createdAt: new Date().toLocaleDateString('ne-NP'),
     };
-    setUsers((prev) => [...prev, newUser]);
+    const updatedUsers = [...users, newUser];
+    setUsers(updatedUsers);
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    } catch {
+      // Storage error ignore
+    }
+
+    saveCloudUsers(updatedUsers).catch(console.warn);
+    triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
       action: 'USER_CREATED',
@@ -1653,7 +1667,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     addToast(
       'success',
       'प्रयोगकर्ता दर्ता भयो',
-      `${newUser.fullName} लाई ${newUser.role} भूमिका सहित दर्ता गरियो। (प्रारम्भिक पासवर्ड: ${rawPassword})`
+      `${newUser.fullName} लाई ${newUser.role} भूमिका सहित दर्ता गरियो। गुगल सिटमा रेकर्ड सुरक्षित भयो।`
     );
     return true;
   };
@@ -1700,7 +1714,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updatedUser.isActive = existingTarget.isActive;
     }
 
-    setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
+    const updatedUsers = users.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+    setUsers(updatedUsers);
     if (currentUser?.id === updatedUser.id) {
       setCurrentUser(updatedUser);
       try {
@@ -1709,6 +1724,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // Storage error ignore
       }
     }
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    } catch {
+      // Storage error ignore
+    }
+
+    saveCloudUsers(updatedUsers).catch(console.warn);
+    triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
       action: 'USER_UPDATED',
@@ -1905,7 +1928,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return false;
     }
 
-    setUsers((prev) => prev.filter((u) => u.id !== id));
+    const updatedUsers = users.filter((u) => u.id !== id);
+    setUsers(updatedUsers);
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    } catch {
+      // Storage error ignore
+    }
+
+    deleteCloudUser(id).catch(console.warn);
+    saveCloudUsers(updatedUsers).catch(console.warn);
+    triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
       action: 'USER_DELETED',
@@ -1917,7 +1950,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       status: 'WARNING',
     });
 
-    addToast('info', 'प्रयोगकर्ता हटाइयो', 'प्रयोगकर्ता सफलतासाथ हटाइयो।');
+    addToast(
+      'info',
+      'प्रयोगकर्ता हटाइयो र सुरक्षित भयो',
+      `प्रयोगकर्ता ${target.fullName} लाई सफलतापूर्वक हटाइयो र गुगल सिटमा स्वतः रेकर्ड अद्यावधिक भयो।`
+    );
     return true;
   };
 
@@ -1945,12 +1982,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     const prevRole = target.role;
-    setUsers((prev) =>
-      prev.map((u) => (u.id === id ? { ...u, role: newRole } : u))
-    );
+    const updatedUsers = users.map((u) => (u.id === id ? { ...u, role: newRole } : u));
+    setUsers(updatedUsers);
     if (currentUser?.id === id) {
       setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));
     }
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    } catch {
+      // Storage error ignore
+    }
+
+    saveCloudUsers(updatedUsers).catch(console.warn);
+    triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
       action: 'ROLE_CHANGED',
@@ -3689,6 +3733,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       overrideDeductionSetups?: Record<string, DeductionSetup>;
       overrideTaxReferences?: TaxReference[];
       overrideOrganization?: OrganizationSetup;
+      overrideUsers?: User[];
     }
   ): Promise<{ success: boolean; message: string }> => {
     const targetEmployees = options?.overrideEmployees || employees;
@@ -3696,6 +3741,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const targetDeductionSetups = options?.overrideDeductionSetups || deductionSetups;
     const targetTaxReferences = options?.overrideTaxReferences || taxReferences;
     const targetOrg = options?.overrideOrganization || organization;
+    const targetUsers = options?.overrideUsers || users;
     const targetSpreadsheetId = options?.spreadsheetIdOverride || googleSheetsConfig.spreadsheetId;
     let url = (googleSheetsConfig.webAppUrl || '').trim();
 
@@ -3797,6 +3843,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       salarySetups: targetSalarySetups,
       deductionSetups: targetDeductionSetups,
       taxReferences: targetTaxReferences,
+      users: targetUsers,
+      auditLogs: getSecurityAuditLogs(),
       calculatedResults,
       monthlyItems,
       timestamp: new Date().toISOString(),
@@ -3834,6 +3882,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
             if (Array.isArray(pullData.taxReferences) && pullData.taxReferences.length > 0) {
               setTaxReferences(pullData.taxReferences);
+            }
+            if (Array.isArray(pullData.users) && pullData.users.length > 0) {
+              setUsers((prev) => {
+                const merged = [...prev];
+                for (const u of pullData.users!) {
+                  const idx = merged.findIndex(
+                    (m) => m.id === u.id || (m.username && u.username && m.username.toLowerCase() === u.username.toLowerCase())
+                  );
+                  if (idx >= 0) {
+                    merged[idx] = { ...merged[idx], ...u };
+                  } else {
+                    merged.push(u);
+                  }
+                }
+                try {
+                  localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
+                } catch {}
+                return merged;
+              });
+            }
+            if (Array.isArray(pullData.auditLogs) && pullData.auditLogs.length > 0) {
+              const currentLocalLogs = getSecurityAuditLogs();
+              mergeSecurityAuditLogs(currentLocalLogs, pullData.auditLogs);
             }
             directSyncSuccess = true;
             successMessage = directPullRes.message || 'गुगल सिट्सबाट डाटा प्राप्त भयो।';
@@ -3926,6 +3997,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             if (Array.isArray(resData.data.taxReferences) && resData.data.taxReferences.length > 0) {
               setTaxReferences(resData.data.taxReferences);
             }
+            if (Array.isArray(resData.data.users) && resData.data.users.length > 0) {
+              setUsers((prev) => {
+                const merged = [...prev];
+                for (const u of resData.data.users) {
+                  const idx = merged.findIndex(
+                    (m) => m.id === u.id || (m.username && u.username && m.username.toLowerCase() === u.username.toLowerCase())
+                  );
+                  if (idx >= 0) {
+                    merged[idx] = { ...merged[idx], ...u };
+                  } else {
+                    merged.push(u);
+                  }
+                }
+                try {
+                  localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
+                } catch {}
+                return merged;
+              });
+            }
+            if (Array.isArray(resData.data.auditLogs) && resData.data.auditLogs.length > 0) {
+              const currentLocalLogs = getSecurityAuditLogs();
+              mergeSecurityAuditLogs(currentLocalLogs, resData.data.auditLogs);
+            }
           }
 
           webAppSyncSuccess = true;
@@ -3983,6 +4077,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     overrideDeductionSetups?: Record<string, DeductionSetup>;
     overrideTaxReferences?: TaxReference[];
     overrideOrganization?: OrganizationSetup;
+    overrideUsers?: User[];
   }) => {
     // Only proceed if autoSync is not explicitly disabled
     if (googleSheetsConfig.autoSync === false) return;

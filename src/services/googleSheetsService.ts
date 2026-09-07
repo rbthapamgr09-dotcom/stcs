@@ -8,7 +8,9 @@ import {
   AnnualTaxCalculationResult,
   MonthlySalaryItem,
   NepaliMonth,
+  User,
 } from '../types';
+import { SecurityAuditLogItem } from '../utils/securityUtils';
 
 export interface AppSyncDataPayload {
   fiscalYear: string;
@@ -18,6 +20,8 @@ export interface AppSyncDataPayload {
   salarySetups: Record<string, SalarySetup>;
   deductionSetups: Record<string, DeductionSetup>;
   taxReferences: TaxReference[];
+  users?: User[];
+  auditLogs?: SecurityAuditLogItem[];
   calculatedResults?: Record<string, AnnualTaxCalculationResult>;
   monthlyItems?: MonthlySalaryItem[];
   timestamp?: string;
@@ -69,12 +73,15 @@ const REQUIRED_DATA_SHEET_NAMES = [
   'वार्षिक_कर_विवरण',
   'कार्यालय_विवरण',
   'कर_स्ल्याब_दर',
+  'प्रयोगकर्ता_सूची',
+  'सुरक्षा_तथा_गतिविधि_लग',
 ];
 
 const ALL_REQUIRED_SHEET_NAMES = [
   ...REQUIRED_DATA_SHEET_NAMES,
   'AuditLog',
 ];
+
 
 /**
  * Creates a new Google Spreadsheet on the user's Google Drive with all required sheet tabs
@@ -248,6 +255,8 @@ export async function pullDataFromGoogleSpreadsheet(
     salarySetups?: Record<string, SalarySetup>;
     deductionSetups?: Record<string, DeductionSetup>;
     taxReferences?: TaxReference[];
+    users?: User[];
+    auditLogs?: SecurityAuditLogItem[];
   };
 }> {
   try {
@@ -257,11 +266,15 @@ export async function pullDataFromGoogleSpreadsheet(
       'कट्टी_सेटअप!A1:Z500',
       'कार्यालय_विवरण!A1:Z500',
       'कर_स्ल्याब_दर!A1:Z500',
+      'प्रयोगकर्ता_सूची!A1:Z500',
+      'सुरक्षा_तथा_गतिविधि_लग!A1:Z500',
       'Employees!A1:Z500',
       'SalarySetup!A1:Z500',
       'DeductionSetup!A1:Z500',
       'Organization!A1:Z500',
       'TaxReference!A1:Z500',
+      'Users!A1:Z500',
+      'AuditLog!A1:Z500',
     ];
 
     const query = ranges.map((r) => `ranges=${encodeURIComponent(r)}`).join('&');
@@ -296,7 +309,7 @@ export async function pullDataFromGoogleSpreadsheet(
     if (empValues.length > 1) {
       const rows = empValues.slice(1);
       rows.forEach((row, idx) => {
-        if (!row || row.length === 0 || !row[1] && !row[2]) return;
+        if (!row || row.length === 0 || (!row[1] && !row[2])) return;
         const code = String(row[1] || '').trim();
         const name = String(row[2] || '').trim();
         if (!name) return;
@@ -435,14 +448,95 @@ export async function pullDataFromGoogleSpreadsheet(
       });
     }
 
+    // 5. Parse Users (प्रयोगकर्ता_सूची / Users)
+    const userValues = getRangeValues(['प्रयोगकर्ता_सूची', 'Users']);
+    const users: User[] = [];
+    if (userValues.length > 1) {
+      const rows = userValues.slice(1);
+      rows.forEach((row, idx) => {
+        if (!row || row.length === 0) return;
+        const uid = String(row[1] || '').trim();
+        const username = String(row[2] || '').trim();
+        const fullName = String(row[3] || '').trim();
+        if (!username && !fullName) return;
+
+        users.push({
+          id: uid || `user_${Date.now()}_${idx + 1}`,
+          username: username || `user_${idx + 1}`,
+          fullName: fullName || username,
+          role: (['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT', 'GENERAL_USER', 'VIEWER'].includes(String(row[4] || ''))
+            ? row[4]
+            : 'GENERAL_USER') as any,
+          email: String(row[5] || ''),
+          phone: String(row[6] || ''),
+          designation: String(row[7] || ''),
+          organizationName: String(row[8] || orgData.officeName || orgData.name || ''),
+          isActive: String(row[9] || 'सक्रिय').trim() === 'सक्रिय' || String(row[9] || '').trim() === 'Active' || String(row[9] || '') === 'true',
+          password: String(row[10] || ''),
+          createdAt: String(row[11] || new Date().toISOString()),
+          lastLogin: String(row[12] || ''),
+        });
+      });
+    }
+
+    // 6. Parse Security Audit Logs (सुरक्षा_तथा_गतिविधि_लग / AuditLog)
+    const auditValues = getRangeValues(['सुरक्षा_तथा_गतिविधि_लग', 'AuditLog']);
+    const auditLogs: SecurityAuditLogItem[] = [];
+    if (auditValues.length > 1) {
+      const rows = auditValues.slice(1);
+      rows.forEach((row, idx) => {
+        if (!row || row.length === 0) return;
+        // Check if row has detailed security audit format
+        const timestamp = String(row[1] || row[0] || new Date().toISOString()).trim();
+        const nepaliTimestamp = String(row[2] || row[1] || '').trim();
+        const actionTitle = String(row[3] || row[2] || 'गतिविधि लग').trim();
+        const actionCode = String(row[4] || row[3] || 'GENERAL_ACTIVITY').trim();
+        const category = (['AUTH', 'USER_MGMT', 'DATA_CHANGE', 'SECURITY', 'SYSTEM'].includes(String(row[5] || ''))
+          ? row[5]
+          : 'DATA_CHANGE') as any;
+        const username = String(row[6] || row[4] || 'प्रयोगकर्ता').trim();
+        const role = String(row[7] || 'GENERAL_USER').trim();
+        const uid = String(row[8] || '').trim();
+        const description = String(row[9] || row[5] || actionTitle).trim();
+        const statusRaw = String(row[10] || row[3] || 'SUCCESS').trim();
+        const status = statusRaw.includes('सफल') || statusRaw === 'SUCCESS'
+          ? 'SUCCESS'
+          : statusRaw.includes('चेतावनी') || statusRaw === 'WARNING'
+          ? 'WARNING'
+          : 'ERROR';
+        const details = String(row[11] || '').trim();
+        const ipOrDevice = String(row[12] || '').trim();
+
+        if (timestamp || description) {
+          auditLogs.push({
+            id: `audit_sheet_${Date.now()}_${idx + 1}`,
+            timestamp: timestamp.includes('T') ? timestamp : new Date().toISOString(),
+            nepaliTimestamp: nepaliTimestamp,
+            action: actionCode,
+            actionTitleNepali: actionTitle,
+            category: category,
+            userId: uid,
+            username: username,
+            userRole: role,
+            description: description,
+            status: status,
+            details: details || undefined,
+            ipOrDevice: ipOrDevice || undefined,
+          });
+        }
+      });
+    }
+
     return {
       success: true,
-      message: `गुगल सिट्सबाट ${employees.length} जना कर्मचारी र सेटिङ्स सफलतापूर्वक प्राप्त भयो।`,
+      message: `गुगल सिट्सबाट ${employees.length} जना कर्मचारी, ${users.length} प्रयोगकर्ता र ${auditLogs.length} अडिट लग सफलतापूर्वक प्राप्त भयो।`,
       data: {
         employees: employees.length > 0 ? employees : undefined,
         salarySetups: Object.keys(salarySetups).length > 0 ? salarySetups : undefined,
         deductionSetups: Object.keys(deductionSetups).length > 0 ? deductionSetups : undefined,
         organization: Object.keys(orgData).length > 0 ? orgData : undefined,
+        users: users.length > 0 ? users : undefined,
+        auditLogs: auditLogs.length > 0 ? auditLogs : undefined,
       },
     };
   } catch (err: any) {
@@ -830,6 +924,72 @@ function prepareSheetsData(payload: AppSyncDataPayload) {
     });
   });
 
+  // 8. Format User Accounts Data (प्रयोगकर्ता_सूची)
+  const userHeader = [
+    'क्र.सं.',
+    'User ID',
+    'प्रयोगकर्ताको नाम (Username)',
+    'पूरा नाम (Full Name)',
+    'भूमिका (Role)',
+    'इमेल (Email)',
+    'फोन नं.',
+    'पद (Designation)',
+    'सम्बद्ध कार्यालय (Office Name)',
+    'स्थिति (Status)',
+    'पासवर्ड ह्यास (Password Hash)',
+    'दर्ता मिति (Created At)',
+    'पछिल्लो लगइन (Last Login)',
+  ];
+
+  const userRows = (payload.users || []).map((u, idx) => [
+    idx + 1,
+    u.id,
+    u.username,
+    u.fullName,
+    u.role,
+    u.email || '',
+    u.phone || '',
+    u.designation || '',
+    u.organizationName || payload.organization.officeName || payload.organization.name || '',
+    u.isActive ? 'सक्रिय' : 'निष्क्रिय',
+    u.password || '',
+    u.createdAt || '',
+    u.lastLogin || '',
+  ]);
+
+  // 9. Format Security Audit Log Data (सुरक्षा_तथा_गतिविधि_लग)
+  const auditLogHeader = [
+    'क्र.सं.',
+    'समय (Date & Time)',
+    'नेपाली मिति/समय (BS Timestamp)',
+    'कार्य शीर्षक (Action Title)',
+    'कार्य कोड (Action Code)',
+    'वर्ग (Category)',
+    'प्रयोगकर्ता (Username)',
+    'भूमिका (Role)',
+    'User ID',
+    'विवरण (Description)',
+    'स्थिति (Status)',
+    'थप विवरण (Details)',
+    'उपकरण/डिभाइस (Device)',
+  ];
+
+  const auditLogRows = (payload.auditLogs || []).map((log, idx) => [
+    idx + 1,
+    log.timestamp || '',
+    log.nepaliTimestamp || '',
+    log.actionTitleNepali || log.action || '',
+    log.action || '',
+    log.category || '',
+    log.username || '',
+    log.userRole || '',
+    log.userId || '',
+    log.description || '',
+    log.status === 'SUCCESS' ? 'सफल' : log.status === 'WARNING' ? 'चेतावनी' : 'असफल',
+    log.details || '',
+    log.ipOrDevice || '',
+  ]);
+
   return {
     employeeData: [employeeHeader, ...employeeRows],
     salaryData: [salaryHeader, ...salaryRows],
@@ -838,6 +998,8 @@ function prepareSheetsData(payload: AppSyncDataPayload) {
     annualData: [annualHeader, ...annualRows],
     orgData: [orgHeader, ...orgRows],
     taxData: [taxHeader, ...taxRows],
+    userData: [userHeader, ...userRows],
+    auditLogData: [auditLogHeader, ...auditLogRows],
   };
 }
 
@@ -878,7 +1040,7 @@ async function appendAuditLog(
     action,
     status,
     payload.organization.officeName || payload.organization.name || 'System User',
-    `कुल ${payload.employees.length} जना कर्मचारी, तलब, कट्टी तथा कर गणना गुगल सिटमा सुरक्षित गरियो।`,
+    `कुल ${payload.employees.length} कर्मचारी र ${payload.users?.length || 0} प्रयोगकर्ता विवरण गुगल सिटमा सुरक्षित गरियो।`,
     payload.employees.length,
     payload.fiscalYear,
     payload.month,
@@ -940,7 +1102,7 @@ export async function pushDataToGoogleSpreadsheet(
   spreadsheetId: string,
   payload: AppSyncDataPayload
 ): Promise<{ success: boolean; message: string; updatedSheetsCount: number }> {
-  // Step 1: Ensure all sheets exist (including AuditLog)
+  // Step 1: Ensure all sheets exist (including AuditLog and प्रयोगकर्ता_सूची)
   await ensureSheetsExist(accessToken, spreadsheetId);
 
   // Step 2: Prepare formatted data
@@ -972,6 +1134,8 @@ export async function pushDataToGoogleSpreadsheet(
       { range: 'वार्षिक_कर_विवरण!A1', values: data.annualData },
       { range: 'कार्यालय_विवरण!A1', values: data.orgData },
       { range: 'कर_स्ल्याब_दर!A1', values: data.taxData },
+      { range: 'प्रयोगकर्ता_सूची!A1', values: data.userData },
+      { range: 'सुरक्षा_तथा_गतिविधि_लग!A1', values: data.auditLogData },
     ],
   };
 
@@ -997,7 +1161,96 @@ export async function pushDataToGoogleSpreadsheet(
 
   return {
     success: true,
-    message: `गुगल सिट्समा ${payload.employees.length} जना कर्मचारी, तलब, कट्टी तथा कर गणना सफलतापूर्वक सुरक्षित भयो (Time log: UTC+05:45 Kathmandu)।`,
-    updatedSheetsCount: 8,
+    message: `गुगल सिट्समा ${payload.employees.length} कर्मचारी, ${payload.users?.length || 0} प्रयोगकर्ता, ${payload.auditLogs?.length || 0} अडिट लग, तलब, कट्टी तथा कर गणना सफलतापूर्वक सुरक्षित भयो (Time log: UTC+05:45 Kathmandu)।`,
+    updatedSheetsCount: 9,
   };
 }
+
+/**
+ * Directly fetches Security Audit Logs from the connected Google Spreadsheet
+ */
+export async function fetchSecurityAuditLogsFromGoogleSpreadsheet(
+  accessToken: string,
+  spreadsheetId: string
+): Promise<SecurityAuditLogItem[]> {
+  try {
+    const ranges = ['सुरक्षा_तथा_गतिविधि_लग!A1:Z500', 'AuditLog!A1:Z500'];
+    const query = ranges.map((r) => `ranges=${encodeURIComponent(r)}`).join('&');
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${query}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+
+    if (!res.ok) {
+      throw new Error(`Google Sheets बाट अडिट लग प्राप्त गर्न सकिएन (Status: ${res.status})`);
+    }
+
+    const json = await res.json();
+    const valueRanges: Array<{ range: string; values?: any[][] }> = json.valueRanges || [];
+
+    const getRangeValues = (names: string[]): any[][] => {
+      for (const name of names) {
+        const found = valueRanges.find((vr) => vr.range.includes(name));
+        if (found && found.values && found.values.length > 0) {
+          return found.values;
+        }
+      }
+      return [];
+    };
+
+    const auditValues = getRangeValues(['सुरक्षा_तथा_गतिविधि_लग', 'AuditLog']);
+    const logs: SecurityAuditLogItem[] = [];
+
+    if (auditValues.length > 1) {
+      const rows = auditValues.slice(1);
+      rows.forEach((row, idx) => {
+        if (!row || row.length === 0) return;
+        const timestamp = String(row[1] || row[0] || new Date().toISOString()).trim();
+        const nepaliTimestamp = String(row[2] || row[1] || '').trim();
+        const actionTitle = String(row[3] || row[2] || 'गतिविधि लग').trim();
+        const actionCode = String(row[4] || row[3] || 'GENERAL_ACTIVITY').trim();
+        const category = (['AUTH', 'USER_MGMT', 'DATA_CHANGE', 'SECURITY', 'SYSTEM'].includes(String(row[5] || ''))
+          ? row[5]
+          : 'DATA_CHANGE') as any;
+        const username = String(row[6] || row[4] || 'प्रयोगकर्ता').trim();
+        const role = String(row[7] || 'GENERAL_USER').trim();
+        const uid = String(row[8] || '').trim();
+        const description = String(row[9] || row[5] || actionTitle).trim();
+        const statusRaw = String(row[10] || row[3] || 'SUCCESS').trim();
+        const status = statusRaw.includes('सफल') || statusRaw === 'SUCCESS'
+          ? 'SUCCESS'
+          : statusRaw.includes('चेतावनी') || statusRaw === 'WARNING'
+          ? 'WARNING'
+          : 'ERROR';
+        const details = String(row[11] || '').trim();
+        const ipOrDevice = String(row[12] || '').trim();
+
+        if (timestamp || description) {
+          logs.push({
+            id: `audit_sheet_${Date.now()}_${idx + 1}`,
+            timestamp: timestamp.includes('T') ? timestamp : new Date().toISOString(),
+            nepaliTimestamp: nepaliTimestamp,
+            action: actionCode,
+            actionTitleNepali: actionTitle,
+            category: category,
+            userId: uid,
+            username: username,
+            userRole: role,
+            description: description,
+            status: status,
+            details: details || undefined,
+            ipOrDevice: ipOrDevice || undefined,
+          });
+        }
+      });
+    }
+
+    return logs;
+  } catch (err) {
+    console.error('Fetch security audit logs error:', err);
+    return [];
+  }
+}
+

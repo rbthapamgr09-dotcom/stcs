@@ -632,3 +632,137 @@ export async function verifyDataChecksum(
   const computed = await generateDataChecksum(payloadData);
   return computed.toLowerCase() === providedChecksum.toLowerCase();
 }
+
+// --- 7. Security Audit Log Export & Download Utilities ---
+
+/**
+ * Escapes a cell for safe CSV generation with Unicode Devanagari support
+ */
+function escapeCsvCell(value: any): string {
+  if (value === null || value === undefined) return '""';
+  const str = String(value).replace(/"/g, '""');
+  return `"${str}"`;
+}
+
+/**
+ * Converts an array of SecurityAuditLogItem to a UTF-8 BOM CSV formatted string
+ * UTF-8 BOM (\uFEFF) ensures Excel and Google Sheets render Nepali Devanagari characters cleanly.
+ */
+export function exportAuditLogsToCsv(logs: SecurityAuditLogItem[]): string {
+  const headers = [
+    'क्र.सं. (S.N.)',
+    'मिति तथा समय (Date & Time)',
+    'नेपाली मिति/समय (BS Timestamp)',
+    'कार्य शीर्षक (Action Title)',
+    'कार्य कोड (Action Code)',
+    'वर्ग (Category)',
+    'प्रयोगकर्ता (Username)',
+    'भूमिका (User Role)',
+    'User ID',
+    'विवरण (Description)',
+    'स्थिति (Status)',
+    'थप विवरण (Details)',
+    'उपकरण/डिभाइस (Device)',
+  ];
+
+  const rows = logs.map((log, index) => [
+    index + 1,
+    log.timestamp,
+    log.nepaliTimestamp,
+    log.actionTitleNepali || log.action,
+    log.action,
+    log.category,
+    log.username,
+    log.userRole,
+    log.userId,
+    log.description,
+    log.status,
+    log.details || '',
+    log.ipOrDevice || '',
+  ]);
+
+  const csvContent = [
+    headers.map(escapeCsvCell).join(','),
+    ...rows.map((row) => row.map(escapeCsvCell).join(',')),
+  ].join('\r\n');
+
+  // Prepend UTF-8 BOM
+  return '\uFEFF' + csvContent;
+}
+
+/**
+ * Triggers a browser download of security audit logs in CSV / Excel format
+ */
+export function downloadAuditLogsCsv(
+  logs: SecurityAuditLogItem[],
+  filename: string = `nepal_payroll_audit_logs_${new Date().toISOString().slice(0, 10)}.csv`
+): void {
+  const csvData = exportAuditLogsToCsv(logs);
+  const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Triggers a browser download of security audit logs in formatted JSON format
+ */
+export function downloadAuditLogsJson(
+  logs: SecurityAuditLogItem[],
+  filename: string = `nepal_payroll_audit_logs_${new Date().toISOString().slice(0, 10)}.json`
+): void {
+  const jsonData = JSON.stringify(logs, null, 2);
+  const blob = new Blob([jsonData], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Merges remote/imported audit logs with local audit logs without creating duplicates
+ */
+export function mergeSecurityAuditLogs(
+  localLogs: SecurityAuditLogItem[],
+  incomingLogs: SecurityAuditLogItem[]
+): SecurityAuditLogItem[] {
+  const existingMap = new Map<string, SecurityAuditLogItem>();
+
+  // Add existing local logs
+  for (const log of localLogs) {
+    const key = log.id || `${log.timestamp}_${log.action}_${log.userId || log.username}`;
+    existingMap.set(key, log);
+  }
+
+  // Add incoming logs
+  for (const log of incomingLogs) {
+    const key = log.id || `${log.timestamp}_${log.action}_${log.userId || log.username}`;
+    if (!existingMap.has(key)) {
+      existingMap.set(key, log);
+    }
+  }
+
+  // Sort descending by timestamp
+  const merged = Array.from(existingMap.values()).sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+
+  const trimmed = merged.slice(0, MAX_AUDIT_LOG_ENTRIES);
+
+  try {
+    localStorage.setItem(AUDIT_LOG_STORAGE_KEY, JSON.stringify(trimmed));
+  } catch {
+    // Ignore storage issues
+  }
+
+  return trimmed;
+}

@@ -1,8 +1,9 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { requireAuth, optionalAuth, AuthRequest } from './src/middleware/auth.ts';
-import { getOrCreateUser, getUsers, getUserByUid } from './src/db/users.ts';
+import { getOrCreateUser, getUsers, getUserByUid, deleteUserByUid } from './src/db/users.ts';
 import {
   getOrganizations,
   upsertOrganization,
@@ -64,6 +65,21 @@ async function startServer() {
     } catch (error: any) {
       console.error('Failed to fetch users:', error);
       res.status(500).json({ error: error.message || 'Failed to fetch users' });
+    }
+  });
+
+  // Delete user endpoint
+  app.delete('/api/users/:uid', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const { uid } = req.params;
+      if (!uid) {
+        return res.status(400).json({ error: 'UID is required' });
+      }
+      const deleted = await deleteUserByUid(uid);
+      res.json({ success: true, user: deleted });
+    } catch (error: any) {
+      console.error('Failed to delete user:', error);
+      res.status(500).json({ error: error.message || 'Failed to delete user' });
     }
   });
 

@@ -221,3 +221,16 @@ export async function getCloudUsers(): Promise<User[] | null> {
     return null;
   }
 }
+
+/**
+ * Removes a deleted user account from Cloud SQL backend
+ */
+export async function deleteCloudUser(userId: string): Promise<void> {
+  try {
+    await fetch(`/api/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    });
+  } catch (err) {
+    console.warn('Could not delete user from Cloud SQL API:', err);
+  }
+}
