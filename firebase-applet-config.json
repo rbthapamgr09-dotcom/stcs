@@ -3,6 +3,7 @@
   "appId": "1:233298626216:web:08d8e2424e47c22bc3249d",
   "apiKey": "AIzaSyBayelHKX_mQAt9DSheBVRymEqXbF1bROI",
   "authDomain": "inner-volt-dxfhk.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-0e40d00e-d249-4cfb-9b34-c114c9ca9db6",
   "storageBucket": "inner-volt-dxfhk.firebasestorage.app",
   "messagingSenderId": "233298626216",
   "measurementId": "",

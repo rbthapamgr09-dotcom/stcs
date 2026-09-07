@@ -16,6 +16,8 @@ export interface CloudAppConnectionData {
   webAppUrl?: string;
   spreadsheetId?: string;
   spreadsheetUrl?: string;
+  spreadsheetName?: string;
+  connectedAccountEmail?: string;
   autoSync?: boolean;
   syncMode?: 'auto' | 'manual';
   organization?: OrganizationSetup;
@@ -42,6 +44,8 @@ export async function saveCloudAppConnection(
     webAppUrl: (config.webAppUrl || '').trim(),
     spreadsheetId: (config.spreadsheetId || '').trim(),
     spreadsheetUrl: (config.spreadsheetUrl || '').trim(),
+    spreadsheetName: (config.spreadsheetName || '').trim(),
+    connectedAccountEmail: (config.connectedAccountEmail || '').trim(),
     autoSync: config.autoSync ?? true,
     syncMode: config.syncMode || 'auto',
     organization: organization || undefined,

@@ -113,7 +113,11 @@ export async function createAppSpreadsheet(
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
-    throw new Error(errData?.error?.message || `Google Spreadsheet सिर्जना गर्न सकिएन (Status: ${response.status})`);
+    const rawMsg = String(errData?.error?.message || '');
+    if (rawMsg.toLowerCase().includes('scope') || rawMsg.toLowerCase().includes('insufficient')) {
+      throw new Error('Google OAuth अनुमति (Scopes) अभाव: गुगलको प्रत्यक्ष REST API बाट सिट सिर्जना गर्न सकिएन।');
+    }
+    throw new Error(rawMsg || `Google Spreadsheet सिर्जना गर्न सकिएन (Status: ${response.status})`);
   }
 
   const result = await response.json();

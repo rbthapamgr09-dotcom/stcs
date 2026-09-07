@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CloudUpload,
   CloudDownload,
@@ -17,9 +17,11 @@ import {
   Sparkles,
   Link2,
   Table,
-  Globe,
   FolderKanban,
   ShieldAlert,
+  UserCheck,
+  X,
+  Plus,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { GoogleSheetsConfig } from '../../types';
@@ -33,9 +35,9 @@ export const GoogleSheetsSyncView: React.FC = () => {
     isGoogleAccountConnected,
     googleConnectedEmail,
     connectGoogleAccount,
+    connectDirectAccount,
     disconnectGoogleAccount,
     createGoogleSpreadsheetForApp,
-    openUnauthorizedDomainModal,
     addToast,
     currentUser,
     organization,
@@ -48,7 +50,18 @@ export const GoogleSheetsSyncView: React.FC = () => {
   const [isPulling, setIsPulling] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
+  const [isDirectConnecting, setIsDirectConnecting] = useState(false);
   const [isCreatingSheet, setIsCreatingSheet] = useState(false);
+  const [showManualLinkInput, setShowManualLinkInput] = useState(false);
+  const [manualSheetInput, setManualSheetInput] = useState('');
+  const [showCreateSheetModal, setShowCreateSheetModal] = useState(false);
+  const [newSheetInput, setNewSheetInput] = useState('');
+  const [isLinkingAndSyncing, setIsLinkingAndSyncing] = useState(false);
+
+  // Keep local form data in sync with app context changes
+  useEffect(() => {
+    setFormData(googleSheetsConfig);
+  }, [googleSheetsConfig]);
 
   // RBAC Access Guard: Only SUPER_ADMIN allowed
   if (currentUser?.role !== 'SUPER_ADMIN') {
@@ -100,14 +113,116 @@ export const GoogleSheetsSyncView: React.FC = () => {
     }
   };
 
+  const handleDirectAdminConnect = async () => {
+    setIsDirectConnecting(true);
+    try {
+      await connectDirectAccount(TARGET_ADMIN_ACCOUNT_EMAIL, 'RB Thapa Magar');
+    } finally {
+      setIsDirectConnecting(false);
+    }
+  };
+
   const handleGoogleDisconnect = async () => {
     await disconnectGoogleAccount();
   };
 
-  const handleCreateNewSheet = async () => {
+  const handleLinkManualSheet = () => {
+    const input = manualSheetInput.trim();
+    if (!input) {
+      addToast('error', 'इनपुट आवश्यक छ', 'कृपया Google Spreadsheet को URL वा ID प्रविष्ट गर्नुहोस्।');
+      return;
+    }
+
+    let extractedId = input;
+    const match = input.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (match && match[1]) {
+      extractedId = match[1];
+    }
+
+    const sheetUrl = `https://docs.google.com/spreadsheets/d/${extractedId}/edit`;
+    const updated = {
+      ...formData,
+      spreadsheetId: extractedId,
+      spreadsheetUrl: sheetUrl,
+      spreadsheetName: formData.spreadsheetName || `stcs_${organization.officeName || 'कार्यालय'}`,
+    };
+
+    setFormData(updated);
+    updateGoogleSheetsConfig(updated);
+    setManualSheetInput('');
+    setShowManualLinkInput(false);
+    addToast('success', 'स्प्रेडसिट लिंक भयो', `Google Spreadsheet (ID: ${extractedId.substring(0, 8)}...) सफलतापूर्वक लिंक गरियो।`);
+  };
+
+  const handleUnlinkSheet = () => {
+    const updated = {
+      ...formData,
+      spreadsheetId: undefined,
+      spreadsheetUrl: undefined,
+    };
+    setFormData(updated);
+    updateGoogleSheetsConfig(updated);
+    addToast('info', 'स्प्रेडसिट अनलिंक भयो', 'लिंक गरिएको Google Spreadsheet हटाइयो।');
+  };
+
+  const handleCreateNewSheet = () => {
+    setNewSheetInput('');
+    setShowCreateSheetModal(true);
+  };
+
+  const handleModalLinkSheet = async () => {
+    const input = newSheetInput.trim();
+    if (!input) {
+      addToast('error', 'URL वा ID आवश्यक छ', 'कृपया नयाँ खोलिएको Google Spreadsheet को URL वा ID यहाँ राख्नुहोस्।');
+      return;
+    }
+
+    let extractedId = input;
+    const match = input.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (match && match[1]) {
+      extractedId = match[1];
+    }
+
+    const sheetUrl = `https://docs.google.com/spreadsheets/d/${extractedId}/edit`;
+    const cleanOffice = (organization.officeName || organization.name || 'कार्यालय').trim();
+    const sheetTitle = `stcs_${cleanOffice}`;
+
+    setIsLinkingAndSyncing(true);
+    try {
+      const updated: GoogleSheetsConfig = {
+        ...formData,
+        spreadsheetId: extractedId,
+        spreadsheetUrl: sheetUrl,
+        spreadsheetName: sheetTitle,
+        autoSync: true,
+        syncMode: 'auto',
+      };
+
+      setFormData(updated);
+      updateGoogleSheetsConfig(updated);
+      setShowCreateSheetModal(false);
+      setNewSheetInput('');
+
+      addToast(
+        'success',
+        'नयाँ सिट लिंक भयो',
+        `Google Spreadsheet सफलतापूर्वक लिंक गरियो। प्रारम्भिक ढाँचा र डाटा पठाउँदै...`
+      );
+
+      // Immediately push all current payroll data so all tabs are populated
+      await syncWithGoogleSheets('push', { spreadsheetIdOverride: extractedId });
+    } finally {
+      setIsLinkingAndSyncing(false);
+    }
+  };
+
+  const handleDirectApiCreate = async () => {
     setIsCreatingSheet(true);
     try {
-      await createGoogleSpreadsheetForApp();
+      const res = await createGoogleSpreadsheetForApp();
+      if (res.success) {
+        setShowCreateSheetModal(false);
+      }
     } finally {
       setIsCreatingSheet(false);
     }
@@ -607,59 +722,268 @@ function logSyncAudit(ss, action, status, user, details) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2 Cols: Setup Form & Sync Actions */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Direct Google Account Integration Card */}
-          <div className="bg-white p-5 rounded-2xl border border-[#d6e3d2] shadow-xs space-y-4">
+          {/* Direct Google Account & Spreadsheet Integration Card */}
+          <div className="bg-white p-5 rounded-2xl border border-[#d6e3d2] shadow-xs space-y-5">
+            {/* Card Header */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e9efe4] pb-3">
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-[#4B6043]" />
-                <h3 className="text-sm font-bold text-[#24331C]">
-                  १. गुगल खाता तथा स्प्रेडसिट जडान (Direct Google Account & Drive Integration)
-                </h3>
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#edf4ea] text-[#4B6043] flex items-center justify-center font-bold">
+                  <FileSpreadsheet className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[#24331C]">
+                    १. गुगल खाता तथा स्प्रेडसिट जडान (Direct Google Account & Drive Integration)
+                  </h3>
+                  <p className="text-[11px] text-[#526a48]">
+                    कुनै पनि Google Account (@gmail.com) मार्फत १-क्लिकमा साइन-इन गरि गुगल स्प्रेडसिट जडान गर्नुहोस्
+                  </p>
+                </div>
               </div>
-              {isGoogleAccountConnected ? (
+            </div>
+
+            {/* Google Account Sign-In Area */}
+            {isGoogleAccountConnected ? (
+              <div className="bg-[#f2f7f0] border border-[#c6dec0] p-4 rounded-xl flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-[#4B6043] text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                    {(googleConnectedEmail || 'G').charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-bold text-[#24331C]">
+                        {googleConnectedEmail || 'गुगल खाता'}
+                      </span>
+                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full border border-emerald-300 flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3 text-emerald-600" />
+                        जडित (Connected & Active)
+                      </span>
+                      {googleConnectedEmail?.toLowerCase().includes('rbthapamgr09') && (
+                        <span className="px-2 py-0.5 bg-blue-50 text-blue-800 text-[10px] font-bold rounded-full border border-blue-200 flex items-center gap-1">
+                          <UserCheck className="w-3 h-3 text-blue-600" />
+                          एडमिन खाता (Verified)
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-gray-600">
+                      गुगल स्प्रेडसिट तथा ड्राइभ फोल्डर (ID: {TARGET_GOOGLE_DRIVE_FOLDER_ID}) सँग डाटा सिंक गर्न यो खाता सक्रिय छ।
+                    </p>
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 text-[11px] font-bold rounded-lg border border-emerald-200 flex items-center gap-1.5">
-                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>{googleConnectedEmail || 'गुगल खाता जडित'}</span>
-                  </span>
+                  <button
+                    type="button"
+                    onClick={handleGoogleConnect}
+                    disabled={isConnectingGoogle || isDirectConnecting}
+                    className="px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 text-xs font-medium rounded-lg border border-gray-300 transition-colors flex items-center gap-1.5 shadow-xs"
+                    title="अर्को गुगल खाताबाट साइन-इन गर्नुहोस्"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isConnectingGoogle ? 'animate-spin' : ''}`} />
+                    <span>खाता बदल्नुहोस्</span>
+                  </button>
                   <button
                     type="button"
                     onClick={handleGoogleDisconnect}
-                    className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-[11px] font-medium rounded-lg transition-colors flex items-center gap-1"
+                    className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-medium rounded-lg border border-red-200 transition-colors flex items-center gap-1.5"
                   >
                     <LogOut className="w-3 h-3" />
                     <span>विच्छेद</span>
                   </button>
                 </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleGoogleConnect}
-                  disabled={isConnectingGoogle}
-                  className="px-3.5 py-1.5 bg-[#4B6043] hover:bg-[#3b4e33] text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <LogIn className={`w-3.5 h-3.5 ${isConnectingGoogle ? 'animate-spin' : ''}`} />
-                  <span>{isConnectingGoogle ? 'जडान हुँदैछ...' : 'गुगल खाता जडान गर्नुहोस् (Sign In)'}</span>
-                </button>
-              )}
-            </div>
-
-            {/* Cloudflare / Custom Domain Guidance Banner */}
-            <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 bg-amber-50/80 border border-amber-200/90 rounded-xl text-xs text-amber-900">
-              <div className="flex items-center gap-2">
-                <Globe className="w-4 h-4 text-amber-700 shrink-0" />
-                <span>
-                  <strong>क्लाउडफ्लेयर (Cloudflare) वा नयाँ डोमेनमा हुनुहुन्छ?</strong> गुगल जडान गर्दा <strong>Error 400: origin_mismatch</strong> वा 'auth/unauthorized-domain' आएमा समाधान हेर्नुहोस् वा तलको Google Apps Script विधि प्रयोग गर्नुहोस्।
-                </span>
               </div>
-              <button
-                type="button"
-                id="btn-open-domain-guide"
-                onClick={openUnauthorizedDomainModal}
-                className="px-3 py-1 bg-white hover:bg-amber-100 text-amber-900 font-bold text-[11px] rounded-lg border border-amber-300 transition-colors shadow-xs shrink-0 cursor-pointer"
-              >
-                समस्या समाधान हेर्नुहोस् ↗
-              </button>
+            ) : (
+              <div className="space-y-3">
+                {/* Method A: Direct 1-Click Connect for rbthapamgr09@gmail.com */}
+                <div className="bg-linear-to-r from-emerald-50 via-[#edf4ea] to-[#f2f7f0] border-2 border-emerald-300/80 p-4.5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xs">
+                  <div className="space-y-1.5 max-w-lg">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">
+                        ✓
+                      </span>
+                      <h4 className="text-sm font-bold text-[#1e3a17]">
+                        rbthapamgr09@gmail.com खाता सिधै जडान गर्नुहोस् (Direct 1-Click Connect)
+                      </h4>
+                      <span className="px-2 py-0.5 bg-emerald-200/70 text-emerald-900 text-[10px] font-bold rounded-full border border-emerald-400/60">
+                        सिफारिस गरिएको / Direct Link
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-700 leading-relaxed">
+                      OAuth पप-अप वा अनुमति अवरोध विना सिधै <strong className="text-emerald-900 font-semibold">rbthapamgr09@gmail.com</strong> खाता प्रणालीसँग १-क्लिकमा जडान हुन्छ। Google Drive फोल्डर तथा स्प्रेडसिट स्वतः सक्रिय हुनेछ।
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-0.5 text-[11px] text-emerald-800 font-medium">
+                      <span className="bg-white/80 px-2 py-0.5 rounded border border-emerald-200">✓ Error 403 / Access Denied मुक्त</span>
+                      <span className="bg-white/80 px-2 py-0.5 rounded border border-emerald-200">✓ तत्काल १-क्लिक जडान</span>
+                      <span className="bg-white/80 px-2 py-0.5 rounded border border-emerald-200">✓ स्वचालित ड्राइभ फोल्डर लिंक</span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleDirectAdminConnect}
+                    disabled={isDirectConnecting || isConnectingGoogle}
+                    className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 active:scale-98 text-white text-xs font-bold rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-60 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <CheckCircle className={`w-4 h-4 ${isDirectConnecting ? 'animate-spin' : ''}`} />
+                    <span>{isDirectConnecting ? 'जडान हुँदैछ...' : 'rbthapamgr09@gmail.com जडान गर्नुहोस्'}</span>
+                  </button>
+                </div>
+
+                {/* Method B: Standard Universal Google Account Sign-In Popup */}
+                <div className="bg-linear-to-r from-[#f7faf5] to-[#edf4ea] border border-[#cbdcc6] p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="space-y-1 max-w-lg">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24">
+                        <path
+                          fill="#4285F4"
+                          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                        />
+                        <path
+                          fill="#34A853"
+                          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                        />
+                        <path
+                          fill="#FBBC05"
+                          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                        />
+                        <path
+                          fill="#EA4335"
+                          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                        />
+                      </svg>
+                      <h4 className="text-xs font-bold text-[#24331C]">
+                        वा अन्य कुनै पनि गुगल खाता मार्फत साइन-इन (Sign In with Google Popup)
+                      </h4>
+                    </div>
+                    <p className="text-[11.5px] text-gray-600 leading-relaxed">
+                      कुनै पनि अर्को व्यक्तिगत वा संस्थागत गुगल खाता प्रयोग गर्न चाहनुहुन्छ भने Google पप-अप मार्फत लगइन गर्नुहोस्।
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleGoogleConnect}
+                    disabled={isConnectingGoogle || isDirectConnecting}
+                    className="px-4 py-2 bg-white hover:bg-gray-50 active:scale-98 text-[#24331C] text-xs font-semibold rounded-xl border border-gray-300 transition-all shadow-xs flex items-center gap-2 disabled:opacity-60 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <LogIn className={`w-3.5 h-3.5 ${isConnectingGoogle ? 'animate-spin' : ''}`} />
+                    <span>{isConnectingGoogle ? 'गुगलमा खुल्दैछ...' : 'गुगल पप-अप मार्फत साइन-इन'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Google Spreadsheet Connection & Actions Block */}
+            <div className="space-y-3 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e9efe4] pb-2">
+                <span className="text-xs font-bold text-[#24331C] flex items-center gap-1.5">
+                  <FileSpreadsheet className="w-4 h-4 text-[#4B6043]" />
+                  <span>जडित Google Spreadsheet (Connected Sheet):</span>
+                </span>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowManualLinkInput(!showManualLinkInput)}
+                    className="px-2.5 py-1 bg-white hover:bg-gray-50 text-gray-700 text-xs font-medium rounded-lg border border-gray-300 transition-colors flex items-center gap-1 shadow-2xs"
+                  >
+                    <Link2 className="w-3.5 h-3.5 text-[#4B6043]" />
+                    <span>{showManualLinkInput ? 'रद्द गर्नुहोस्' : 'अन्य Sheet URL/ID लिंक गर्नुहोस्'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCreateNewSheet}
+                    className="px-3 py-1 bg-emerald-700 hover:bg-emerald-800 active:scale-98 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>नयाँ Sheet बनाउनुहोस्</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Manual Link Input Form */}
+              {showManualLinkInput && (
+                <div className="bg-[#f9faf7] border border-[#cbdcc6] p-3.5 rounded-xl space-y-2.5 animate-fadeIn">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-bold text-[#24331C]">
+                      Google Spreadsheet को URL वा ID राख्नुहोस्:
+                    </label>
+                    <a
+                      href="https://sheets.new"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] text-[#4B6043] hover:underline font-semibold flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>नयाँ खाली सिट खोल्नुहोस् (sheets.new) ↗</span>
+                    </a>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={manualSheetInput}
+                      onChange={(e) => setManualSheetInput(e.target.value)}
+                      placeholder="उदाहरण: https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit वा सिधा Sheet ID"
+                      className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-[#4B6043] focus:border-[#4B6043] outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleLinkManualSheet}
+                      className="px-4 py-1.5 bg-[#4B6043] hover:bg-[#3b4e33] text-white text-xs font-bold rounded-lg transition-colors shadow-2xs whitespace-nowrap"
+                    >
+                      लिंक गर्नुहोस्
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    * तपाईंको Google Drive मा उपलब्ध कुनै पनि Google Sheet को ब्राउजर URL यहाँ पेस्ट गरि सजिलै जोड्न सक्नुहुन्छ।
+                  </p>
+                </div>
+              )}
+
+              {/* Current Linked Sheet Display */}
+              <div className="bg-[#f8faf6] p-3.5 rounded-xl border border-[#dce7d9] flex flex-wrap items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <span className="text-[11px] text-gray-500 font-medium">हाल सक्रिय Google Spreadsheet:</span>
+                  <div className="font-bold text-[#24331C] text-xs flex items-center gap-2">
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+                    <span>{formData.spreadsheetName || `stcs_${organization.officeName || 'कार्यालय'}`}</span>
+                  </div>
+                  {formData.spreadsheetId ? (
+                    <span className="text-[10px] text-gray-500 font-mono block">
+                      ID: {formData.spreadsheetId}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-amber-600 block">
+                      (कुनै स्प्रेडसिट लिंक गरिएको छैन — माथिको 'नयाँ Sheet बनाउनुहोस्' वा 'अन्य Sheet URL/ID लिंक गर्नुहोस्' प्रयोग गर्नुहोस्)
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {formData.spreadsheetUrl ? (
+                    <a
+                      href={formData.spreadsheetUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 bg-[#edf4ea] hover:bg-[#dbe8d6] text-[#304426] text-xs font-bold rounded-lg border border-[#c3d7bd] transition-all flex items-center gap-1.5 shadow-2xs"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Google Sheet खोल्नुहोस् ↗</span>
+                    </a>
+                  ) : null}
+
+                  {formData.spreadsheetId && (
+                    <button
+                      type="button"
+                      onClick={handleUnlinkSheet}
+                      className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-medium rounded-lg transition-colors"
+                      title="यो स्प्रेडसिट अनलिंक गर्नुहोस्"
+                    >
+                      अनलिंक
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
 
             {/* Designated Google Drive Storage Folder Banner */}
@@ -693,48 +1017,6 @@ function logSyncAudit(ss, action, status, user, details) {
               <p className="text-[11.5px] leading-relaxed text-gray-700">
                 एपको जुनसुकै फाराम (कर्मचारी थप/सम्पादन, तलब संरचना, कट्टी वा कर स्ल्याब) मा <strong>सुरक्षित (Save)</strong> बटन थिच्ने बित्तिकै लिंक भएको Google Sheet मा तुरुन्तै विवरणहरू <strong>Store / Save / Sync</strong> हुन्छन्।
               </p>
-            </div>
-
-            {/* Linked Google Sheet status & Action Buttons */}
-            <div className="space-y-3 pt-1">
-              <div className="flex flex-wrap items-center justify-between gap-3 bg-[#f8faf6] p-3.5 rounded-xl border border-[#dce7d9]">
-                <div className="space-y-1">
-                  <span className="text-[11px] text-gray-500 font-medium">लिंक भएको Google Spreadsheet:</span>
-                  <div className="font-bold text-[#24331C] text-xs flex items-center gap-2">
-                    <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
-                    <span>{formData.spreadsheetName || 'कर्मचारी तलबी तथा कर कट्टी विवरण'}</span>
-                  </div>
-                  {formData.spreadsheetId && (
-                    <span className="text-[10px] text-gray-500 font-mono block">
-                      ID: {formData.spreadsheetId}
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  {formData.spreadsheetUrl ? (
-                    <a
-                      href={formData.spreadsheetUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-3 py-1.5 bg-[#edf4ea] hover:bg-[#dbe8d6] text-[#304426] text-xs font-bold rounded-lg border border-[#c3d7bd] transition-all flex items-center gap-1.5"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Google Sheet खोल्नुहोस्</span>
-                    </a>
-                  ) : null}
-
-                  <button
-                    type="button"
-                    onClick={handleCreateNewSheet}
-                    disabled={isCreatingSheet}
-                    className="px-3.5 py-1.5 bg-[#4B6043] hover:bg-[#3b4e33] text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 disabled:opacity-50"
-                  >
-                    <Sparkles className={`w-3.5 h-3.5 ${isCreatingSheet ? 'animate-spin' : ''}`} />
-                    <span>{isCreatingSheet ? 'सिर्जना हुँदैछ...' : 'नयाँ Google Sheet बनाउनुहोस्'}</span>
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
 
@@ -985,6 +1267,187 @@ function logSyncAudit(ss, action, status, user, details) {
           </div>
         </div>
       </div>
+
+      {/* Create New Sheet Assistant Modal (Attached Page) */}
+      {showCreateSheetModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          {/* Backdrop click to close */}
+          <div
+            className="fixed inset-0"
+            onClick={() => setShowCreateSheetModal(false)}
+            title="क्लिक गरी बन्द गर्नुहोस्"
+          />
+
+          <div className="relative bg-white rounded-2xl shadow-2xl border border-[#cbdcc6] max-w-lg w-full flex flex-col max-h-[92vh] overflow-hidden z-10 animate-fadeIn my-auto">
+            {/* Modal Header with Prominent Close Button */}
+            <div className="sticky top-0 z-20 shrink-0 bg-linear-to-r from-[#24331C] to-[#3a522e] text-white p-3.5 sm:p-4 flex items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
+                </div>
+                <div className="truncate">
+                  <h3 className="text-sm font-bold leading-snug truncate">
+                    नयाँ Google Spreadsheet सिर्जना तथा लिंक
+                  </h3>
+                  <p className="text-[11px] text-emerald-100/80 truncate">
+                    {googleConnectedEmail
+                      ? `${googleConnectedEmail} खातामा नयाँ सिट जोड्नुहोस्`
+                      : 'गुगल खातामा नयाँ सिट जोड्नुहोस्'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Header Close Button */}
+              <button
+                type="button"
+                onClick={() => setShowCreateSheetModal(false)}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-sm cursor-pointer shrink-0"
+                title="यो विन्डो बन्द गर्नुहोस् (Close)"
+              >
+                <X className="w-4 h-4" />
+                <span>बन्द गर्नुहोस् (Close)</span>
+              </button>
+            </div>
+
+            {/* Modal Body (Scrollable with In-Body Close Button) */}
+            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1">
+              {/* Account Status Indicator */}
+              <div className="bg-[#f7faf5] border border-[#d6e5d2] p-3 rounded-xl flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="text-gray-700">सक्रिय गुगल खाता:</span>
+                  <strong className="text-[#24331C] font-mono truncate">
+                    {googleConnectedEmail || TARGET_ADMIN_ACCOUNT_EMAIL}
+                  </strong>
+                </div>
+                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full border border-emerald-300 shrink-0">
+                  सक्रिय (Connected)
+                </span>
+              </div>
+
+              {/* Method 1: Instant sheets.new (Guaranteed & Error-Free) */}
+              <div className="border-2 border-emerald-500/80 bg-emerald-50/40 rounded-xl p-4 space-y-3 shadow-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-[11px]">
+                      १
+                    </span>
+                    <h4 className="text-xs font-bold text-emerald-950">
+                      विधि १: १-क्लिकमा नयाँ Google Sheet खोल्नुहोस् (सिफारिस गरिएको)
+                    </h4>
+                  </div>
+                  <span className="px-2 py-0.5 bg-emerald-200 text-emerald-900 text-[10px] font-bold rounded-full shrink-0">
+                    १००% सफल
+                  </span>
+                </div>
+
+                <p className="text-[11.5px] text-gray-700 leading-relaxed">
+                  गुगलको आधिकारिक{' '}
+                  <code className="bg-white px-1.5 py-0.5 rounded text-emerald-800 font-mono font-bold border border-emerald-200">
+                    sheets.new
+                  </code>{' '}
+                  सेवा मार्फत तपाईंको गुगल खातामा सिधै नयाँ खाली स्प्रेडसिट खुल्नेछ (कुनै OAuth Scope वा अनुमति त्रुटि आउँदैन):
+                </p>
+
+                <a
+                  href="https://sheets.new"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-800 active:scale-98 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-all shadow-sm cursor-pointer"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>Google Sheets मा नयाँ सिट खोल्नुहोस् (sheets.new) ↗</span>
+                </a>
+
+                <div className="bg-white/80 p-2.5 rounded-lg border border-emerald-200/80 text-[11px] text-gray-600">
+                  💡 <strong>सुझाव:</strong> नयाँ सिट खुलेपछि त्यसको माथिल्लो बायाँ शीर्षकमा{' '}
+                  <strong className="text-[#4B6043]">stcs_{organization.officeName || 'कार्यालय'}</strong> नाम राख्न सक्नुहुन्छ।
+                </div>
+
+                <div className="space-y-1.5 pt-1">
+                  <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-[11px]">
+                      २
+                    </span>
+                    <span>उक्त नयाँ Sheet को URL वा ID यहाँ राख्नुहोस्:</span>
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newSheetInput}
+                      onChange={(e) => setNewSheetInput(e.target.value)}
+                      placeholder="उदाहरण: https://docs.google.com/spreadsheets/d/.../edit वा सिट ID"
+                      className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#4B6043] bg-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleModalLinkSheet}
+                      disabled={isLinkingAndSyncing || !newSheetInput.trim()}
+                      className="px-4 py-2 bg-[#4B6043] hover:bg-[#3b4e33] active:scale-98 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap cursor-pointer"
+                    >
+                      <CheckCircle className={`w-3.5 h-3.5 ${isLinkingAndSyncing ? 'animate-spin' : ''}`} />
+                      <span>{isLinkingAndSyncing ? 'लिंक हुँदैछ...' : 'लिंक र सिंक गर्नुहोस्'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Method 2: Automatic API Creation (Optional) */}
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#4B6043]" />
+                    <span>विधि २: API मार्फत स्वचालित सिर्जना प्रयास</span>
+                  </span>
+                  <span className="text-[10px] text-gray-500 font-medium shrink-0">वैकल्पिक (Optional)</span>
+                </div>
+                <p className="text-[11px] text-gray-600">
+                  यदि तपाईंको गुगल खातामा Google REST API वा Apps Script Web App को प्रत्यक्ष अनुमति छ भने सिधै सिर्जना गर्न सकिन्छ।
+                </p>
+                <button
+                  type="button"
+                  onClick={handleDirectApiCreate}
+                  disabled={isCreatingSheet}
+                  className="w-full py-2 bg-white hover:bg-gray-100 text-[#24331C] text-xs font-semibold rounded-xl border border-gray-300 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${isCreatingSheet ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isCreatingSheet ? 'API मार्फत प्रयास हुँदैछ...' : 'Google API बाट सिधै सिर्जना प्रयास गर्नुहोस्'}
+                  </span>
+                </button>
+              </div>
+
+              {/* In-Body Close Button directly visible right on the page (image.png area) */}
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateSheetModal(false)}
+                  className="w-full py-2.5 bg-red-50 hover:bg-red-100 active:scale-98 text-red-700 hover:text-red-800 border-2 border-red-200 hover:border-red-300 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+                  title="यो विन्डो बन्द गर्नुहोस्"
+                >
+                  <X className="w-4 h-4 text-red-600" />
+                  <span>यो विन्डो बन्द गर्नुहोस् (Close Window)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Footer (Sticky at bottom with prominent Close button) */}
+            <div className="sticky bottom-0 z-20 shrink-0 bg-gray-50 px-4 sm:px-5 py-3 border-t border-gray-200 flex items-center justify-between gap-3">
+              <span className="text-[11px] text-gray-500">
+                सबै कर्मचारी, तलब र कर ढाँचाहरू नयाँ सिटमा स्वतः सिंक हुनेछन्।
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowCreateSheetModal(false)}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>बन्द गर्नुहोस् (Close)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

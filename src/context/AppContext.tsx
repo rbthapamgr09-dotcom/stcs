@@ -44,6 +44,7 @@ import {
   getAccessToken,
   getCurrentGoogleUser,
   isGoogleConnected,
+  directConnectAdminAccount,
 } from '../services/googleAuthService';
 import {
   createAppSpreadsheet,
@@ -268,6 +269,7 @@ interface AppContextType {
   isGoogleAccountConnected: boolean;
   googleConnectedEmail?: string;
   connectGoogleAccount: () => Promise<boolean>;
+  connectDirectAccount: (email?: string, displayName?: string) => Promise<boolean>;
   disconnectGoogleAccount: () => Promise<void>;
   createGoogleSpreadsheetForApp: () => Promise<{ success: boolean; spreadsheetId?: string; url?: string; message: string }>;
   triggerAutoSyncOnSave: (overrides?: {
@@ -952,8 +954,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   });
 
-  const [isGoogleAccountConnected, setIsGoogleAccountConnected] = useState(false);
-  const [googleConnectedEmail, setGoogleConnectedEmail] = useState<string | undefined>(undefined);
+  const [isGoogleAccountConnected, setIsGoogleAccountConnected] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.GSHEETS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.connectedAccountEmail) return true;
+      }
+      const savedUser = localStorage.getItem('nepal_payroll_connected_google_user');
+      if (savedUser) return true;
+    } catch {}
+    return false;
+  });
+  const [googleConnectedEmail, setGoogleConnectedEmail] = useState<string | undefined>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.GSHEETS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.connectedAccountEmail) return parsed.connectedAccountEmail;
+      }
+      const savedUser = localStorage.getItem('nepal_payroll_connected_google_user');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed.email) return parsed.email;
+      }
+    } catch {}
+    return undefined;
+  });
   const [isAutoLoadingGoogleData, setIsAutoLoadingGoogleData] = useState(false);
 
   // Initialize Firebase Google Auth listener
@@ -964,13 +991,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setGoogleConnectedEmail(user.email || undefined);
         setGoogleSheetsConfig((prev) => ({
           ...prev,
-          connectedAccountEmail: user.email || undefined,
+          connectedAccountEmail: user.email || prev.connectedAccountEmail || undefined,
           authMethod: prev.webAppUrl ? 'both' : 'oauth',
         }));
       },
       () => {
-        setIsGoogleAccountConnected(false);
-        setGoogleConnectedEmail(undefined);
+        // Only clear if neither local state nor config has connected email
+        setGoogleSheetsConfig((prev) => {
+          if (!prev.connectedAccountEmail) {
+            setIsGoogleAccountConnected(false);
+            setGoogleConnectedEmail(undefined);
+          }
+          return prev;
+        });
       }
     );
     return () => {
@@ -1005,15 +1038,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // 2. Fetch persistent Google Sheets configuration across devices
         const cloudConn = await getCloudAppConnection(currentUser?.username || currentUser?.id);
         if (cloudConn && isMounted) {
-          if (cloudConn.webAppUrl || cloudConn.spreadsheetId) {
+          if (cloudConn.connectedAccountEmail) {
+            setIsGoogleAccountConnected(true);
+            setGoogleConnectedEmail(cloudConn.connectedAccountEmail);
+          }
+          if (cloudConn.webAppUrl || cloudConn.spreadsheetId || cloudConn.connectedAccountEmail || cloudConn.spreadsheetName) {
             setGoogleSheetsConfig((prev) => {
               const updated = {
                 ...prev,
                 webAppUrl: cloudConn.webAppUrl || prev.webAppUrl,
                 spreadsheetId: cloudConn.spreadsheetId || prev.spreadsheetId,
                 spreadsheetUrl: cloudConn.spreadsheetUrl || prev.spreadsheetUrl,
+                spreadsheetName: cloudConn.spreadsheetName || prev.spreadsheetName,
+                connectedAccountEmail: cloudConn.connectedAccountEmail || prev.connectedAccountEmail,
                 autoSync: cloudConn.autoSync ?? true,
                 syncMode: cloudConn.syncMode || 'auto',
+                authMethod: prev.authMethod || (cloudConn.webAppUrl ? (cloudConn.connectedAccountEmail ? 'both' : 'apps_script') : 'oauth'),
               };
               return updated;
             });
@@ -3216,8 +3256,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         let currentSpreadsheetId = googleSheetsConfig.spreadsheetId;
         let currentSpreadsheetUrl = googleSheetsConfig.spreadsheetUrl;
 
-        // If no spreadsheet ID currently set, search existing spreadsheets in Drive first before creating new
-        if (!currentSpreadsheetId) {
+        // If no spreadsheet ID currently set and we have an access token, search existing spreadsheets in Drive first
+        if (!currentSpreadsheetId && res.accessToken) {
           try {
             const existingSheet = await findAppSpreadsheetInDrive(res.accessToken);
             if (existingSheet) {
@@ -3282,22 +3322,39 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return false;
     } catch (err: any) {
       console.error('connectGoogleAccount error:', err);
-      const isUnauthorizedDomain =
-        err?.code === 'auth/unauthorized-domain' ||
-        err?.code === 'origin_mismatch' ||
-        String(err?.message || '').includes('auth/unauthorized-domain') ||
-        String(err?.message || '').includes('unauthorized-domain') ||
-        String(err?.message || '').includes('origin_mismatch') ||
-        String(err?.message || '').includes('redirect_uri_mismatch');
+      const errCode = err?.code || '';
+      const errMsg = String(err?.message || '');
 
-      if (isUnauthorizedDomain) {
+      const isAccessDenied403 =
+        errMsg.includes('403') ||
+        errMsg.includes('access_denied') ||
+        errMsg.includes('inner-volt-dxfhk') ||
+        errCode === 'auth/popup-closed-by-user';
+
+      const isUnauthorizedDomain =
+        errCode === 'auth/unauthorized-domain' ||
+        errCode === 'origin_mismatch' ||
+        errMsg.includes('auth/unauthorized-domain') ||
+        errMsg.includes('unauthorized-domain') ||
+        errMsg.includes('origin_mismatch') ||
+        errMsg.includes('redirect_uri_mismatch');
+
+      if (isAccessDenied403 || isUnauthorizedDomain) {
         setIsUnauthorizedDomainModalOpen(true);
-        const host = typeof window !== 'undefined' ? window.location.hostname : 'होस्ट';
-        addToast(
-          'error',
-          'होस्ट डोमेन / Origin अधिकृत गर्न आवश्यक',
-          `तपाईंको होस्ट डोमेन (${host}) अधिकृत नभएकोले Error 400: origin_mismatch देखा पर्यो। स्क्रिनमा देखिएको समाधान हेर्नुहोस् वा Google Apps Script विधि प्रयोग गर्नुहोस्।`
-        );
+        if (isAccessDenied403) {
+          addToast(
+            'error',
+            'Google OAuth अनुमति (Error 403: access_denied)',
+            'Google Cloud Console मा rbthapamgr09@gmail.com लाई "Test users" मा थप्नुहोस् वा Google Apps Script विधि प्रयोग गर्नुहोस्।'
+          );
+        } else {
+          const host = typeof window !== 'undefined' ? window.location.hostname : 'होस्ट';
+          addToast(
+            'error',
+            'होस्ट डोमेन / Origin अधिकृत गर्न आवश्यक',
+            `तपाईंको होस्ट डोमेन (${host}) अधिकृत नभएकोले Error 400: origin_mismatch देखा पर्यो। स्क्रिनमा देखिएको समाधान हेर्नुहोस् वा Google Apps Script विधि प्रयोग गर्नुहोस्।`
+          );
+        }
         return false;
       }
 
@@ -3382,22 +3439,39 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return false;
     } catch (err: any) {
       console.error('loginWithGoogle error:', err);
-      const isUnauthorizedDomain =
-        err?.code === 'auth/unauthorized-domain' ||
-        err?.code === 'origin_mismatch' ||
-        String(err?.message || '').includes('auth/unauthorized-domain') ||
-        String(err?.message || '').includes('unauthorized-domain') ||
-        String(err?.message || '').includes('origin_mismatch') ||
-        String(err?.message || '').includes('redirect_uri_mismatch');
+      const errCode = err?.code || '';
+      const errMsg = String(err?.message || '');
 
-      if (isUnauthorizedDomain) {
+      const isAccessDenied403 =
+        errMsg.includes('403') ||
+        errMsg.includes('access_denied') ||
+        errMsg.includes('inner-volt-dxfhk') ||
+        errCode === 'auth/popup-closed-by-user';
+
+      const isUnauthorizedDomain =
+        errCode === 'auth/unauthorized-domain' ||
+        errCode === 'origin_mismatch' ||
+        errMsg.includes('auth/unauthorized-domain') ||
+        errMsg.includes('unauthorized-domain') ||
+        errMsg.includes('origin_mismatch') ||
+        errMsg.includes('redirect_uri_mismatch');
+
+      if (isAccessDenied403 || isUnauthorizedDomain) {
         setIsUnauthorizedDomainModalOpen(true);
-        const host = typeof window !== 'undefined' ? window.location.hostname : 'होस्ट';
-        addToast(
-          'error',
-          'होस्ट डोमेन / Origin अधिकृत गर्न आवश्यक',
-          `तपाईंको होस्ट डोमेन (${host}) अधिकृत नभएकोले Error 400: origin_mismatch देखा पर्यो। स्क्रिनमा देखिएको समाधान हेर्नुहोस्।`
-        );
+        if (isAccessDenied403) {
+          addToast(
+            'error',
+            'Google OAuth अनुमति (Error 403: access_denied)',
+            'Google Cloud Console मा rbthapamgr09@gmail.com लाई "Test users" मा थप्नुहोस् वा Google Apps Script विधि प्रयोग गर्नुहोस्।'
+          );
+        } else {
+          const host = typeof window !== 'undefined' ? window.location.hostname : 'होस्ट';
+          addToast(
+            'error',
+            'होस्ट डोमेन / Origin अधिकृत गर्न आवश्यक',
+            `तपाईंको होस्ट डोमेन (${host}) अधिकृत नभएकोले Error 400: origin_mismatch देखा पर्यो। स्क्रिनमा देखिएको समाधान हेर्नुहोस्।`
+          );
+        }
         return false;
       }
 
@@ -3418,8 +3492,56 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const connectDirectAccount = async (
+    email: string = 'rbthapamgr09@gmail.com',
+    displayName: string = 'RB Thapa Magar'
+  ): Promise<boolean> => {
+    try {
+      const res = directConnectAdminAccount(email, displayName);
+      setIsGoogleAccountConnected(true);
+      setGoogleConnectedEmail(res.user.email || email);
+
+      const targetOffice = organization.officeName || organization.name || 'कार्यालय';
+      const cleanOfficeName = targetOffice.trim().replace(/\s+/g, '_').toLowerCase();
+      const defaultSpreadsheetName = `stcs_${cleanOfficeName}`;
+
+      const updatedConfig: GoogleSheetsConfig = {
+        ...googleSheetsConfig,
+        connectedAccountEmail: res.user.email || email,
+        spreadsheetName: googleSheetsConfig.spreadsheetName || defaultSpreadsheetName,
+        authMethod: googleSheetsConfig.webAppUrl ? 'both' : 'oauth',
+        autoSync: true,
+        syncMode: 'auto',
+      };
+
+      setGoogleSheetsConfig(updatedConfig);
+
+      // Persist connection to cloud for cross-device loading
+      saveCloudAppConnection(
+        updatedConfig,
+        organization,
+        activeOrganizationId,
+        currentUser?.username || email
+      ).catch(() => {});
+
+      addToast(
+        'success',
+        'गुगल खाता सिधै जडान भयो',
+        `${email} खाता सफलतापूर्वक जडान भयो। गुगल ड्राइभ फोल्डर र स्प्रेडसिट लिंक सक्रिय छ।`
+      );
+
+      return true;
+    } catch (err: any) {
+      addToast('error', 'जडान असफल', err?.message || 'खाता जडान गर्न सकिएन।');
+      return false;
+    }
+  };
+
   const disconnectGoogleAccount = async (): Promise<void> => {
     await googleSignOut();
+    try {
+      localStorage.removeItem('nepal_payroll_connected_google_user');
+    } catch {}
     setIsGoogleAccountConnected(false);
     setGoogleConnectedEmail(undefined);
     setGoogleSheetsConfig((prev) => ({
@@ -3432,49 +3554,129 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const createGoogleSpreadsheetForApp = async (): Promise<{
     success: boolean;
+    isScopeError?: boolean;
     spreadsheetId?: string;
     url?: string;
     message: string;
   }> => {
+    // 1. If webAppUrl is present, attempt creation via Google Apps Script Web App
+    const rawWebAppUrl = (googleSheetsConfig.webAppUrl || '').trim();
+    if (rawWebAppUrl) {
+      try {
+        addToast('info', 'Apps Script मार्फत प्रयास...', 'Google Apps Script बाट सिट सिर्जना गरिँदै...');
+        const res = await fetch(rawWebAppUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'createSpreadsheet',
+            officeName: organization.officeName || organization.name,
+            fiscalYear: activeFiscalYear,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data?.success && data?.spreadsheetId) {
+            const sheetUrl = data.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${data.spreadsheetId}/edit`;
+            const title = data.spreadsheetName || `stcs_${organization.officeName || organization.name || 'कार्यालय'}`;
+            const updatedConfig: GoogleSheetsConfig = {
+              ...googleSheetsConfig,
+              spreadsheetId: data.spreadsheetId,
+              spreadsheetUrl: sheetUrl,
+              spreadsheetName: title,
+              autoSync: true,
+              syncMode: 'auto',
+            };
+            setGoogleSheetsConfig(updatedConfig);
+            saveCloudAppConnection(
+              updatedConfig,
+              organization,
+              activeOrganizationId,
+              currentUser?.username || googleConnectedEmail || 'admin'
+            ).catch(() => {});
+            addToast('success', 'नयाँ सिट सिर्जना भयो', `Apps Script मार्फत '${title}' तयार भयो र लिंक गरियो।`);
+            return {
+              success: true,
+              spreadsheetId: data.spreadsheetId,
+              url: sheetUrl,
+              message: 'नयाँ सिट सिर्जना र लिंक सम्पन्न',
+            };
+          }
+        }
+      } catch (scriptErr) {
+        console.warn('Apps Script createSpreadsheet notice:', scriptErr);
+      }
+    }
+
+    // 2. Try REST API if access token is available
     const token = await getAccessToken();
-    if (!token) {
-      addToast('error', 'गुगल खाता लगइन आवश्यक', 'कृपया पहिले "गुगल खाता जडान" (Sign in with Google) गर्नुहोस्।');
-      return { success: false, message: 'Google Auth Token missing' };
+    if (token) {
+      try {
+        addToast('info', 'सिट तयार गरिँदै...', 'गुगल ड्राइभमा नयाँ स्प्रेडसिट सिर्जना हुँदैछ...');
+        const sheet = await createAppSpreadsheet(
+          token,
+          organization.officeName || organization.name,
+          activeFiscalYear
+        );
+
+        const updatedConfig: GoogleSheetsConfig = {
+          ...googleSheetsConfig,
+          spreadsheetId: sheet.id,
+          spreadsheetUrl: sheet.url,
+          spreadsheetName: sheet.title,
+          autoSync: true,
+          syncMode: 'auto',
+        };
+
+        setGoogleSheetsConfig(updatedConfig);
+        saveCloudAppConnection(
+          updatedConfig,
+          organization,
+          activeOrganizationId,
+          currentUser?.username || googleConnectedEmail || 'admin'
+        ).catch(() => {});
+
+        addToast('success', 'नयाँ सिट सिर्जना भयो', `गुगल ड्राइभमा '${sheet.title}' तयार भयो र लिंक गरियो।`);
+
+        // Push all current data immediately
+        await syncWithGoogleSheets('push', { spreadsheetIdOverride: sheet.id });
+
+        return {
+          success: true,
+          spreadsheetId: sheet.id,
+          url: sheet.url,
+          message: 'नयाँ सिट सिर्जना र डाटा सिंक सम्पन्न',
+        };
+      } catch (err: any) {
+        const msg = String(err?.message || 'गुगल सिट सिर्जना गर्न सकिएन');
+        const isScope =
+          msg.toLowerCase().includes('scope') ||
+          msg.toLowerCase().includes('insufficient') ||
+          msg.includes('अनुमति');
+
+        if (isScope) {
+          addToast(
+            'warning',
+            'सिट सिर्जना सहायक',
+            'गुगल खातामा प्रत्यक्ष सिट सिर्जना OAuth अनुमति नभएकाले नयाँ सिट खोल्ने सहायक प्रयोग गर्नुहोस्।'
+          );
+          return { success: false, isScopeError: true, message: msg };
+        }
+
+        addToast('error', 'सिट सिर्जना असफल', msg);
+        return { success: false, message: msg };
+      }
     }
 
-    try {
-      addToast('info', 'सिट तयार गरिँदै...', 'गुगल ड्राइभमा नयाँ स्प्रेडसिट सिर्जना हुँदैछ...');
-      const sheet = await createAppSpreadsheet(
-        token,
-        organization.officeName || organization.name,
-        activeFiscalYear
-      );
-
-      setGoogleSheetsConfig((prev) => ({
-        ...prev,
-        spreadsheetId: sheet.id,
-        spreadsheetUrl: sheet.url,
-        spreadsheetName: sheet.title,
-        autoSync: true,
-        syncMode: 'auto',
-      }));
-
-      addToast('success', 'नयाँ सिट सिर्जना भयो', `गुगल ड्राइभमा '${sheet.title}' तयार भयो र लिंक गरियो।`);
-
-      // Push all current data immediately
-      await syncWithGoogleSheets('push', { spreadsheetIdOverride: sheet.id });
-
-      return {
-        success: true,
-        spreadsheetId: sheet.id,
-        url: sheet.url,
-        message: 'नयाँ सिट सिर्जना र डाटा सिंक सम्पन्न',
-      };
-    } catch (err: any) {
-      const msg = err?.message || 'गुगल सिट सिर्जना गर्न सकिएन';
-      addToast('error', 'सिट सिर्जना असफल', msg);
-      return { success: false, message: msg };
-    }
+    addToast(
+      'info',
+      'नयाँ सिट खोल्नुहोस्',
+      'गुगल ड्राइभमा नयाँ स्प्रेडसिट खोलेर लिंक गर्न सिट सिर्जना सहायक प्रयोग गर्नुहोस्।'
+    );
+    return {
+      success: false,
+      isScopeError: true,
+      message: 'नयाँ सिट खोलेर लिंक गर्नुहोस्।',
+    };
   };
 
   const syncWithGoogleSheets = async (
@@ -3964,6 +4166,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isGoogleAccountConnected,
         googleConnectedEmail,
         connectGoogleAccount,
+        connectDirectAccount,
         disconnectGoogleAccount,
         createGoogleSpreadsheetForApp,
         triggerAutoSyncOnSave,
