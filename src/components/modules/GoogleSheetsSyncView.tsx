@@ -337,13 +337,45 @@ export const GoogleSheetsSyncView: React.FC = () => {
     setIsPulling(false);
   };
 
-  // Google Apps Script code to copy
+  // Google Apps Script code to copy (Supports both Container-bound and Standalone script.new mode)
+  const activeSheetId = formData.spreadsheetId || '';
   const googleAppsScriptCode = `/**
  * =========================================================================
- * तलबी तथा कर गणना प्रणाली — Google Apps Script Web App API
+ * तलबी तथा कर गणना प्रणाली — Google Apps Script Web App API (Universal Engine)
  * Salary & Tax Management System — Google Sheets Sync Engine (Updated)
+ * 
+ * NOTE: यो कोड Extensions > Apps Script (Bound) वा script.new (Standalone) दुवैमा चल्छ!
  * =========================================================================
  */
+
+// यदि Extensions > Apps Script खोल्दा त्रुटि आएमा script.new मा गई यो कोड पेस्ट गर्नुहोस्:
+var TARGET_SPREADSHEET_ID = "${activeSheetId}";
+var TARGET_FOLDER_ID = "${TARGET_GOOGLE_DRIVE_FOLDER_ID}";
+
+/**
+ * स्प्रेडसिट फेला पार्ने युनिभर्सल प्रकार्य (Universal Spreadsheet Resolver):
+ */
+function getTargetSpreadsheet() {
+  // १. यदि SPREADSHEET ID तोकिएको छ भने सिधै openById बाट खोल्ने (Standalone script.new mode)
+  if (TARGET_SPREADSHEET_ID && TARGET_SPREADSHEET_ID.trim() !== '' && TARGET_SPREADSHEET_ID !== 'YOUR_SPREADSHEET_ID_HERE') {
+    try {
+      var cleanId = TARGET_SPREADSHEET_ID.trim();
+      var match = cleanId.match(/\\/spreadsheets\\/d\\/([a-zA-Z0-9-_]+)/);
+      if (match && match[1]) cleanId = match[1];
+      return SpreadsheetApp.openById(cleanId);
+    } catch (e) {
+      Logger.log("openById note: " + e.toString());
+    }
+  }
+  
+  // २. यदि Extensions > Apps Script भित्र चालु छ भने Active Spreadsheet लिने (Bound mode)
+  try {
+    var active = SpreadsheetApp.getActiveSpreadsheet();
+    if (active) return active;
+  } catch (e) {}
+
+  throw new Error("Google Spreadsheet फेला परेन। कृपया कोडको माथि TARGET_SPREADSHEET_ID मा स्प्रेडसिटको ID राख्नुहोस्।");
+}
 
 /**
  * १. स्प्रेडसिट खुल्दा स्वतः मेनु थप्ने (Custom Spreadsheet Menu):
@@ -363,8 +395,8 @@ function onOpen() {
  * Apps Script सम्पादकमा सिधै "Run" थिचेर परीक्षण गर्न यो 'testSetup' function छान्नुहोस्।
  */
 function testSetup() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  Logger.log("✓ Google Spreadsheet जडान सफल: " + ss.getName());
+  var ss = getTargetSpreadsheet();
+  Logger.log("✓ Google Spreadsheet जडान सफल: " + ss.getName() + " (ID: " + ss.getId() + ")");
   
   setupAllSheets();
   moveSpreadsheetToTargetFolder(ss);
@@ -372,8 +404,6 @@ function testSetup() {
   logSyncAudit(ss, 'प्रणाली परीक्षण (Test Run)', 'Success');
   Logger.log("✓ सबै पानाहरू तयार भए। अब Deploy > New deployment > Web App गरी URL लिनुहोस्।");
 }
-
-var TARGET_FOLDER_ID = "1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj";
 
 function moveSpreadsheetToTargetFolder(ss) {
   try {
@@ -392,7 +422,7 @@ function moveSpreadsheetToTargetFolder(ss) {
  * ३. सबै आवश्यक पानाहरू (Sheets) सिर्जना र ढाँचा मिलाउने:
  */
 function setupAllSheets() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getTargetSpreadsheet();
   moveSpreadsheetToTargetFolder(ss);
   var requiredSheets = [
     { name: 'Organization', headers: ['Property / Field', 'Value'] },
@@ -422,7 +452,7 @@ function setupAllSheets() {
 function doGet(e) {
   var parameter = (e && e.parameter) ? e.parameter : {};
   var action = parameter.action || 'status';
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = getTargetSpreadsheet();
   
   if (action === 'getAllData' || action === 'pull') {
     var result = {
@@ -447,6 +477,7 @@ function doGet(e) {
     status: 'online',
     message: 'तलबी तथा कर गणना प्रणाली — Google Apps Script API सक्रिय छ (Active & Ready)',
     spreadsheetName: ss.getName(),
+    spreadsheetId: ss.getId(),
     timestamp: new Date().toISOString()
   })).setMimeType(ContentService.MimeType.JSON);
 }
@@ -467,7 +498,7 @@ function doPost(e) {
     
     var payload = JSON.parse(e.postData.contents);
     var action = payload.action || 'push';
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var ss = getTargetSpreadsheet();
     
     // डाटा निकाल्ने (Pull Action)
     if (action === 'pull') {
@@ -666,6 +697,7 @@ function logSyncAudit(ss, action, status, user, details) {
     sanitizeCellValue(details || '')
   ]);
 }`;
+
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(googleAppsScriptCode);
@@ -1201,38 +1233,136 @@ function logSyncAudit(ss, action, status, user, details) {
               </div>
               <div className="p-2.5 bg-emerald-50 rounded-lg border border-emerald-300 flex items-center justify-between">
                 <div className="flex flex-col">
-                  <span className="font-bold text-emerald-900">८. सुरक्षा_तथा_गतिविधि_लग (AuditLog)</span>
-                  <span className="text-[10px] text-emerald-700">Time log (UTC+05:45) Kathmandu & Security Trail</span>
+                  <span className="font-bold text-emerald-900">८. AuditLog</span>
+                  <span className="text-[10px] text-emerald-700">Time log (UTC+05:45) Kathmandu</span>
                 </div>
                 <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-emerald-300 text-emerald-800 font-semibold">अडिट लग</span>
               </div>
             </div>
           </div>
 
-          {/* Troubleshooting Guide Box */}
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl text-xs space-y-2 text-amber-900">
-            <h4 className="font-bold flex items-center gap-1.5 text-amber-800">
-              <span>💡 समाधान सुझाव (Important Setup Notice):</span>
-            </h4>
-            <p className="text-[11.5px] leading-relaxed">
-              Google Apps Script सम्पादकमा <strong>doGet</strong> लाई सिधै <strong>"Run" (▶)</strong> थिच्दा <code>TypeError: Cannot read properties of undefined (reading 'parameter')</code> त्रुटि आउनु स्वाभाविक हो; किनकि <code>doGet(e)</code> स्वचालित रूपमा Web App URL बाट मात्र चल्न बनाइएको हुन्छ।
-            </p>
-            <p className="text-[11.5px] leading-relaxed">
-              <strong>समाधान:</strong> माथिको सम्पादक ड्रपडाउनमा <strong><code>testSetup</code></strong> चयन गरी <strong>Run</strong> थिच्नुहोस् (यसले गुगल अनुमति माग्नेछ र सिट परीक्षण गर्नेछ)। त्यसपछि <strong>Deploy &gt; New deployment &gt; Web App</strong> (Who has access: <strong>Anyone</strong>) गरी प्राप्त URL यहाँ राख्नुहोस्।
-            </p>
+          {/* Google Drive Apps Script "Unable to open file" Error Resolution Box */}
+          <div className="bg-linear-to-r from-red-50 via-amber-50 to-emerald-50 border-2 border-amber-300 p-5 rounded-2xl text-xs space-y-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold shrink-0 shadow-xs">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm text-gray-900 flex items-center gap-1.5">
+                    <span>Apps Script खोल्दा "माफ गर्नुहोस्, अहिले फाइल खोल्न असमर्थ भयो" आएको खण्डमा:</span>
+                  </h4>
+                  <p className="text-[11px] text-gray-600">
+                    ब्राउजरमा एकभन्दा बढी Google Account लगइन भएको अवस्थामा Google Drive ले Apps Script खोल्न नसक्दा यो समस्या आउँछ।
+                  </p>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 bg-amber-200 text-amber-900 font-bold rounded-full text-[10px] shrink-0">
+                १००% समाधान
+              </span>
+            </div>
+
+            {/* 4 Instant Solutions Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              {/* Solution 1: Standalone script.new */}
+              <div className="bg-white p-3.5 rounded-xl border-2 border-emerald-400/80 space-y-2 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-emerald-900 text-xs flex items-center gap-1.5">
+                    <span className="w-5 h-5 bg-emerald-600 text-white rounded-full flex items-center justify-center text-[11px]">१</span>
+                    <span>विधि १: Standalone Script (सबैभन्दा सजिलो)</span>
+                  </span>
+                  <span className="text-[9px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">सिफारिस</span>
+                </div>
+                <p className="text-[11px] text-gray-700 leading-relaxed">
+                  Google Sheet भित्रको Extensions मेनु नखोली सिधै नयाँ ट्याबमा <strong className="text-emerald-800">script.new</strong> खोल्नुहोस्। दायाँपट्टिको Code.gs मा तपाईंको स्प्रेडसिट ID पहिले नै राखिएको छ!
+                </p>
+                <div className="flex gap-2 pt-1">
+                  <a
+                    href="https://script.new"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-center flex items-center justify-center gap-1.5 text-[11px] shadow-xs cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>script.new खोल्नुहोस् ↗</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={copyToClipboard}
+                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-lg text-[11px] flex items-center gap-1"
+                  >
+                    {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>कपी</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Solution 2: Incognito Window */}
+              <div className="bg-white p-3.5 rounded-xl border border-gray-200 space-y-2 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-gray-900 text-xs flex items-center gap-1.5">
+                    <span className="w-5 h-5 bg-[#4B6043] text-white rounded-full flex items-center justify-center text-[11px]">२</span>
+                    <span>विधि २: Incognito / Private Window</span>
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-700 leading-relaxed">
+                  ब्राउजरमा <strong>Ctrl + Shift + N</strong> थिची Incognito विन्डो खोल्नुहोस् र केवल <strong className="text-blue-700">{TARGET_ADMIN_ACCOUNT_EMAIL}</strong> लगइन गर्नुहोस्। बहु-खाता द्वन्द्व हट्नेछ र सिटमा Extensions &gt; Apps Script तुरुन्तै खुल्नेछ।
+                </p>
+              </div>
+
+              {/* Solution 3: Change /u/0 to /u/1 in URL */}
+              <div className="bg-white p-3.5 rounded-xl border border-gray-200 space-y-2 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-gray-900 text-xs flex items-center gap-1.5">
+                    <span className="w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-[11px]">३</span>
+                    <span>विधि ३: URL मा खाता नम्बर मिलाउने</span>
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-700 leading-relaxed">
+                  त्रुटि आएको पृष्ठको URL bar मा <code>script.google.com/u/0/...</code> लाई परिवर्तन गरि <code>script.google.com/u/1/...</code> वा <code>script.google.com/u/2/...</code> लेखेर Enter थिच्नुहोस्।
+                </p>
+              </div>
+
+              {/* Solution 4: Direct REST API Sync (No Apps Script needed) */}
+              <div className="bg-white p-3.5 rounded-xl border border-gray-200 space-y-2 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-gray-900 text-xs flex items-center gap-1.5">
+                    <span className="w-5 h-5 bg-purple-600 text-white rounded-full flex items-center justify-center text-[11px]">४</span>
+                    <span>विधि ४: Direct Google Sheets API सिंक</span>
+                  </span>
+                  <span className="text-[9px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold">No Script</span>
+                </div>
+                <p className="text-[11px] text-gray-700 leading-relaxed">
+                  Apps Script विना नै माथिको <strong>"गुगल खाता जडान"</strong> र <strong>"सिटमा पठाउनुहोस्"</strong> बाट सिधै सबै ८ वटै पानाहरूमा पूर्ण डेटा स्वतः अपडेट गर्न सक्नुहुन्छ।
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
         {/* Right Col: Google Apps Script Installation Instructions & Code */}
         <div className="space-y-6">
           <div className="bg-white p-5 rounded-2xl border border-[#d6e3d2] shadow-xs space-y-3 text-xs">
-            <h3 className="text-sm font-bold text-[#24331C] flex items-center gap-2">
-              <FileCode className="w-4 h-4 text-[#4B6043]" />
-              गुगल सिट्स इन्स्टलेसन निर्देशन
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-[#24331C] flex items-center gap-2">
+                <FileCode className="w-4 h-4 text-[#4B6043]" />
+                गुगल सिट्स इन्स्टलेसन निर्देशन (Universal Code)
+              </h3>
+              <a
+                href="https://script.new"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-2.5 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded-md font-bold text-[10px] flex items-center gap-1 transition-colors"
+                title="सिधै नयाँ Apps Script खोल्नुहोस्"
+              >
+                <ExternalLink className="w-3 h-3" />
+                <span>script.new खोल्नुहोस्</span>
+              </a>
+            </div>
             <ol className="list-decimal pl-4 space-y-2 text-gray-700 leading-relaxed text-[11px]">
-              <li>गुगल ड्राइभमा नयाँ Google Sheet खोल्नुहोस्।</li>
-              <li>शीर्ष मेनुबाट <strong>Extensions &gt; Apps Script</strong> मा क्लिक गर्नुहोस्।</li>
+              <li>
+                Google Sheet को <strong>Extensions &gt; Apps Script</strong> खोल्नुहोस् वा सिधै नयाँ ट्याबमा <a href="https://script.new" target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-bold underline">script.new ↗</a> खोल्नुहोस्।
+              </li>
               <li>तल दिइएको अद्यावधिक <code>Code.gs</code> कोड कपी गरी त्यहाँ पेस्ट गर्नुहोस् र <strong>Save (Ctrl+S)</strong> गर्नुहोस्।</li>
               <li>
                 शीर्ष ड्रपडाउनमा <strong><code>testSetup</code></strong> चयन गरी <strong>Run (▶)</strong> थिचेर Google अनुमति (Authorization) प्रदान गर्नुहोस्।
@@ -1246,16 +1376,16 @@ function logSyncAudit(ss, action, status, user, details) {
               <li>
                 <strong>Execute as:</strong> "Me" र <strong>Who has access:</strong> "Anyone" चयन गरी <strong>Deploy</strong> गर्नुहोस्।
               </li>
-              <li>प्राप्त <strong>Web App URL</strong> लाई कपी गरी यहाँ राखी Save गर्नुहोस्।</li>
+              <li>प्राप्त <strong>Web App URL</strong> लाई कपी गरी यहाँ बायाँ फारममा राखी Save गर्नुहोस्।</li>
             </ol>
           </div>
 
           <div className="bg-[#24331C] text-white p-4 rounded-2xl shadow-xs space-y-2 text-xs">
             <div className="flex items-center justify-between border-b border-white/15 pb-2">
-              <span className="font-mono font-bold text-emerald-300">Code.gs (Apps Script)</span>
+              <span className="font-mono font-bold text-emerald-300">Code.gs (Universal Engine)</span>
               <button
                 onClick={copyToClipboard}
-                className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
               >
                 {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <Copy className="w-3.5 h-3.5" />}
                 <span>{isCopied ? 'कपी गरियो' : 'कोड कपी गर्नुहोस्'}</span>
