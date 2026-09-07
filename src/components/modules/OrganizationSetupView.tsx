@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Building, Save, Image as ImageIcon, Eye, Upload, MapPin, Phone, Mail, FileText, CheckCircle2 } from 'lucide-react';
+import { Building, Save, Image as ImageIcon, Eye, Upload, MapPin, Phone, Mail, FileText, CheckCircle2, Link2, Sparkles } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Letterhead } from '../common/Letterhead';
 import { NepaliTextInput } from '../common/NepaliTextInput';
 import { OrganizationSetup } from '../../types';
 import { toNepaliDigits } from '../../utils/nepaliCalendar';
+import { compressImageToSafeBase64, normalizeLogoUrl, extractGoogleDriveFileId } from '../../utils/logoUtils';
 import {
   NEPAL_PROVINCES,
   PROVINCE_DISTRICTS_MAP,
@@ -17,6 +18,7 @@ export const OrganizationSetupView: React.FC = () => {
   const { organization, updateOrganization, addToast } = useApp();
   const [formData, setFormData] = useState<OrganizationSetup>(organization);
   const [activeTab, setActiveTab] = useState<'form' | 'preview'>('form');
+  const [logoPreviewError, setLogoPreviewError] = useState<boolean>(false);
 
   useEffect(() => {
     setFormData(organization);
@@ -68,58 +70,29 @@ export const OrganizationSetupView: React.FC = () => {
     }));
   };
 
-  const compressLogoImage = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const maxDim = 280;
-          let width = img.width;
-          let height = img.height;
-          if (width > height) {
-            if (width > maxDim) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
-            }
-          } else {
-            if (height > maxDim) {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
-            }
-          }
-
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            // Convert to PNG data URL
-            const dataUrl = canvas.toDataURL('image/png', 0.9);
-            resolve(dataUrl);
-          } else {
-            resolve(e.target?.result as string);
-          }
-        };
-        img.onerror = () => resolve(e.target?.result as string);
-        img.src = e.target?.result as string;
-      };
-      reader.onerror = (err) => reject(err);
-      reader.readAsDataURL(file);
-    });
+  const handleLogoUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+    const normalized = normalizeLogoUrl(rawVal);
+    setLogoPreviewError(false);
+    setFormData((prev) => ({ ...prev, logoUrl: normalized }));
+    
+    if (rawVal && extractGoogleDriveFileId(rawVal)) {
+      addToast('info', 'Google Drive लिङ्क प्रमाणीकरण', 'गुगल ड्राइभ इमेज लिङ्क स्वचालित रूपमा उच्च-गतिको प्रत्यक्ष CDN ढाँचामा रूपान्तरण भयो।');
+    }
   };
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       try {
-        const compressedDataUrl = await compressLogoImage(file);
+        const compressedDataUrl = await compressImageToSafeBase64(file, 220, 0.88);
+        setLogoPreviewError(false);
         setFormData((prev) => ({ ...prev, logoUrl: compressedDataUrl }));
-        addToast('info', 'लोगो लोड भयो', 'लोगो लोड भयो र गुगल सिट्समा सुरक्षित हुन तयार छ।');
+        addToast('success', 'लोगो लोड भयो', 'लोगो सुरक्षित कम्प्रेसन गरी गुगल सिट्समा भण्डारणका लागि तयार गरिएको छ।');
       } catch (err) {
         const reader = new FileReader();
         reader.onloadend = () => {
+          setLogoPreviewError(false);
           setFormData((prev) => ({ ...prev, logoUrl: reader.result as string }));
           addToast('info', 'लोगो लोड भयो', 'लोगो लोड भयो।');
         };
@@ -502,16 +475,27 @@ export const OrganizationSetupView: React.FC = () => {
                 </p>
 
                 <div className="border-2 border-dashed border-[#c8d8c3] rounded-xl p-4 text-center bg-[#fbfdfa] flex flex-col items-center justify-center gap-2">
-                  {formData.logoUrl ? (
-                    <div className="relative">
+                  {formData.logoUrl && !logoPreviewError ? (
+                    <div className="relative flex flex-col items-center">
                       <img
-                        src={formData.logoUrl}
+                        src={normalizeLogoUrl(formData.logoUrl)}
                         alt="Logo"
+                        referrerPolicy="no-referrer"
+                        onError={() => setLogoPreviewError(true)}
                         className="max-h-28 max-w-28 object-contain rounded-lg border border-gray-200 p-1 bg-white shadow-xs"
                       />
+                      {extractGoogleDriveFileId(formData.logoUrl) && (
+                        <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
+                          <CheckCircle2 className="w-3 h-3 text-blue-600" />
+                          Google Drive प्रत्यक्ष लिङ्क सक्रिय
+                        </span>
+                      )}
                       <button
                         type="button"
-                        onClick={() => setFormData((prev) => ({ ...prev, logoUrl: '' }))}
+                        onClick={() => {
+                          setFormData((prev) => ({ ...prev, logoUrl: '' }));
+                          setLogoPreviewError(false);
+                        }}
                         className="text-[10px] text-red-600 hover:text-red-800 underline mt-2 block mx-auto cursor-pointer"
                       >
                         लोगो हटाउनुहोस्
@@ -520,7 +504,9 @@ export const OrganizationSetupView: React.FC = () => {
                   ) : (
                     <div className="text-center py-2">
                       <ImageIcon className="w-8 h-8 text-gray-400 mx-auto mb-1" />
-                      <p className="text-xs text-gray-500">कुनै लोगो चयन गरिएको छैन</p>
+                      <p className="text-xs text-gray-500">
+                        {logoPreviewError ? 'तस्बिर लोड हुन सकेन (लिङ्क वा अनुमति जाँच गर्नुहोस्)' : 'कुनै लोगो चयन गरिएको छैन'}
+                      </p>
                       <p className="text-[10px] text-gray-400">(पूर्वनिर्धारित सरकारी निशान छाप प्रयोग हुनेछ)</p>
                     </div>
                   )}
@@ -540,20 +526,23 @@ export const OrganizationSetupView: React.FC = () => {
 
                   <div className="w-full mt-2 pt-2 border-t border-gray-100 text-left">
                     <label className="block text-[11px] font-medium text-gray-600 mb-1">
-                      वा बाह्य लोगो लिङ्क (Direct Image / Google Drive URL):
+                      वा बाह्य लोगो लिङ्क (Direct Image / Google Drive Share URL):
                     </label>
                     <input
                       type="url"
                       value={formData.logoUrl?.startsWith('data:') ? '' : formData.logoUrl || ''}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, logoUrl: e.target.value }))}
-                      placeholder={formData.logoUrl?.startsWith('data:') ? 'तस्बिर फाइल अपलोड गरिएको छ' : 'https://.../logo.png'}
+                      onChange={handleLogoUrlChange}
+                      placeholder={formData.logoUrl?.startsWith('data:') ? 'तस्बिर फाइल अपलोड गरिएको छ' : 'https://drive.google.com/file/d/... वा https://.../logo.png'}
                       className="w-full p-1.5 text-xs rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-1 focus:ring-[#4B6043] outline-none"
                     />
+                    <p className="text-[10px] text-gray-500 mt-1">
+                      💡 <strong>सुझाव:</strong> Google Drive को लोगो लिङ्क राख्दा Drive मा उक्त फाइलको Share Access <em>"Anyone with the link can view" (लिङ्क भएका जोकोहीले हेर्न मिल्ने)</em> बनाएको हुनुपर्छ।
+                    </p>
                   </div>
 
                   <div className="w-full mt-1 p-2 bg-emerald-50 rounded-lg border border-emerald-200 text-left flex items-start gap-1.5 text-[11px] text-emerald-800">
-                    <span className="font-bold">✓ गुगल सिट डाटाबेस:</span>
-                    <span>अपलोड भएको यो लोगो लिंक भएको गुगल सिटको <strong>कार्यालय_विवरण</strong> पानामा सुरक्षित हुन्छ।</span>
+                    <span className="font-bold">✓ सिङ्क्रोनाइजेसन:</span>
+                    <span>यो लोगो गुगल सिटको <strong>कार्यालय_विवरण</strong> पानामा सुरक्षित हुन्छ र लगइन गर्दा स्वतः लेटरप्याडमा देखिनेछ।</span>
                   </div>
                 </div>
               </div>

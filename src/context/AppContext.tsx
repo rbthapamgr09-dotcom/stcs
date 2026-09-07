@@ -72,9 +72,8 @@ import {
   logSecurityEvent,
   generateDataChecksum,
   verifyDataChecksum,
-  getSecurityAuditLogs,
-  mergeSecurityAuditLogs,
 } from '../utils/securityUtils';
+import { normalizeLogoUrl } from '../utils/logoUtils';
 
 interface ConfirmationDialogState {
   isOpen: boolean;
@@ -3826,13 +3825,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return calculateMonthlySalaryItem(emp, sal, ded, annualRes, activeMonth);
     });
 
-    // Sanitize organization base64 images if needed (keep full logo/signature within 48,000 char cell safe-limit)
+    // Sanitize organization images & normalize Google Drive URLs safely
     const sanitizedOrg = { ...targetOrg };
-    if (sanitizedOrg.logoUrl && sanitizedOrg.logoUrl.startsWith('data:image') && sanitizedOrg.logoUrl.length > 48000) {
-      sanitizedOrg.logoUrl = sanitizedOrg.logoUrl.substring(0, 48000);
-    }
-    if (sanitizedOrg.signatureUrl && sanitizedOrg.signatureUrl.startsWith('data:image') && sanitizedOrg.signatureUrl.length > 48000) {
-      sanitizedOrg.signatureUrl = sanitizedOrg.signatureUrl.substring(0, 48000);
+    if (sanitizedOrg.logoUrl) {
+      sanitizedOrg.logoUrl = normalizeLogoUrl(sanitizedOrg.logoUrl);
     }
 
     const payload: AppSyncDataPayload = {
@@ -3844,7 +3840,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       deductionSetups: targetDeductionSetups,
       taxReferences: targetTaxReferences,
       users: targetUsers,
-      auditLogs: getSecurityAuditLogs(),
       calculatedResults,
       monthlyItems,
       timestamp: new Date().toISOString(),
@@ -3863,6 +3858,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (directPullRes.success && directPullRes.data) {
             const pullData = directPullRes.data;
             if (pullData.organization && typeof pullData.organization === 'object') {
+              if (pullData.organization.logoUrl) {
+                pullData.organization.logoUrl = normalizeLogoUrl(pullData.organization.logoUrl);
+              }
               setOrganization((prev) => ({
                 ...prev,
                 ...pullData.organization,
@@ -3901,10 +3899,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 } catch {}
                 return merged;
               });
-            }
-            if (Array.isArray(pullData.auditLogs) && pullData.auditLogs.length > 0) {
-              const currentLocalLogs = getSecurityAuditLogs();
-              mergeSecurityAuditLogs(currentLocalLogs, pullData.auditLogs);
             }
             directSyncSuccess = true;
             successMessage = directPullRes.message || 'गुगल सिट्सबाट डाटा प्राप्त भयो।';
@@ -3977,6 +3971,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
           if (mode === 'pull' && resData.data) {
             if (resData.data.organization && typeof resData.data.organization === 'object') {
+              if (resData.data.organization.logoUrl) {
+                resData.data.organization.logoUrl = normalizeLogoUrl(resData.data.organization.logoUrl);
+              }
               setOrganization((prev) => ({
                 ...prev,
                 ...resData.data.organization,
@@ -4015,10 +4012,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 } catch {}
                 return merged;
               });
-            }
-            if (Array.isArray(resData.data.auditLogs) && resData.data.auditLogs.length > 0) {
-              const currentLocalLogs = getSecurityAuditLogs();
-              mergeSecurityAuditLogs(currentLocalLogs, resData.data.auditLogs);
             }
           }
 

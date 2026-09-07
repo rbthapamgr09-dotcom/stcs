@@ -1,11 +1,82 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { getCurrentDualDate, toNepaliDigits } from '../../utils/nepaliCalendar';
 import { ReportSignatures, SignatoryInfo } from './ReportSignatures';
 import { OrganizationSetup } from '../../types';
+import { normalizeLogoUrl, getDriveThumbnailUrl } from '../../utils/logoUtils';
 
 export { ReportSignatures };
 export type { SignatoryInfo };
+
+// Dedicated Letterhead Logo Component with Google Drive & Fallback Auto-Healing
+const LetterheadLogoImage: React.FC<{
+  logoUrl?: string;
+  compact?: boolean;
+}> = ({ logoUrl, compact }) => {
+  const [currentSrc, setCurrentSrc] = useState<string>('');
+  const [hasError, setHasError] = useState<boolean>(false);
+  const [attemptedThumbnail, setAttemptedThumbnail] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (logoUrl) {
+      const normalized = normalizeLogoUrl(logoUrl);
+      setCurrentSrc(normalized);
+      setHasError(false);
+      setAttemptedThumbnail(false);
+    } else {
+      setCurrentSrc('');
+      setHasError(false);
+    }
+  }, [logoUrl]);
+
+  const handleImageError = () => {
+    if (!attemptedThumbnail && logoUrl) {
+      const thumb = getDriveThumbnailUrl(logoUrl);
+      if (thumb && thumb !== currentSrc) {
+        setAttemptedThumbnail(true);
+        setCurrentSrc(thumb);
+        return;
+      }
+    }
+    setHasError(true);
+  };
+
+  if (currentSrc && !hasError) {
+    return (
+      <img
+        src={currentSrc}
+        alt="कार्यालयको लोगो"
+        referrerPolicy="no-referrer"
+        onError={handleImageError}
+        className={`${
+          compact
+            ? 'max-h-16 max-w-16 sm:max-h-20 sm:max-w-20 print:max-h-18 print:max-w-18'
+            : 'max-h-20 max-w-20 sm:max-h-24 sm:max-w-24 md:max-h-28 md:max-w-28 print:max-h-24 print:max-w-24'
+        } w-auto h-auto object-contain drop-shadow-xs shrink-0 block`}
+      />
+    );
+  }
+
+  // Fallback: Official Stylized Nepal Emblem SVG
+  return (
+    <svg
+      viewBox="0 0 100 100"
+      className={`${
+        compact
+          ? 'w-16 h-16 sm:w-18 sm:h-18 print:w-16 print:h-16'
+          : 'w-18 h-18 sm:w-22 sm:h-22 md:w-24 md:h-24 print:w-20 print:h-20'
+      } text-[#800000] shrink-0 block`}
+      fill="currentColor"
+    >
+      <circle cx="50" cy="50" r="45" fill="#fdf2f2" stroke="#800000" strokeWidth="2.5" />
+      <path d="M50 15 L58 35 L80 35 L62 48 L68 70 L50 56 L32 70 L38 48 L20 35 Z" fill="#800000" opacity="0.9" />
+      <path d="M25 65 Q50 40 75 65 Q50 78 25 65" fill="#ffffff" stroke="#800000" strokeWidth="2" />
+      <text x="50" y="86" textAnchor="middle" fontSize="6" fontWeight="bold" fill="#800000">
+        जननी जन्मभूमिश्च स्वर्गादपि गरीयसी
+      </text>
+    </svg>
+  );
+};
 
 interface LetterheadProps {
   title?: string;
@@ -125,35 +196,7 @@ export const Letterhead: React.FC<LetterheadProps> = ({
                 : 'shrink-0 flex items-start justify-center pt-0.5 self-start'
             }`}
           >
-            {organization.logoUrl ? (
-              <img
-                src={organization.logoUrl}
-                alt="Logo"
-                className={`${
-                  compact
-                    ? 'max-h-16 max-w-16 sm:max-h-20 sm:max-w-20 print:max-h-18 print:max-w-18'
-                    : 'max-h-20 max-w-20 sm:max-h-24 sm:max-w-24 md:max-h-28 md:max-w-28 print:max-h-24 print:max-w-24'
-                } object-contain drop-shadow-xs`}
-              />
-            ) : (
-              <svg
-                viewBox="0 0 100 100"
-                className={`${
-                  compact
-                    ? 'w-16 h-16 sm:w-18 sm:h-18 print:w-16 print:h-16'
-                    : 'w-18 h-18 sm:w-22 sm:h-22 md:w-24 md:h-24 print:w-20 print:h-20'
-                } text-[#800000]`}
-                fill="currentColor"
-              >
-                {/* Stylized Nepal Emblem outline */}
-                <circle cx="50" cy="50" r="45" fill="#fdf2f2" stroke="#800000" strokeWidth="2.5" />
-                <path d="M50 15 L58 35 L80 35 L62 48 L68 70 L50 56 L32 70 L38 48 L20 35 Z" fill="#800000" opacity="0.9" />
-                <path d="M25 65 Q50 40 75 65 Q50 78 25 65" fill="#ffffff" stroke="#800000" strokeWidth="2" />
-                <text x="50" y="86" textAnchor="middle" fontSize="6" fontWeight="bold" fill="#800000">
-                  जननी जन्मभूमिश्च स्वर्गादपि गरीयसी
-                </text>
-              </svg>
-            )}
+            <LetterheadLogoImage logoUrl={organization.logoUrl} compact={compact} />
           </div>
 
           {/* Center/Office Details in Dark Red (#800000) with precise pt font sizes */}
