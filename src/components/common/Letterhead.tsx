@@ -176,37 +176,33 @@ export const Letterhead: React.FC<LetterheadProps> = ({
       {/* Official Top Letterhead Box */}
       <div className={`border-b-2 border-[#800000] ${compact ? 'pb-1 mb-1' : 'pb-4 mb-4'}`}>
         <div
-          className={`relative w-full ${
+          className={`w-full ${
             organization.alignment === 'left'
               ? 'flex items-start justify-start gap-3 sm:gap-4'
               : organization.alignment === 'right'
               ? 'flex items-start justify-end flex-row-reverse gap-3 sm:gap-4'
-              : 'flex items-start justify-center'
+              : 'flex items-center justify-center gap-3.5 sm:gap-5 md:gap-6 print:gap-4'
           }`}
         >
-          {/* Logo / Coat of Arms / Emblem SVG (Top-aligned at top-left so central text is 100% centered with document title) */}
+          {/* Logo / Coat of Arms / Emblem SVG (Snug adjacent positioning to text in Portrait & Landscape) */}
           <div
             className={`${
               compact
-                ? 'w-16 h-16 sm:w-20 sm:h-20 print:w-18 print:h-18'
-                : 'w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 print:w-24 print:h-24'
-            } ${
-              organization.alignment === 'center' || !organization.alignment
-                ? 'absolute left-0 top-0 shrink-0 flex items-start justify-start pt-0.5'
-                : 'shrink-0 flex items-start justify-center pt-0.5 self-start'
-            }`}
+                ? 'w-14 h-14 sm:w-16 sm:h-16 print:w-14 print:h-14'
+                : 'w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 print:w-20 print:h-20'
+            } shrink-0 flex items-center justify-center self-center`}
           >
             <LetterheadLogoImage logoUrl={organization.logoUrl} compact={compact} />
           </div>
 
           {/* Center/Office Details in Dark Red (#800000) with precise pt font sizes */}
           <div
-            className={`w-full ${
+            className={`flex flex-col ${
               organization.alignment === 'left'
-                ? 'text-left'
+                ? 'text-left items-start'
                 : organization.alignment === 'right'
-                ? 'text-right'
-                : 'text-center px-16 sm:px-20 md:px-24 flex flex-col items-center justify-center'
+                ? 'text-right items-end'
+                : 'text-center items-center justify-center'
             }`}
           >
             {/* Level 1: संस्था / निकाय / सरकारको तह (9 pt) */}
