@@ -1,6 +1,6 @@
 import { db, withDbRetry } from './index.ts';
 import { users } from './schema.ts';
-import { eq, or, sql } from 'drizzle-orm';
+import { desc, eq, or, sql } from 'drizzle-orm';
 
 export async function getOrCreateUser(
   uid: string,
@@ -12,52 +12,81 @@ export async function getOrCreateUser(
   metadata?: Record<string, any>
 ) {
   try {
-    const cleanUsername = username || email.split('@')[0] || uid;
-    const cleanFullName = fullName || cleanUsername || 'User';
+    const cleanUsername = (username || email.split('@')[0] || uid).trim();
+    const cleanFullName = (fullName || cleanUsername || 'User').trim();
     const cleanRole = role || 'GENERAL_USER';
     const cleanOrgId = organizationId || 'org_default';
     const cleanOrgName = (metadata as any)?.organizationName || null;
     const cleanDesignation = (metadata as any)?.designation || null;
     const cleanPhone = (metadata as any)?.phone || null;
     const cleanIsActive = (metadata as any)?.isActive !== undefined ? Boolean((metadata as any).isActive) : true;
+    const cleanEmail = email ? email.trim().toLowerCase() : `${cleanUsername.toLowerCase()}@system.local`;
 
-    const result = await withDbRetry(() =>
+    // 1. Check if user already exists by uid OR matching username
+    const existing = await withDbRetry(() =>
       db
-        .insert(users)
-        .values({
-          uid,
-          email,
-          username: cleanUsername,
-          fullName: cleanFullName,
-          role: cleanRole,
-          organizationId: cleanOrgId,
-          organizationName: cleanOrgName,
-          designation: cleanDesignation,
-          phone: cleanPhone,
-          isActive: cleanIsActive,
-          metadata: metadata || {},
-          updatedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: users.uid,
-          set: {
+        .select()
+        .from(users)
+        .where(
+          or(
+            eq(users.uid, uid),
+            sql`lower(${users.username}) = ${cleanUsername.toLowerCase()}`
+          )
+        )
+        .limit(1)
+    );
+
+    if (existing && existing.length > 0) {
+      const existingUser = existing[0];
+      const mergedMeta = {
+        ...((existingUser.metadata as Record<string, any>) || {}),
+        ...(metadata || {}),
+      };
+
+      const updated = await withDbRetry(() =>
+        db
+          .update(users)
+          .set({
+            uid: uid || existingUser.uid,
             username: cleanUsername,
-            email,
+            email: cleanEmail || existingUser.email,
             fullName: cleanFullName,
             role: cleanRole,
             organizationId: cleanOrgId,
-            organizationName: cleanOrgName || undefined,
-            designation: cleanDesignation || undefined,
-            phone: cleanPhone || undefined,
+            organizationName: cleanOrgName || existingUser.organizationName,
+            designation: cleanDesignation || existingUser.designation,
+            phone: cleanPhone || existingUser.phone,
+            isActive: cleanIsActive,
+            metadata: mergedMeta,
+            updatedAt: new Date(),
+          })
+          .where(eq(users.id, existingUser.id))
+          .returning()
+      );
+      return updated[0];
+    } else {
+      // 2. Insert new user record
+      const inserted = await withDbRetry(() =>
+        db
+          .insert(users)
+          .values({
+            uid,
+            email: cleanEmail,
+            username: cleanUsername,
+            fullName: cleanFullName,
+            role: cleanRole,
+            organizationId: cleanOrgId,
+            organizationName: cleanOrgName,
+            designation: cleanDesignation,
+            phone: cleanPhone,
             isActive: cleanIsActive,
             metadata: metadata || {},
             updatedAt: new Date(),
-          },
-        })
-        .returning()
-    );
-
-    return result[0];
+          })
+          .returning()
+      );
+      return inserted[0];
+    }
   } catch (error) {
     console.error('Database query failed in getOrCreateUser:', error);
     throw new Error('Database user sync failed. Please try again later.', { cause: error });
@@ -94,7 +123,7 @@ export async function upsertUsersBatch(usersList: Array<{
 
 export async function getUsers() {
   try {
-    return await withDbRetry(() => db.select().from(users));
+    return await withDbRetry(() => db.select().from(users).orderBy(desc(users.updatedAt)));
   } catch (error) {
     console.error('Database query failed in getUsers:', error);
     throw new Error('Failed to retrieve users from database.', { cause: error });
@@ -125,6 +154,8 @@ export async function getUserByUsernameOrEmailOrUid(identifier: string) {
             eq(users.uid, identifier.trim())
           )
         )
+        .orderBy(desc(users.updatedAt))
+        .limit(1)
     );
     return result[0] || null;
   } catch (error) {

@@ -353,6 +353,47 @@ export async function getCloudAppConnection(
 }
 
 /**
+ * Persists a single user to Cloud SQL and Firestore
+ */
+export async function saveSingleUserToCloud(u: User): Promise<boolean> {
+  const payload = {
+    uid: u.id || u.username,
+    email: u.email || `${u.username}@system.local`,
+    username: u.username,
+    fullName: u.fullName,
+    role: u.role,
+    organizationId: u.organizationId || 'org_default',
+    organizationName: u.organizationName,
+    designation: u.designation,
+    phone: u.phone,
+    metadata: {
+      password: u.password,
+      securityPin: u.securityPin || '1234',
+      securityQuestion: u.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+      securityAnswer: u.securityAnswer || 'नेपाल',
+      mustChangePassword: Boolean(u.mustChangePassword),
+      isFirstLogin: Boolean(u.isFirstLogin),
+      organizationName: u.organizationName,
+      phone: u.phone,
+      designation: u.designation,
+      isActive: u.isActive !== undefined ? u.isActive : true,
+    },
+  };
+
+  try {
+    const res = await fetch('/api/users/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch (sqlErr) {
+    console.warn('Could not sync single user to Cloud SQL:', sqlErr);
+    return false;
+  }
+}
+
+/**
  * Persists registered users list to Cloud SQL and Firestore
  */
 export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
@@ -368,15 +409,15 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
     phone: u.phone,
     metadata: {
       password: u.password,
-      securityPin: u.securityPin,
-      securityQuestion: u.securityQuestion,
-      securityAnswer: u.securityAnswer,
-      mustChangePassword: u.mustChangePassword,
-      isFirstLogin: u.isFirstLogin,
+      securityPin: u.securityPin || '1234',
+      securityQuestion: u.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+      securityAnswer: u.securityAnswer || 'नेपाल',
+      mustChangePassword: Boolean(u.mustChangePassword),
+      isFirstLogin: Boolean(u.isFirstLogin),
       organizationName: u.organizationName,
       phone: u.phone,
       designation: u.designation,
-      isActive: u.isActive,
+      isActive: u.isActive !== undefined ? u.isActive : true,
     },
   }));
 

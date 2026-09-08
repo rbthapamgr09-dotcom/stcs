@@ -61,6 +61,7 @@ import {
   saveCloudAppConnection,
   getCloudAppConnection,
   saveCloudUsers,
+  saveSingleUserToCloud,
   getCloudUsers,
   deleteCloudUser,
   saveCloudSupportContact,
@@ -602,9 +603,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const saved = localStorage.getItem(STORAGE_KEYS.USERS);
       if (saved) {
         const parsed: User[] = JSON.parse(saved);
-        // Retain ONLY SUPER_ADMIN users during this reset; purge any office-specific users
-        const filtered = Array.isArray(parsed) ? parsed.filter((u) => u.role === 'SUPER_ADMIN') : [];
-        const resultUsers = [...filtered];
+        const resultUsers = Array.isArray(parsed) ? [...parsed] : [];
         DEFAULT_USERS.forEach((defUser) => {
           const exists = resultUsers.some(
             (u) =>
@@ -617,13 +616,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
         });
 
-        // Ensure default passwords/pins exist for loaded super admin users
+        // Ensure default passwords/pins and valid fallback values exist for all loaded users
         const finalUsers = resultUsers.map((u) => ({
           ...u,
-          password: u.password || 'admin123',
+          password:
+            u.password ||
+            (u.role === 'SUPER_ADMIN' || u.role === 'ADMIN'
+              ? 'admin123'
+              : u.role === 'ACCOUNTANT'
+              ? 'account123'
+              : 'viewer123'),
           securityPin: u.securityPin || '1234',
           securityQuestion: u.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
           securityAnswer: u.securityAnswer || 'नेपाल',
+          isActive: u.isActive !== undefined ? u.isActive : true,
         }));
 
         try {
@@ -1466,7 +1472,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (found) {
       const userPass =
         found.password ||
-        (found.role === 'SUPER_ADMIN'
+        (found.role === 'SUPER_ADMIN' || found.role === 'ADMIN'
           ? 'admin123'
           : found.role === 'ACCOUNTANT'
           ? 'account123'
@@ -1684,6 +1690,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       saveCloudUsers(updatedList).catch((e) => console.warn('Could not save updated user to cloud:', e));
       return updatedList;
     });
+    saveSingleUserToCloud(updatedUser).catch((e) => console.warn('Cloud save single user notice:', e));
     setCurrentUser(updatedUser);
     setIsAuthenticated(true);
     setIsScreenLocked(false);
@@ -1805,6 +1812,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     saveCloudUsers(updatedUsers).catch(console.warn);
+    saveSingleUserToCloud(newUser).catch(console.warn);
     triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
@@ -1883,6 +1891,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     saveCloudUsers(updatedUsers).catch(console.warn);
+    saveSingleUserToCloud(updatedUser).catch(console.warn);
     triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
@@ -1931,6 +1940,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch {}
 
     saveCloudUsers(updatedUsers).catch(console.warn);
+    saveSingleUserToCloud(updatedUser).catch(console.warn);
     triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
@@ -2049,6 +2059,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch {}
 
     saveCloudUsers(updatedUsers).catch(console.warn);
+    saveSingleUserToCloud(updatedUser).catch(console.warn);
     triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
@@ -3433,7 +3444,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const hashedAdminPass = hashPasswordSync(initialAdmin.password || 'admin123').encoded;
       const adminUser: User = {
         id: `user_${Date.now() + 1}`,
-        username: initialAdmin.username.trim(),
+        username: initialAdmin.username.trim().toLowerCase(),
         password: hashedAdminPass,
         fullName: initialAdmin.fullName || `${newOrg.officeName} प्रशासक`,
         role: 'ADMIN',
@@ -3451,13 +3462,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         createdAt: new Date().toLocaleDateString('ne-NP'),
       };
       setUsers((prev) => {
-        const updatedUsers = [...prev, adminUser];
+        const updatedUsers = [...prev.filter((u) => u.username.toLowerCase() !== adminUser.username.toLowerCase()), adminUser];
         try {
           localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
         } catch {}
-        saveCloudUsers(updatedUsers).catch((e) => console.warn('Cloud save user notice:', e));
+        saveCloudUsers(updatedUsers).catch((e) => console.warn('Cloud save users notice:', e));
         return updatedUsers;
       });
+      saveSingleUserToCloud(adminUser).catch((e) => console.warn('Cloud save admin user notice:', e));
     }
 
     addToast(
