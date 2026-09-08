@@ -820,72 +820,84 @@ function logSyncAudit(ss, action, status, user, details) {
       </div>
 
       {/* Multi-Organization Context & Active Office Switcher */}
-      <div className="bg-linear-to-r from-[#f4f8f2] via-[#edf5ea] to-[#f9faf8] p-4.5 rounded-2xl border-2 border-[#b8d4b2] shadow-xs space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-[#4B6043] text-white flex items-center justify-center font-bold">
-              <Building2 className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                  हाल सक्रिय कार्यालय (Active Office):
-                </span>
-                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10.5px] font-bold rounded-md border border-emerald-300">
-                  {organization.officeName || organization.name || 'कार्यालय'}
-                </span>
-              </div>
-              <p className="text-xs font-bold text-[#24331C] mt-0.5">
-                {organization.officeName || organization.name || 'कार्यालय'} — गुगल सिट तथा सिंक व्यवस्थापन
-              </p>
-            </div>
+      {organizations.length === 0 || !organization.officeName ? (
+        <div className="bg-[#f8faf6] p-5 rounded-2xl border border-dashed border-[#b8d4b2] text-center space-y-2">
+          <div className="w-10 h-10 rounded-xl bg-[#edf5ea] text-[#4B6043] flex items-center justify-center mx-auto">
+            <Building2 className="w-5 h-5" />
           </div>
-
-          {organizations.length > 1 && (
-            <div className="flex items-center gap-2">
-              <label htmlFor="org-switcher-select" className="text-xs font-bold text-[#2e4722] whitespace-nowrap">
-                कार्यालय बदल्नुहोस्:
-              </label>
-              <select
-                id="org-switcher-select"
-                value={activeOrganizationId}
-                onChange={(e) => setActiveOrganizationId(e.target.value)}
-                className="px-3 py-1.5 bg-white border border-[#bed8b8] rounded-xl text-xs font-bold text-[#1f3517] focus:ring-2 focus:ring-[#4B6043] outline-none shadow-xs cursor-pointer"
-              >
-                {organizations.map((org) => (
-                  <option key={org.id} value={org.id}>
-                    🏢 {org.officeName || org.name} {org.spreadsheetId ? '✓ (सिट लिंक भएको)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          <h4 className="text-sm font-bold text-[#24331C]">कुनै पनि कार्यालय सक्रिय वा दर्ता गरिएको छैन</h4>
+          <p className="text-xs text-gray-500 max-w-md mx-auto">
+            गुगल सिट सिंक संचालन गर्नका लागि पहिले कार्यालय सेटअप (Organization Setup) मेनुबाट कार्यालय दर्ता गर्नुहोस्।
+          </p>
         </div>
+      ) : (
+        <div className="bg-linear-to-r from-[#f4f8f2] via-[#edf5ea] to-[#f9faf8] p-4.5 rounded-2xl border-2 border-[#b8d4b2] shadow-xs space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-[#4B6043] text-white flex items-center justify-center font-bold">
+                <Building2 className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                    हाल सक्रिय कार्यालय (Active Office):
+                  </span>
+                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10.5px] font-bold rounded-md border border-emerald-300">
+                    {organization.officeName}
+                  </span>
+                </div>
+                <p className="text-xs font-bold text-[#24331C] mt-0.5">
+                  {organization.officeName} — गुगल सिट तथा सिंक व्यवस्थापन
+                </p>
+              </div>
+            </div>
 
-        <div className="bg-white/90 p-3 rounded-xl border border-[#cfe1cb] flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 text-[#24331C]">
-            <FileSpreadsheet className="w-4 h-4 text-emerald-700 shrink-0" />
-            <span>
-              यस कार्यालयको Google Sheet:{' '}
-              <strong className="text-emerald-900 font-mono">
-                {formData.spreadsheetName || `stcs_${organization.officeName || 'कार्यालय'}`}
-              </strong>
-            </span>
-          </div>
-          <div className="text-[11px] text-gray-600">
-            {formData.spreadsheetId ? (
-              <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                <CheckCircle className="w-3.5 h-3.5" />
-                Sheet ID जडित: <code className="font-mono text-[10px] bg-gray-100 px-1 py-0.5 rounded">{formData.spreadsheetId.slice(0, 16)}...</code>
-              </span>
-            ) : (
-              <span className="text-amber-700 font-medium">
-                ⚠️ यस कार्यालयको लागि कुनै Google Sheet अझै लिंक गरिएको छैन
-              </span>
+            {organizations.length > 1 && (
+              <div className="flex items-center gap-2">
+                <label htmlFor="org-switcher-select" className="text-xs font-bold text-[#2e4722] whitespace-nowrap">
+                  कार्यालय बदल्नुहोस्:
+                </label>
+                <select
+                  id="org-switcher-select"
+                  value={activeOrganizationId}
+                  onChange={(e) => setActiveOrganizationId(e.target.value)}
+                  className="px-3 py-1.5 bg-white border border-[#bed8b8] rounded-xl text-xs font-bold text-[#1f3517] focus:ring-2 focus:ring-[#4B6043] outline-none shadow-xs cursor-pointer"
+                >
+                  {organizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      🏢 {org.officeName || org.name} {org.spreadsheetId ? '✓ (सिट लिंक भएको)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
             )}
           </div>
+
+          <div className="bg-white/90 p-3 rounded-xl border border-[#cfe1cb] flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 text-[#24331C]">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>
+                यस कार्यालयको Google Sheet:{' '}
+                <strong className="text-emerald-900 font-mono">
+                  {formData.spreadsheetName || `stcs_${organization.officeName}`}
+                </strong>
+              </span>
+            </div>
+            <div className="text-[11px] text-gray-600">
+              {formData.spreadsheetId ? (
+                <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  Sheet ID जडित: <code className="font-mono text-[10px] bg-gray-100 px-1 py-0.5 rounded">{formData.spreadsheetId.slice(0, 16)}...</code>
+                </span>
+              ) : (
+                <span className="text-amber-700 font-medium">
+                  ⚠️ यस कार्यालयको लागि कुनै Google Sheet अझै लिंक गरिएको छैन
+                </span>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2 Cols: Setup Form & Sync Actions */}

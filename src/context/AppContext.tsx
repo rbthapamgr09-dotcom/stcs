@@ -909,6 +909,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const saved = localStorage.getItem(STORAGE_KEYS.ORG);
       if (saved) {
         const parsed = JSON.parse(saved);
+        if (
+          parsed.officeName === 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' ||
+          parsed.officeName === 'महाकाली पुल योजना' ||
+          !parsed.officeName
+        ) {
+          try { localStorage.removeItem(STORAGE_KEYS.ORG); } catch {}
+          return DEFAULT_ORGANIZATION;
+        }
         return { ...DEFAULT_ORGANIZATION, ...parsed };
       }
       return DEFAULT_ORGANIZATION;
@@ -1056,49 +1064,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // 2. Multi-Organization Cloud Sync across Devices
     getCloudOrganizations().then((cloudOrgs) => {
-      if (cloudOrgs && cloudOrgs.length > 0 && isMounted) {
-        setOrganizations((prev) => {
-          const merged = [...prev];
-          for (const co of cloudOrgs) {
-            const idx = merged.findIndex((o) => o.id === co.id);
-            if (idx >= 0) {
-              merged[idx] = { ...merged[idx], ...co };
-            } else {
-              merged.push(co);
-            }
-          }
+      if (isMounted) {
+        if (cloudOrgs && cloudOrgs.length > 0) {
+          const filtered = cloudOrgs.filter(
+            (co) =>
+              co.id !== 'org_default' &&
+              co.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' &&
+              co.officeName !== 'महाकाली पुल योजना' &&
+              Boolean(co.officeName)
+          );
+          setOrganizations(filtered);
           try {
-            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(merged));
+            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(filtered));
           } catch {}
-          return merged;
-        });
-
-        // Ensure org databases exist for all loaded organizations
-        setOrgDatabases((prev) => {
-          const updated = { ...prev };
-          for (const co of cloudOrgs) {
-            if (!updated[co.id]) {
-              updated[co.id] = {
-                organization: { ...co },
-                fiscalYears: DEFAULT_FY_LIST,
-                activeFiscalYear: '२०८१/८२',
-                fyDatabase: {
-                  '२०८१/८२': {
-                    employees: [],
-                    salarySetups: {},
-                    deductionSetups: {},
-                    taxReferences: DEFAULT_TAX_REFERENCES,
-                  },
-                },
-                googleSheetsConfig: DEFAULT_GOOGLE_SHEETS_CONFIG,
-              };
-            }
-          }
+        } else {
+          setOrganizations([]);
           try {
-            localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(updated));
+            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify([]));
           } catch {}
-          return updated;
-        });
+        }
       }
     }).catch((e) => console.warn('Cloud organizations sync notice:', e));
 
@@ -1149,10 +1133,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           });
         }
         if (cloudConn.organization) {
-          setOrganization((prev) => ({
-            ...prev,
-            ...cloudConn.organization,
-          }));
+          if (
+            cloudConn.organization.officeName &&
+            cloudConn.organization.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' &&
+            cloudConn.organization.officeName !== 'महाकाली पुल योजना'
+          ) {
+            setOrganization((prev) => ({
+              ...prev,
+              ...cloudConn.organization,
+            }));
+          }
         }
       }
     }).catch((e) => console.warn('Cloud app connection sync notice:', e));
@@ -1184,7 +1174,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          const filtered = parsed.filter((o) => o.id !== 'org_default' && o.officeName !== 'महाकाली पुल योजना');
+          const filtered = parsed.filter(
+            (o) =>
+              o.id !== 'org_default' &&
+              o.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' &&
+              o.officeName !== 'महाकाली पुल योजना' &&
+              Boolean(o.officeName)
+          );
           return filtered;
         }
       }
@@ -1233,6 +1229,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const activeOrganization = useMemo(() => {
+    if (organizations.length === 0) return DEFAULT_ORGANIZATION;
     return organizations.find((o) => o.id === activeOrganizationId) || organizations[0] || DEFAULT_ORGANIZATION;
   }, [organizations, activeOrganizationId]);
 
