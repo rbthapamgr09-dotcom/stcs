@@ -163,8 +163,8 @@ async function startServer() {
   app.post('/api/users/sync', optionalAuth, async (req: AuthRequest, res) => {
     try {
       const { uid, email, username, fullName, role, organizationId, metadata } = req.body;
-      const targetUid = req.user?.uid || uid;
-      const targetEmail = req.user?.email || email;
+      const targetUid = uid || req.user?.uid;
+      const targetEmail = email || req.user?.email;
 
       if (!targetUid) {
         return res.status(400).json({ error: 'User UID is required' });
