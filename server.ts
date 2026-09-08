@@ -1,9 +1,18 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { requireAuth, optionalAuth, AuthRequest } from './src/middleware/auth.ts';
-import { getOrCreateUser, getUsers, getUserByUid, deleteUserByUid } from './src/db/users.ts';
+import {
+  getOrCreateUser,
+  getUsers,
+  getUserByUid,
+  deleteUserByUid,
+  getUserByUsernameOrEmailOrUid,
+  upsertUsersBatch,
+} from './src/db/users.ts';
+import { verifyPasswordSync } from './src/utils/securityUtils.ts';
 import {
   getOrganizations,
   upsertOrganization,
@@ -14,7 +23,56 @@ import {
   upsertEmployee,
 } from './src/db/payroll.ts';
 
+function freePortSync(port: number) {
+  try {
+    const hexPort = port.toString(16).toUpperCase().padStart(4, '0');
+    if (!fs.existsSync('/proc/net/tcp')) return;
+    const tcpData = fs.readFileSync('/proc/net/tcp', 'utf8');
+    const inodes = new Set<string>();
+    for (const line of tcpData.split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length > 9 && parts[3] === '0A' && parts[1].endsWith(':' + hexPort)) {
+        inodes.add(parts[9]);
+      }
+    }
+    if (inodes.size === 0) return;
+    const myPid = process.pid;
+    const entries = fs.readdirSync('/proc');
+    for (const entry of entries) {
+      if (!/^\d+$/.test(entry)) continue;
+      const pid = parseInt(entry, 10);
+      if (pid === myPid || pid === 1) continue;
+      try {
+        const fdPath = `/proc/${pid}/fd`;
+        if (!fs.existsSync(fdPath)) continue;
+        const fds = fs.readdirSync(fdPath);
+        for (const fd of fds) {
+          try {
+            const link = fs.readlinkSync(`${fdPath}/${fd}`);
+            for (const inode of inodes) {
+              if (link.includes(`[${inode}]`)) {
+                console.log(`Freeing stale process PID ${pid} holding port ${port}...`);
+                process.kill(pid, 'SIGKILL');
+                break;
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 async function startServer() {
+  freePortSync(3000);
+  freePortSync(24678);
+
   const app = express();
   const PORT = 3000;
 
@@ -29,6 +87,76 @@ async function startServer() {
       database: 'Cloud SQL (PostgreSQL)',
       timestamp: new Date().toISOString(),
     });
+  });
+
+  // Dedicated server-side login authentication endpoint
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const { username, password } = req.body;
+      if (!username || typeof username !== 'string') {
+        return res.status(400).json({ success: false, message: 'कृपया प्रयोगकर्ता नाम प्रविष्ट गर्नुहोस्।' });
+      }
+
+      const cleanUser = username.trim();
+      const user = await getUserByUsernameOrEmailOrUid(cleanUser);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          notFound: true,
+          message: 'प्रविष्टि गरिएको प्रयोगकर्ता नाम (User ID) फेला परेन वा खाता निष्क्रिय छ।',
+        });
+      }
+
+      if (user.isActive === false) {
+        return res.status(403).json({
+          success: false,
+          inactive: true,
+          message: 'यो खाता निष्क्रिय (Inactive) गरिएको छ। कृपया प्रशासकसँग सम्पर्क गर्नुहोस्।',
+        });
+      }
+
+      const meta = (user.metadata as any) || {};
+      const storedPassword =
+        meta.password ||
+        (user.role === 'SUPER_ADMIN' ? 'admin123' : user.role === 'ADMIN' ? 'admin123' : 'viewer123');
+
+      if (password !== undefined && password !== '') {
+        const check = verifyPasswordSync(password, storedPassword);
+        if (!check.isValid) {
+          return res.status(401).json({
+            success: false,
+            wrongPassword: true,
+            message: 'गलत पासवर्ड प्रविष्ट भयो।',
+          });
+        }
+      }
+
+      const safeUser = {
+        id: user.uid || String(user.id),
+        uid: user.uid,
+        username: user.username,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        organizationId: user.organizationId || 'org_default',
+        organizationName: user.organizationName || meta.organizationName,
+        designation: user.designation || meta.designation,
+        phone: user.phone || meta.phone,
+        password: storedPassword,
+        securityPin: meta.securityPin || '1234',
+        securityQuestion: meta.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+        securityAnswer: meta.securityAnswer || 'नेपाल',
+        mustChangePassword: Boolean(meta.mustChangePassword),
+        isFirstLogin: Boolean(meta.isFirstLogin),
+        isActive: user.isActive,
+        createdAt: user.createdAt,
+      };
+
+      res.json({ success: true, user: safeUser, message: 'लगइन सफल भयो।' });
+    } catch (error: any) {
+      console.error('Server login error:', error);
+      res.status(500).json({ success: false, message: error.message || 'लगइन प्रक्रियामा त्रुटि आयो।' });
+    }
   });
 
   // User synchronization & authentication endpoint
@@ -55,6 +183,21 @@ async function startServer() {
     } catch (error: any) {
       console.error('Failed to sync user:', error);
       res.status(500).json({ error: error.message || 'Failed to sync user' });
+    }
+  });
+
+  // Batch User synchronization endpoint
+  app.post(['/api/users/batch', '/api/users/batch-sync'], optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const usersList = req.body.users;
+      if (!Array.isArray(usersList)) {
+        return res.status(400).json({ error: 'users must be an array' });
+      }
+      const saved = await upsertUsersBatch(usersList);
+      res.json({ success: true, count: saved.length });
+    } catch (error: any) {
+      console.error('Failed to batch sync users:', error);
+      res.status(500).json({ error: error.message || 'Failed to batch sync users' });
     }
   });
 
@@ -99,7 +242,7 @@ async function startServer() {
   });
 
   // Organization settings
-  app.get('/api/organization', optionalAuth, async (_req, res) => {
+  app.get(['/api/organization', '/api/organizations'], optionalAuth, async (_req, res) => {
     try {
       const orgs = await getOrganizations();
       res.json({ success: true, organizations: orgs });
@@ -109,7 +252,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/organization', optionalAuth, async (req: AuthRequest, res) => {
+  app.post(['/api/organization', '/api/organizations'], optionalAuth, async (req: AuthRequest, res) => {
     try {
       const saved = await upsertOrganization(req.body);
       res.json({ success: true, organization: saved });
@@ -119,7 +262,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/organization/:id', optionalAuth, async (req, res) => {
+  app.delete(['/api/organization/:id', '/api/organizations/:id'], optionalAuth, async (req, res) => {
     try {
       await deleteOrganizationById(req.params.id);
       res.json({ success: true, message: 'Organization deleted successfully' });
@@ -130,7 +273,7 @@ async function startServer() {
   });
 
   // System Settings (Google Sheets connection, payroll state, etc.)
-  app.get('/api/settings/:key', optionalAuth, async (req, res) => {
+  app.get(['/api/settings/:key', '/api/system-settings/:key'], optionalAuth, async (req, res) => {
     try {
       const data = await getSystemSetting(req.params.key);
       res.json({ success: true, data });
@@ -140,7 +283,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/settings/:key', optionalAuth, async (req: AuthRequest, res) => {
+  app.post(['/api/settings/:key', '/api/system-settings/:key'], optionalAuth, async (req: AuthRequest, res) => {
     try {
       const updatedBy = req.user?.email || req.body.updatedBy || 'system';
       const saved = await setSystemSetting(req.params.key, req.body.data || req.body, updatedBy);
@@ -189,9 +332,18 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  const shutdown = () => {
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 startServer();

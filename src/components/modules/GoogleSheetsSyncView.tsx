@@ -20,6 +20,7 @@ import {
   FolderKanban,
   ShieldAlert,
   UserCheck,
+  Building2,
   X,
   Plus,
 } from 'lucide-react';
@@ -42,6 +43,9 @@ export const GoogleSheetsSyncView: React.FC = () => {
     currentUser,
     organization,
     activeFiscalYear,
+    activeOrganizationId,
+    organizations,
+    setActiveOrganizationId,
   } = useApp();
 
   const [formData, setFormData] = useState<GoogleSheetsConfig>(googleSheetsConfig);
@@ -219,7 +223,7 @@ export const GoogleSheetsSyncView: React.FC = () => {
   const handleDirectApiCreate = async () => {
     setIsCreatingSheet(true);
     try {
-      const res = await createGoogleSpreadsheetForApp();
+      const res = await createGoogleSpreadsheetForApp({ promptForOAuth: true });
       if (res.success) {
         setShowCreateSheetModal(false);
       }
@@ -354,10 +358,24 @@ var TARGET_FOLDER_ID = "${TARGET_GOOGLE_DRIVE_FOLDER_ID}";
 
 /**
  * स्प्रेडसिट फेला पार्ने युनिभर्सल प्रकार्य (Universal Spreadsheet Resolver):
+ * १. यदि यो स्क्रिप्ट सम्बन्धित कार्यालयको Google Sheet भित्र (Extensions > Apps Script) राखिएको छ भने
+ *    यसले सिधै सोही सक्रिय स्प्रेडसिटलाई लिन्छ, जसले गर्दा सोही कार्यालयको सिटमा मात्र डाटा सुरक्षित हुन्छ।
+ * २. यदि Web App अनुरोध मार्फत explicitId पठाइएको छ वा TARGET_SPREADSHEET_ID उपलब्ध छ भने सोही अनुसार सिट खोल्दछ।
  */
 function getTargetSpreadsheet(explicitId) {
+  // १. यदि यो Apps Script कुनै Google Sheet भित्र (Extensions > Apps Script) राखिएको छ भने:
+  try {
+    var active = SpreadsheetApp.getActiveSpreadsheet();
+    if (active && active.getId && active.getId()) {
+      return active;
+    }
+  } catch (e) {
+    Logger.log("getActiveSpreadsheet notice: " + e.toString());
+  }
+
+  // २. यदि explicitId वा TARGET_SPREADSHEET_ID उपलब्ध छ भने:
   var idToUse = explicitId || TARGET_SPREADSHEET_ID;
-  if (idToUse && idToUse.trim() !== '' && idToUse !== 'YOUR_SPREADSHEET_ID_HERE') {
+  if (idToUse && typeof idToUse === 'string' && idToUse.trim() !== '' && idToUse !== 'YOUR_SPREADSHEET_ID_HERE') {
     try {
       var cleanId = idToUse.trim();
       var match = cleanId.match(/\\/spreadsheets\\/d\\/([a-zA-Z0-9-_]+)/);
@@ -367,13 +385,8 @@ function getTargetSpreadsheet(explicitId) {
       Logger.log("openById note: " + e.toString());
     }
   }
-  
-  try {
-    var active = SpreadsheetApp.getActiveSpreadsheet();
-    if (active) return active;
-  } catch (e) {}
 
-  throw new Error("Google Spreadsheet फेला परेन। कृपया कोडको माथि TARGET_SPREADSHEET_ID मा स्प्रेडसिटको ID राख्नुहोस् वा Web App बाट अनुरोध पठाउनुहोस्।");
+  throw new Error("Google Spreadsheet फेला परेन। कृपया यो Script लाई सम्बन्धित कार्यालयको Google Sheet भित्र (Extensions > Apps Script) मा राख्नुहोस् वा माथि TARGET_SPREADSHEET_ID मा स्प्रेडसिट ID राख्नुहोस्।");
 }
 
 /**
@@ -803,6 +816,74 @@ function logSyncAudit(ss, action, status, user, details) {
               ? `अन्तिम सिंक: ${new Date(googleSheetsConfig.lastSyncTime).toLocaleTimeString()}`
               : 'अझै सिंक भएको छैन'}
           </span>
+        </div>
+      </div>
+
+      {/* Multi-Organization Context & Active Office Switcher */}
+      <div className="bg-linear-to-r from-[#f4f8f2] via-[#edf5ea] to-[#f9faf8] p-4.5 rounded-2xl border-2 border-[#b8d4b2] shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[#4B6043] text-white flex items-center justify-center font-bold">
+              <Building2 className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                  हाल सक्रिय कार्यालय (Active Office):
+                </span>
+                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10.5px] font-bold rounded-md border border-emerald-300">
+                  {organization.officeName || organization.name || 'कार्यालय'}
+                </span>
+              </div>
+              <p className="text-xs font-bold text-[#24331C] mt-0.5">
+                {organization.officeName || organization.name || 'कार्यालय'} — गुगल सिट तथा सिंक व्यवस्थापन
+              </p>
+            </div>
+          </div>
+
+          {organizations.length > 1 && (
+            <div className="flex items-center gap-2">
+              <label htmlFor="org-switcher-select" className="text-xs font-bold text-[#2e4722] whitespace-nowrap">
+                कार्यालय बदल्नुहोस्:
+              </label>
+              <select
+                id="org-switcher-select"
+                value={activeOrganizationId}
+                onChange={(e) => setActiveOrganizationId(e.target.value)}
+                className="px-3 py-1.5 bg-white border border-[#bed8b8] rounded-xl text-xs font-bold text-[#1f3517] focus:ring-2 focus:ring-[#4B6043] outline-none shadow-xs cursor-pointer"
+              >
+                {organizations.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    🏢 {org.officeName || org.name} {org.spreadsheetId ? '✓ (सिट लिंक भएको)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white/90 p-3 rounded-xl border border-[#cfe1cb] flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-[#24331C]">
+            <FileSpreadsheet className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span>
+              यस कार्यालयको Google Sheet:{' '}
+              <strong className="text-emerald-900 font-mono">
+                {formData.spreadsheetName || `stcs_${organization.officeName || 'कार्यालय'}`}
+              </strong>
+            </span>
+          </div>
+          <div className="text-[11px] text-gray-600">
+            {formData.spreadsheetId ? (
+              <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                <CheckCircle className="w-3.5 h-3.5" />
+                Sheet ID जडित: <code className="font-mono text-[10px] bg-gray-100 px-1 py-0.5 rounded">{formData.spreadsheetId.slice(0, 16)}...</code>
+              </span>
+            ) : (
+              <span className="text-amber-700 font-medium">
+                ⚠️ यस कार्यालयको लागि कुनै Google Sheet अझै लिंक गरिएको छैन
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1582,22 +1663,22 @@ function logSyncAudit(ss, action, status, user, details) {
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-[#4B6043]" />
-                    <span>विधि २: API मार्फत स्वचालित सिर्जना प्रयास</span>
+                    <span>विधि २: Google API / Apps Script मार्फत स्वचालित सिर्जना</span>
                   </span>
                   <span className="text-[10px] text-gray-500 font-medium shrink-0">वैकल्पिक (Optional)</span>
                 </div>
                 <p className="text-[11px] text-gray-600">
-                  यदि तपाईंको गुगल खातामा Google REST API वा Apps Script Web App को प्रत्यक्ष अनुमति छ भने सिधै सिर्जना गर्न सकिन्छ।
+                  Google Drive मा सिधै <strong className="text-[#24331C]">stcs_{organization.officeName || 'कार्यालय'}</strong> सिर्जना गर्न क्लिक गर्नुहोस् (गुगलले अनुमति मागेमा 'Allow' गर्नुहोस्)।
                 </p>
                 <button
                   type="button"
                   onClick={handleDirectApiCreate}
                   disabled={isCreatingSheet}
-                  className="w-full py-2 bg-white hover:bg-gray-100 text-[#24331C] text-xs font-semibold rounded-xl border border-gray-300 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                  className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-800 active:scale-98 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   <Sparkles className={`w-3.5 h-3.5 ${isCreatingSheet ? 'animate-spin' : ''}`} />
                   <span>
-                    {isCreatingSheet ? 'API मार्फत प्रयास हुँदैछ...' : 'Google API बाट सिधै सिर्जना प्रयास गर्नुहोस्'}
+                    {isCreatingSheet ? 'सिट सिर्जना हुँदैछ...' : 'Google API बाट १-क्लिकमा सिट सिर्जना गर्नुहोस्'}
                   </span>
                 </button>
               </div>

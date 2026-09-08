@@ -71,6 +71,7 @@ import {
   deleteCloudOrganization,
   saveOrgSheetsConfig,
   getOrgSheetsConfig,
+  cloudLogin,
   db,
 } from '../services/cloudSyncService';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -177,7 +178,7 @@ interface AppContextType {
   login: (
     userIdOrUsername: string,
     password?: string
-  ) => { success: boolean; mustChangePassword?: boolean; user?: User; message?: string };
+  ) => Promise<{ success: boolean; mustChangePassword?: boolean; user?: User; message?: string }>;
   logout: () => void;
   addUser: (user: Omit<User, 'id' | 'createdAt'>) => boolean;
   updateUser: (user: User) => boolean;
@@ -290,7 +291,9 @@ interface AppContextType {
     officeNameOverride?: string;
     orgIdOverride?: string;
     webAppUrlOverride?: string;
-  }) => Promise<{ success: boolean; spreadsheetId?: string; url?: string; message: string }>;
+    silent?: boolean;
+    promptForOAuth?: boolean;
+  }) => Promise<{ success: boolean; isScopeError?: boolean; spreadsheetId?: string; url?: string; message: string }>;
   triggerAutoSyncOnSave: (overrides?: {
     overrideEmployees?: Employee[];
     overrideSalarySetups?: Record<string, SalarySetup>;
@@ -1117,6 +1120,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               merged.push(co);
             }
           }
+          try {
+            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(merged));
+          } catch {}
           return merged;
         });
 
@@ -1141,6 +1147,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               };
             }
           }
+          try {
+            localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(updated));
+          } catch {}
           return updated;
         });
       }
@@ -1161,6 +1170,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               merged.push(cu);
             }
           }
+          try {
+            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
+          } catch {}
           return merged;
         });
       }
@@ -1467,10 +1479,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // User Management functions (Hardened with Rate-limiting, Hashing & Audit Trails)
-  const login = (
+  const login = async (
     userIdOrUsername: string,
     password?: string
-  ): { success: boolean; mustChangePassword?: boolean; user?: User; message?: string } => {
+  ): Promise<{ success: boolean; mustChangePassword?: boolean; user?: User; message?: string }> => {
     const trimmedInput = sanitizeInput(userIdOrUsername).trim().toLowerCase();
 
     // 1. Brute-force Rate Limit Verification
@@ -1488,8 +1500,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { success: false, message: msg };
     }
 
-    // 2. Identify User
-    const found = users.find(
+    // 2. Identify User in local cache
+    let found = users.find(
       (u) =>
         (u.id === userIdOrUsername ||
           u.username.toLowerCase() === trimmedInput ||
@@ -1497,6 +1509,85 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         u.isActive
     );
 
+    // Fast-path: Check local password if user was found locally
+    let isLocalPasswordValid = false;
+    if (found) {
+      const userPass =
+        found.password ||
+        (found.role === 'SUPER_ADMIN'
+          ? 'admin123'
+          : found.role === 'ACCOUNTANT'
+          ? 'account123'
+          : 'viewer123');
+
+      if (password === undefined || password === '') {
+        isLocalPasswordValid = true;
+      } else {
+        const passCheck = verifyPasswordSync(password, userPass);
+        if (passCheck.isValid) {
+          isLocalPasswordValid = true;
+          if (passCheck.needsUpgrade) {
+            const hashed = hashPasswordSync(password);
+            found.password = hashed.encoded;
+          }
+        }
+      }
+    }
+
+    // 3. If NOT found locally OR local password check failed, verify with Cloud SQL
+    // This allows seamless login on a new device/browser or after password change on another device
+    if (!found || !isLocalPasswordValid) {
+      try {
+        const cloudResult = await cloudLogin(trimmedInput, password);
+        if (cloudResult.success && cloudResult.user) {
+          found = cloudResult.user;
+          // Update local state and cache to localStorage
+          setUsers((prev) => {
+            const updated = prev.filter(
+              (u) => u.id !== found!.id && u.username.toLowerCase() !== found!.username.toLowerCase()
+            );
+            updated.push(found!);
+            try {
+              localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
+            } catch {}
+            return updated;
+          });
+          isLocalPasswordValid = true;
+        } else if (cloudResult.wrongPassword) {
+          const attempt = recordFailedAttempt(trimmedInput);
+          logSecurityEvent({
+            action: 'USER_LOGIN_FAILED',
+            category: 'AUTH',
+            userId: found?.id,
+            username: found?.username || trimmedInput,
+            userRole: found?.role,
+            description: `गलत पासवर्ड प्रविष्टि (बाँकी प्रयास: ${attempt.remainingAttempts})`,
+            status: 'FAILED',
+          });
+          const msg = attempt.isLocked
+            ? `अत्यधिक गलत पासवर्ड प्रविष्ट भएकाले खाता ${attempt.retryAfterSeconds} सेकेन्डका लागि लक गरिएको छ।`
+            : `गलत पासवर्ड प्रविष्ट भयो। (बाँकी प्रयास: ${attempt.remainingAttempts})`;
+          addToast('error', 'पासवर्ड मिलेन', msg);
+          return { success: false, message: msg };
+        } else if (cloudResult.notFound) {
+          const attempt = recordFailedAttempt(trimmedInput);
+          logSecurityEvent({
+            action: 'USER_LOGIN_FAILED',
+            category: 'AUTH',
+            username: userIdOrUsername,
+            description: `अज्ञात वा निष्क्रिय प्रयोगकर्ता नामबाट लगइन प्रयास (बाँकी प्रयास: ${attempt.remainingAttempts})`,
+            status: 'FAILED',
+          });
+          const msg = 'प्रविष्टि गरिएको प्रयोगकर्ता नाम (User ID) फेला परेन वा खाता निष्क्रिय छ।';
+          addToast('error', 'लगइन असफल', msg);
+          return { success: false, message: msg };
+        }
+      } catch (cloudErr) {
+        console.warn('Live cloud authentication fallback notice:', cloudErr);
+      }
+    }
+
+    // If still not found or invalid
     if (!found) {
       const attempt = recordFailedAttempt(trimmedInput);
       logSecurityEvent({
@@ -1511,40 +1602,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { success: false, message: msg };
     }
 
-    // 3. Password Verification (supports backward-compatible plain or salted SHA-256)
-    if (password !== undefined && password !== '') {
-      const userPass =
-        found.password ||
-        (found.role === 'SUPER_ADMIN'
-          ? 'admin123'
-          : found.role === 'ACCOUNTANT'
-          ? 'account123'
-          : 'viewer123');
-
-      const passCheck = verifyPasswordSync(password, userPass);
-      if (!passCheck.isValid) {
-        const attempt = recordFailedAttempt(trimmedInput);
-        logSecurityEvent({
-          action: 'USER_LOGIN_FAILED',
-          category: 'AUTH',
-          userId: found.id,
-          username: found.username,
-          userRole: found.role,
-          description: `गलत पासवर्ड प्रविष्टि (बाँकी प्रयास: ${attempt.remainingAttempts})`,
-          status: 'FAILED',
-        });
-        const msg = attempt.isLocked
-          ? `अत्यधिक गलत पासवर्ड प्रविष्ट भएकाले खाता ${attempt.retryAfterSeconds} सेकेन्डका लागि लक गरिएको छ।`
-          : `गलत पासवर्ड प्रविष्ट भयो। (बाँकी प्रयास: ${attempt.remainingAttempts})`;
-        addToast('error', 'पासवर्ड मिलेन', msg);
-        return { success: false, message: msg };
-      }
-
-      // Upgrade plain password to secure SHA-256 hash if needed
-      if (passCheck.needsUpgrade) {
-        const hashed = hashPasswordSync(password);
-        found.password = hashed.encoded;
-      }
+    if (!isLocalPasswordValid) {
+      const attempt = recordFailedAttempt(trimmedInput);
+      logSecurityEvent({
+        action: 'USER_LOGIN_FAILED',
+        category: 'AUTH',
+        userId: found.id,
+        username: found.username,
+        userRole: found.role,
+        description: `गलत पासवर्ड प्रविष्टि (बाँकी प्रयास: ${attempt.remainingAttempts})`,
+        status: 'FAILED',
+      });
+      const msg = attempt.isLocked
+        ? `अत्यधिक गलत पासवर्ड प्रविष्ट भएकाले खाता ${attempt.retryAfterSeconds} सेकेन्डका लागि लक गरिएको छ।`
+        : `गलत पासवर्ड प्रविष्ट भयो। (बाँकी प्रयास: ${attempt.remainingAttempts})`;
+      addToast('error', 'पासवर्ड मिलेन', msg);
+      return { success: false, message: msg };
     }
 
     // 4. Success: Reset rate limit & register login audit
@@ -1576,7 +1649,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCurrentUser(updatedUser);
     setIsAuthenticated(true);
     setIsScreenLocked(false);
-    setUsers((prev) => prev.map((u) => (u.id === found.id ? updatedUser : u)));
+    setUsers((prev) => prev.map((u) => (u.id === found!.id ? updatedUser : u)));
     try {
       localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(updatedUser));
       localStorage.setItem(STORAGE_KEYS.AUTH_SESSION, 'true');
@@ -1606,7 +1679,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Automated Google Sheets setup & sync upon successful login
     setTimeout(() => {
       if (postLoginSheetsAutomationRef.current) {
-        postLoginSheetsAutomationRef.current(found).catch((err) => {
+        postLoginSheetsAutomationRef.current(found!).catch((err) => {
           console.warn('Post login sheets automation notice:', err);
         });
       }
@@ -1891,7 +1964,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       mustChangePassword: false,
       passwordChangedAt: new Date().toLocaleDateString('ne-NP'),
     };
-    setUsers((prev) => prev.map((u) => (u.id === userId ? updatedUser : u)));
+    const updatedUsers = users.map((u) => (u.id === userId ? updatedUser : u));
+    setUsers(updatedUsers);
     if (currentUser?.id === userId) {
       setCurrentUser(updatedUser);
       try {
@@ -1900,6 +1974,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // Storage error ignore
       }
     }
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    } catch {}
+
+    saveCloudUsers(updatedUsers).catch(console.warn);
+    triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
       action: 'PASSWORD_CHANGED',
@@ -2002,7 +2082,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       passwordChangedAt: new Date().toLocaleDateString('ne-NP'),
     };
 
-    setUsers((prev) => prev.map((u) => (u.id === target.id ? updatedUser : u)));
+    const updatedUsers = users.map((u) => (u.id === target.id ? updatedUser : u));
+    setUsers(updatedUsers);
     if (currentUser?.id === target.id) {
       setCurrentUser(updatedUser);
       try {
@@ -2011,6 +2092,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // Storage error ignore
       }
     }
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    } catch {}
+
+    saveCloudUsers(updatedUsers).catch(console.warn);
+    triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
       action: 'PASSWORD_RESET',
@@ -3206,8 +3293,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // 2. Load target organization's data
     const targetStore = orgDatabases[orgId];
+    const orgObj = organizations.find((o) => o.id === orgId);
+
     if (targetStore) {
-      const targetOrg = targetStore.organization || DEFAULT_ORGANIZATION;
+      const targetOrg = targetStore.organization || (orgObj ? { ...orgObj } : DEFAULT_ORGANIZATION);
       const targetFys =
         targetStore.fiscalYears && targetStore.fiscalYears.length > 0
           ? targetStore.fiscalYears
@@ -3229,13 +3318,48 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setSalarySetups(targetFyData.salarySetups || {});
       setDeductionSetups(targetFyData.deductionSetups || {});
       setTaxReferences(targetFyData.taxReferences || DEFAULT_TAX_REFERENCES);
-      if (targetStore.googleSheetsConfig) {
-        setGoogleSheetsConfig(targetStore.googleSheetsConfig);
-      }
+
+      // Cleanly load organization specific sheets config (no cross-pollution)
+      const targetConfig: GoogleSheetsConfig = targetStore.googleSheetsConfig || {
+        ...DEFAULT_GOOGLE_SHEETS_CONFIG,
+        webAppUrl: orgObj?.webAppUrl || '',
+        spreadsheetId: orgObj?.spreadsheetId || '',
+        spreadsheetUrl: orgObj?.spreadsheetUrl || '',
+        spreadsheetName: `stcs_${orgObj?.officeName || targetOrg.officeName || 'कार्यालय'}`,
+        autoSync: true,
+        syncMode: 'auto',
+      };
+      setGoogleSheetsConfig(targetConfig);
+    } else if (orgObj) {
+      setOrganization({ ...orgObj });
+      const targetConfig: GoogleSheetsConfig = {
+        ...DEFAULT_GOOGLE_SHEETS_CONFIG,
+        webAppUrl: orgObj.webAppUrl || '',
+        spreadsheetId: orgObj.spreadsheetId || '',
+        spreadsheetUrl: orgObj.spreadsheetUrl || '',
+        spreadsheetName: `stcs_${orgObj.officeName || 'कार्यालय'}`,
+        autoSync: true,
+        syncMode: 'auto',
+      };
+      setGoogleSheetsConfig(targetConfig);
     }
 
+    // Check Cloud SQL / Firestore for any cross-device updated sheets config
+    getOrgSheetsConfig(orgId)
+      .then((cloudCfg) => {
+        if (cloudCfg && (cloudCfg.webAppUrl || cloudCfg.spreadsheetId)) {
+          setGoogleSheetsConfig((cur) => ({
+            ...cur,
+            webAppUrl: cloudCfg.webAppUrl || cur.webAppUrl,
+            spreadsheetId: cloudCfg.spreadsheetId || cur.spreadsheetId,
+            spreadsheetUrl: cloudCfg.spreadsheetUrl || cur.spreadsheetUrl,
+            spreadsheetName: cloudCfg.spreadsheetName || cur.spreadsheetName || `stcs_${orgObj?.officeName || 'कार्यालय'}`,
+          }));
+        }
+      })
+      .catch(() => {});
+
     setActiveOrganizationIdState(orgId);
-    const orgObj = organizations.find((o) => o.id === orgId);
     addToast('info', 'कार्यालय परिवर्तन', `${orgObj?.officeName || orgObj?.name || 'कार्यालय'} को डाटा सक्रिय गरियो।`);
   };
 
@@ -3267,7 +3391,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const initialSheetsConfig: GoogleSheetsConfig = {
       ...DEFAULT_GOOGLE_SHEETS_CONFIG,
-      webAppUrl: orgData.webAppUrl || googleSheetsConfig.webAppUrl || '',
+      webAppUrl: orgData.webAppUrl || '',
       spreadsheetId: orgData.spreadsheetId || '',
       spreadsheetUrl: orgData.spreadsheetUrl || '',
       spreadsheetName: `stcs_${newOrg.officeName}`,
@@ -3292,18 +3416,73 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setOrganizations((prev) => {
       const updated = [...prev, newOrg];
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
+      } catch {}
       saveCloudOrganizations(updated).catch(() => {});
       return updated;
     });
-    setOrgDatabases((prev) => ({ ...prev, [orgId]: newOrgStore }));
+    setOrgDatabases((prev) => {
+      const updated = { ...prev, [orgId]: newOrgStore };
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
     saveCloudOrganization(newOrg).catch((e) => console.warn('Cloud save org notice:', e));
     saveOrgSheetsConfig(orgId, initialSheetsConfig).catch(() => {});
 
+    // Background auto-create Google Sheet if token is available
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (token && !newOrg.spreadsheetId) {
+          const newSheet = await createAppSpreadsheet(
+            token,
+            newOrg.officeName || newOrg.name,
+            '२०८१/८२'
+          );
+          if (newSheet && newSheet.id) {
+            const updatedConfig: GoogleSheetsConfig = {
+              ...initialSheetsConfig,
+              spreadsheetId: newSheet.id,
+              spreadsheetUrl: newSheet.url,
+              spreadsheetName: newSheet.title,
+            };
+            setOrganizations((prev) => {
+              const u = prev.map((o) => (o.id === orgId ? { ...o, spreadsheetId: newSheet.id, spreadsheetUrl: newSheet.url } : o));
+              try { localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(u)); } catch {}
+              saveCloudOrganizations(u).catch(() => {});
+              return u;
+            });
+            setOrgDatabases((prev) => {
+              if (!prev[orgId]) return prev;
+              const u = {
+                ...prev,
+                [orgId]: {
+                  ...prev[orgId],
+                  googleSheetsConfig: updatedConfig,
+                },
+              };
+              try { localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(u)); } catch {}
+              return u;
+            });
+            saveOrgSheetsConfig(orgId, updatedConfig).catch(() => {});
+            saveCloudOrganization({ ...newOrg, spreadsheetId: newSheet.id, spreadsheetUrl: newSheet.url }).catch(() => {});
+            addToast('success', 'गुगल सिट स्वतः तयार भयो', `'${newSheet.title}' गुगल ड्राइभ फोल्डरमा तयार भयो र यस कार्यालयसँग लिंक गरियो।`);
+          }
+        }
+      } catch (sheetErr) {
+        console.warn('Auto create spreadsheet for new organization notice:', sheetErr);
+      }
+    })();
+
     if (initialAdmin && initialAdmin.username.trim()) {
+      const hashedAdminPass = hashPasswordSync(initialAdmin.password || 'admin123').encoded;
       const adminUser: User = {
         id: `user_${Date.now() + 1}`,
         username: initialAdmin.username.trim(),
-        password: initialAdmin.password || 'admin123',
+        password: hashedAdminPass,
         fullName: initialAdmin.fullName || `${newOrg.officeName} प्रशासक`,
         role: 'ADMIN',
         organizationId: orgId,
@@ -3321,6 +3500,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
       setUsers((prev) => {
         const updatedUsers = [...prev, adminUser];
+        try {
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+        } catch {}
         saveCloudUsers(updatedUsers).catch((e) => console.warn('Cloud save user notice:', e));
         return updatedUsers;
       });
@@ -3455,7 +3637,64 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateGoogleSheetsConfig = (cfg: Partial<GoogleSheetsConfig>) => {
-    setGoogleSheetsConfig((prev) => ({ ...prev, ...cfg }));
+    setGoogleSheetsConfig((prev) => {
+      const updated: GoogleSheetsConfig = { ...prev, ...cfg };
+
+      // 1. Update active organization's database in orgDatabases
+      setOrgDatabases((prevDbs) => {
+        const curOrgDb = prevDbs[activeOrganizationId] || {
+          organization,
+          fiscalYears,
+          activeFiscalYear,
+          fyDatabase,
+        };
+        const updatedDbs = {
+          ...prevDbs,
+          [activeOrganizationId]: {
+            ...curOrgDb,
+            googleSheetsConfig: updated,
+          },
+        };
+        try {
+          localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(updatedDbs));
+        } catch {}
+        return updatedDbs;
+      });
+
+      // 2. Update organization list item
+      if (cfg.webAppUrl !== undefined || cfg.spreadsheetId !== undefined || cfg.spreadsheetUrl !== undefined) {
+        setOrganizations((prevOrgs) => {
+          const updatedOrgs = prevOrgs.map((o) =>
+            o.id === activeOrganizationId
+              ? {
+                  ...o,
+                  ...(cfg.webAppUrl !== undefined ? { webAppUrl: cfg.webAppUrl } : {}),
+                  ...(cfg.spreadsheetId !== undefined ? { spreadsheetId: cfg.spreadsheetId } : {}),
+                  ...(cfg.spreadsheetUrl !== undefined ? { spreadsheetUrl: cfg.spreadsheetUrl } : {}),
+                }
+              : o
+          );
+          try {
+            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updatedOrgs));
+          } catch {}
+          saveCloudOrganizations(updatedOrgs).catch((e) => console.warn('Cloud save orgs notice:', e));
+          return updatedOrgs;
+        });
+      }
+
+      // 3. Persist organization-specific sheets config to Cloud
+      saveOrgSheetsConfig(activeOrganizationId, updated).catch((e) => console.warn('Cloud save org sheets cfg notice:', e));
+
+      // 4. Save cloud app connection
+      saveCloudAppConnection(
+        updated,
+        organization,
+        activeOrganizationId,
+        currentUser?.username || undefined
+      ).catch((e) => console.warn('Cloud app conn notice:', e));
+
+      return updated;
+    });
   };
 
   // Connect Google Account via Firebase GoogleAuthProvider with Sheets & Drive scopes
@@ -3769,6 +4008,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     officeNameOverride?: string;
     orgIdOverride?: string;
     webAppUrlOverride?: string;
+    silent?: boolean;
+    promptForOAuth?: boolean;
   }): Promise<{
     success: boolean;
     isScopeError?: boolean;
@@ -3785,9 +4026,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const rawWebAppUrl = (options?.webAppUrlOverride || googleSheetsConfig.webAppUrl || '').trim();
     if (rawWebAppUrl) {
       try {
-        addToast('info', 'Apps Script मार्फत प्रयास...', 'Google Apps Script बाट सिट सिर्जना गरिँदै...');
+        if (!options?.silent) {
+          addToast('info', 'Apps Script मार्फत प्रयास...', 'Google Apps Script बाट सिट सिर्जना गरिँदै...');
+        }
         const res = await fetch(rawWebAppUrl, {
           method: 'POST',
+          redirect: 'follow',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({
             action: 'createSpreadsheet',
@@ -3818,7 +4062,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               targetOrgId,
               currentUser?.username || googleConnectedEmail || 'admin'
             ).catch(() => {});
-            addToast('success', 'नयाँ सिट सिर्जना भयो', `Apps Script मार्फत '${title}' तयार भयो र लिंक गरियो।`);
+            if (!options?.silent) {
+              addToast('success', 'नयाँ सिट सिर्जना भयो', `Apps Script मार्फत '${title}' तयार भयो र लिंक गरियो।`);
+            }
             return {
               success: true,
               spreadsheetId: data.spreadsheetId,
@@ -3832,11 +4078,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
-    // 2. Try REST API if access token is available
-    const token = await getAccessToken();
+    // 2. Try REST API if access token is available (or request sensitive OAuth scope if interactive)
+    let token = await getAccessToken();
+    if (!token && options?.promptForOAuth) {
+      try {
+        const authRes = await googleSignIn(true);
+        if (authRes?.accessToken) {
+          token = authRes.accessToken;
+          setIsGoogleAccountConnected(true);
+          setGoogleConnectedEmail(authRes.user.email || undefined);
+        }
+      } catch (promptErr) {
+        console.warn('OAuth prompt cancelled or notice:', promptErr);
+      }
+    }
+
     if (token) {
       try {
-        addToast('info', 'सिट तयार गरिँदै...', 'गुगल ड्राइभमा नयाँ स्प्रेडसिट सिर्जना हुँदैछ...');
+        if (!options?.silent) {
+          addToast('info', 'सिट तयार गरिँदै...', 'गुगल ड्राइभमा नयाँ स्प्रेडसिट सिर्जना हुँदैछ...');
+        }
         const sheet = await createAppSpreadsheet(
           token,
           officeName,
@@ -3862,7 +4123,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           currentUser?.username || googleConnectedEmail || 'admin'
         ).catch(() => {});
 
-        addToast('success', 'नयाँ सिट सिर्जना भयो', `गुगल ड्राइभमा '${sheet.title}' तयार भयो र लिंक गरियो।`);
+        if (!options?.silent) {
+          addToast('success', 'नयाँ सिट सिर्जना भयो', `गुगल ड्राइभमा '${sheet.title}' तयार भयो र लिंक गरियो।`);
+        }
 
         // Push all current data immediately
         await syncWithGoogleSheets('push', { spreadsheetIdOverride: sheet.id });
@@ -3880,25 +4143,69 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           msg.toLowerCase().includes('insufficient') ||
           msg.includes('अनुमति');
 
-        if (isScope) {
-          addToast(
-            'warning',
-            'सिट सिर्जना सहायक',
-            'गुगल खातामा प्रत्यक्ष सिट सिर्जना OAuth अनुमति नभएकाले नयाँ सिट खोल्ने सहायक प्रयोग गर्नुहोस्।'
-          );
-          return { success: false, isScopeError: true, message: msg };
+        // If it was a scope error and promptForOAuth is requested, prompt user for OAuth approval
+        if (isScope && options?.promptForOAuth) {
+          try {
+            const authRes = await googleSignIn(true);
+            if (authRes?.accessToken) {
+              setIsGoogleAccountConnected(true);
+              setGoogleConnectedEmail(authRes.user.email || undefined);
+              const retrySheet = await createAppSpreadsheet(
+                authRes.accessToken,
+                officeName,
+                activeFiscalYear
+              );
+              const updatedConfig: GoogleSheetsConfig = {
+                ...googleSheetsConfig,
+                webAppUrl: rawWebAppUrl || googleSheetsConfig.webAppUrl,
+                spreadsheetId: retrySheet.id,
+                spreadsheetUrl: retrySheet.url,
+                spreadsheetName: retrySheet.title,
+                autoSync: true,
+                syncMode: 'auto',
+              };
+              setGoogleSheetsConfig(updatedConfig);
+              saveOrgSheetsConfig(targetOrgId, updatedConfig).catch(() => {});
+              saveCloudAppConnection(
+                updatedConfig,
+                targetOrgObj,
+                targetOrgId,
+                currentUser?.username || googleConnectedEmail || 'admin'
+              ).catch(() => {});
+              if (!options?.silent) {
+                addToast('success', 'नयाँ सिट सिर्जना भयो', `गुगल ड्राइभमा '${retrySheet.title}' तयार भयो र लिंक गरियो।`);
+              }
+              await syncWithGoogleSheets('push', { spreadsheetIdOverride: retrySheet.id });
+              return {
+                success: true,
+                spreadsheetId: retrySheet.id,
+                url: retrySheet.url,
+                message: 'नयाँ सिट सिर्जना र डाटा सिंक सम्पन्न',
+              };
+            }
+          } catch (retryErr) {
+            console.warn('OAuth retry cancelled:', retryErr);
+          }
         }
 
-        addToast('error', 'सिट सिर्जना असफल', msg);
-        return { success: false, message: msg };
+        if (!options?.silent) {
+          addToast(
+            'info',
+            'सिट सिर्जना सहायक',
+            'गुगल ड्राइभमा नयाँ स्प्रेडसिट खोलेर लिंक गर्न सिट सिर्जना सहायक प्रयोग गर्नुहोस्।'
+          );
+        }
+        return { success: false, isScopeError: true, message: msg };
       }
     }
 
-    addToast(
-      'info',
-      'नयाँ सिट खोल्नुहोस्',
-      'गुगल ड्राइभमा नयाँ स्प्रेडसिट खोलेर लिंक गर्न सिट सिर्जना सहायक प्रयोग गर्नुहोस्।'
-    );
+    if (!options?.silent) {
+      addToast(
+        'info',
+        'नयाँ सिट खोल्नुहोस्',
+        'गुगल ड्राइभमा नयाँ स्प्रेडसिट खोलेर लिंक गर्न सिट सिर्जना सहायक प्रयोग गर्नुहोस्।'
+      );
+    }
     return {
       success: false,
       isScopeError: true,
@@ -3925,8 +4232,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const targetTaxReferences = options?.overrideTaxReferences || taxReferences;
     const targetOrg = options?.overrideOrganization || organization;
     const targetUsers = options?.overrideUsers || users;
-    const targetSpreadsheetId = options?.spreadsheetIdOverride || googleSheetsConfig.spreadsheetId;
-    let url = (googleSheetsConfig.webAppUrl || '').trim();
+    const activeOrgObj = organizations.find((o) => o.id === activeOrganizationId);
+    const activeOrgDb = orgDatabases[activeOrganizationId];
+    const resolvedSheetsConfig = activeOrgDb?.googleSheetsConfig || googleSheetsConfig;
+
+    const targetSpreadsheetId =
+      options?.spreadsheetIdOverride ||
+      resolvedSheetsConfig.spreadsheetId ||
+      googleSheetsConfig.spreadsheetId ||
+      activeOrgObj?.spreadsheetId ||
+      '';
+    let url = (
+      resolvedSheetsConfig.webAppUrl ||
+      googleSheetsConfig.webAppUrl ||
+      activeOrgObj?.webAppUrl ||
+      ''
+    ).trim();
 
     const token = await getAccessToken();
     const hasDirectGoogle = Boolean(token && targetSpreadsheetId);
@@ -4122,6 +4443,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         const webAppPayload = {
           action: mode,
+          spreadsheetId: targetSpreadsheetId,
+          officeName: sanitizedOrg.officeName || sanitizedOrg.name || 'कार्यालय',
+          organizationId: activeOrganizationId,
           ...payload,
         };
 
@@ -4270,12 +4594,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     overrideOrganization?: OrganizationSetup;
     overrideUsers?: User[];
   }) => {
+    const activeOrgObj = organizations.find((o) => o.id === activeOrganizationId);
+    const activeOrgDb = orgDatabases[activeOrganizationId];
+    const currentConfig = activeOrgDb?.googleSheetsConfig || googleSheetsConfig;
+
     // Only proceed if autoSync is not explicitly disabled
-    if (googleSheetsConfig.autoSync === false) return;
+    if (currentConfig.autoSync === false && googleSheetsConfig.autoSync === false) return;
 
     const token = await getAccessToken();
-    const hasDirectGoogle = Boolean(token && googleSheetsConfig.spreadsheetId);
-    const hasWebApp = Boolean((googleSheetsConfig.webAppUrl || '').trim());
+    const targetSpreadsheetId =
+      currentConfig.spreadsheetId ||
+      googleSheetsConfig.spreadsheetId ||
+      activeOrgObj?.spreadsheetId ||
+      '';
+    const targetWebAppUrl =
+      (currentConfig.webAppUrl || googleSheetsConfig.webAppUrl || activeOrgObj?.webAppUrl || '').trim();
+
+    const hasDirectGoogle = Boolean(token && targetSpreadsheetId);
+    const hasWebApp = Boolean(targetWebAppUrl);
 
     if (!hasDirectGoogle && !hasWebApp) {
       // Nothing is connected yet; no sync destination
@@ -4285,6 +4621,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       await syncWithGoogleSheets('push', {
         isAutoSync: true,
+        spreadsheetIdOverride: targetSpreadsheetId,
         ...overrides,
       });
     } catch (err) {
@@ -4339,18 +4676,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           syncMode: 'auto',
         };
 
-        // If spreadsheetId is not yet created, automate spreadsheet creation
+        // If spreadsheetId is not yet created, attempt background creation quietly
         if (!currentConfig.spreadsheetId && currentConfig.webAppUrl) {
-          addToast(
-            'info',
-            'सिट स्वचालित सेटअप हुँदैछ',
-            `'stcs_${officeName}' गुगल ड्राइभमा सिर्जना तथा जडान गरिँदैछ...`
-          );
-
           const created = await createGoogleSpreadsheetForApp({
             officeNameOverride: officeName,
             orgIdOverride: userOrgId,
             webAppUrlOverride: currentConfig.webAppUrl,
+            silent: true,
           });
 
           if (created.success && created.spreadsheetId) {

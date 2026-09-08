@@ -97,7 +97,7 @@ export const LoginPage: React.FC = () => {
   const resetPassStrength = checkPasswordStrength(newPassword);
   const firstTimePassStrength = checkPasswordStrength(firstTimeNewPassword);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
 
@@ -117,8 +117,8 @@ export const LoginPage: React.FC = () => {
     }
 
     setLoginLoading(true);
-    setTimeout(() => {
-      const result = login(trimmedUser, loginPassword);
+    try {
+      const result = await login(trimmedUser, loginPassword);
       setLoginLoading(false);
 
       if (result.mustChangePassword && result.user) {
@@ -138,7 +138,10 @@ export const LoginPage: React.FC = () => {
       } else if (!result.success) {
         setLoginError(result.message || 'लगइन असफल भयो। User ID वा पासवर्ड मिलेन।');
       }
-    }, 300);
+    } catch (err: any) {
+      setLoginLoading(false);
+      setLoginError(err.message || 'लगइन प्रक्रियामा प्राविधिक समस्या आयो।');
+    }
   };
 
   const handleFirstTimePasswordSubmit = (e: React.FormEvent) => {

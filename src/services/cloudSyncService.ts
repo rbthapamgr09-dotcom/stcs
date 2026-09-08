@@ -356,36 +356,47 @@ export async function getCloudAppConnection(
  * Persists registered users list to Cloud SQL and Firestore
  */
 export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
-  // 1. Sync users to Cloud SQL
+  const formattedUsers = usersList.map((u) => ({
+    uid: u.id || u.username,
+    email: u.email || `${u.username}@system.local`,
+    username: u.username,
+    fullName: u.fullName,
+    role: u.role,
+    organizationId: u.organizationId || 'org_default',
+    organizationName: u.organizationName,
+    designation: u.designation,
+    phone: u.phone,
+    metadata: {
+      password: u.password,
+      securityPin: u.securityPin,
+      securityQuestion: u.securityQuestion,
+      securityAnswer: u.securityAnswer,
+      mustChangePassword: u.mustChangePassword,
+      isFirstLogin: u.isFirstLogin,
+      organizationName: u.organizationName,
+      phone: u.phone,
+      designation: u.designation,
+      isActive: u.isActive,
+    },
+  }));
+
+  // 1. Sync users to Cloud SQL via Batch API (instant & atomic)
   try {
-    for (const u of usersList) {
-      await fetch('/api/users/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          uid: u.id || u.username,
-          email: u.email || `${u.username}@system.local`,
-          username: u.username,
-          fullName: u.fullName,
-          role: u.role,
-          organizationId: u.organizationId || 'org_default',
-          organizationName: u.organizationName,
-          designation: u.designation,
-          phone: u.phone,
-          metadata: {
-            password: u.password,
-            securityPin: u.securityPin,
-            securityQuestion: u.securityQuestion,
-            securityAnswer: u.securityAnswer,
-            mustChangePassword: u.mustChangePassword,
-            isFirstLogin: u.isFirstLogin,
-            organizationName: u.organizationName,
-            phone: u.phone,
-            designation: u.designation,
-            isActive: u.isActive,
-          },
-        }),
-      });
+    const batchRes = await fetch('/api/users/batch-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ users: formattedUsers }),
+    });
+
+    if (!batchRes.ok) {
+      // Fallback to individual sync
+      for (const payload of formattedUsers) {
+        await fetch('/api/users/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
     }
   } catch (sqlErr) {
     console.warn('Could not sync users to Cloud SQL:', sqlErr);
@@ -402,6 +413,27 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
   } catch (err) {
     console.warn('Could not save users to Cloud Firestore:', err);
     return true;
+  }
+}
+
+/**
+ * Authenticate directly against Cloud SQL backend API
+ */
+export async function cloudLogin(
+  username: string,
+  password?: string
+): Promise<{ success: boolean; user?: User; notFound?: boolean; wrongPassword?: boolean; message?: string }> {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const json = await res.json();
+    return json;
+  } catch (err: any) {
+    console.warn('Cloud login error:', err);
+    return { success: false, message: err.message || 'नेटवर्क वा सर्भर प्रमाणीकरणमा त्रुटि आयो।' };
   }
 }
 

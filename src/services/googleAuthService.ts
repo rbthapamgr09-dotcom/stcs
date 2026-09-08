@@ -148,7 +148,7 @@ export const signInWithGoogleIdentityServices = async (
   customClientId?: string
 ): Promise<{ user: GoogleAuthUser; accessToken: string }> => {
   await loadGoogleIdentityScript();
-  const activeClientId = customClientId || getCustomOAuthClientId() || firebaseConfig.oAuthClientId;
+  const activeClientId = customClientId || getCustomOAuthClientId() || (firebaseConfig as any).oAuthClientId;
 
   if (!activeClientId) {
     throw new Error('OAuth Client ID उपलब्ध छैन।');

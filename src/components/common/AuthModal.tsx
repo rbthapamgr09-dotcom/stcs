@@ -70,20 +70,22 @@ export const AuthModal: React.FC = () => {
       (u.email && u.email.toLowerCase() === resetUsername.trim().toLowerCase())
   );
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginUsername.trim()) {
       addToast('error', 'User ID आवश्यक', 'कृपया प्रयोगकर्ता नाम (User ID) प्रविष्ट गर्नुहोस्।');
       return;
     }
     setLoginLoading(true);
-    setTimeout(() => {
-      const result = login(loginUsername.trim(), loginPassword);
+    try {
+      const result = await login(loginUsername.trim(), loginPassword);
       setLoginLoading(false);
       if (result.success) {
         setLoginPassword('');
       }
-    }, 250);
+    } catch {
+      setLoginLoading(false);
+    }
   };
 
   const handleResetSubmit = (e: React.FormEvent) => {
