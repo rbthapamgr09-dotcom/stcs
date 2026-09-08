@@ -368,45 +368,7 @@ const STORAGE_KEYS = {
 const DEFAULT_FY_LIST = DEFAULT_FISCAL_YEARS_LIST;
 
 const initializeDefaultOrgDatabases = (): Record<string, OrganizationDataStore> => {
-  let defaultOrgSetup: OrganizationSetup = DEFAULT_ORGANIZATION;
-  let defaultFyDatabase: Record<string, FiscalYearData> = {
-    '२०८१/८२': {
-      employees: DEMO_EMPLOYEES,
-      salarySetups: DEMO_SALARY_SETUPS,
-      deductionSetups: DEMO_DEDUCTION_SETUPS,
-      taxReferences: DEFAULT_TAX_REFERENCES,
-    },
-  };
-  let defaultFiscalYears: string[] = DEFAULT_FISCAL_YEARS_LIST;
-
-  // Check legacy localStorage for migration
-  try {
-    const legacyOrg = localStorage.getItem(STORAGE_KEYS.LEGACY_ORG);
-    if (legacyOrg) {
-      const parsed = JSON.parse(legacyOrg);
-      defaultOrgSetup = { ...DEFAULT_ORGANIZATION, ...parsed };
-    }
-    const legacyFyDb = localStorage.getItem(STORAGE_KEYS.LEGACY_FY_DATABASE);
-    if (legacyFyDb) {
-      defaultFyDatabase = JSON.parse(legacyFyDb);
-    }
-    const legacyFys = localStorage.getItem(STORAGE_KEYS.LEGACY_FISCAL_YEARS);
-    if (legacyFys) {
-      defaultFiscalYears = JSON.parse(legacyFys);
-    }
-  } catch (e) {
-    console.error('Migration notice:', e);
-  }
-
-  return {
-    org_default: {
-      organization: defaultOrgSetup,
-      fiscalYears: defaultFiscalYears,
-      activeFiscalYear: '२०८१/८२',
-      fyDatabase: defaultFyDatabase,
-      googleSheetsConfig: DEFAULT_GOOGLE_SHEETS_CONFIG,
-    },
-  };
+  return {};
 };
 
 export const APP_TAB_DEFINITIONS: Record<string, { label: string; shortLabel: string; category: string }> = {
@@ -638,16 +600,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [users, setUsers] = useState<User[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.USERS);
-      const autoCreatedIds = ['user_admin', 'user_general', 'user_accountant', 'user_viewer', 'user_new_staff', 'user_rbthapa_mgr', 'user_rbthapa_mgf'];
-      const autoCreatedUsernames = ['admin', 'user', 'accountant', 'viewer', 'newuser', 'rbthapamgr09', 'rbthapamgf09'];
-
       if (saved) {
         const parsed: User[] = JSON.parse(saved);
-        const filtered = parsed.filter(
-          (u) =>
-            !autoCreatedIds.includes(u.id) &&
-            !autoCreatedUsernames.includes((u.username || '').toLowerCase())
-        );
+        // Retain ONLY SUPER_ADMIN users during this reset; purge any office-specific users
+        const filtered = Array.isArray(parsed) ? parsed.filter((u) => u.role === 'SUPER_ADMIN') : [];
         const resultUsers = [...filtered];
         DEFAULT_USERS.forEach((defUser) => {
           const exists = resultUsers.some(
@@ -661,27 +617,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
         });
 
-        // Ensure default passwords/pins exist for loaded users
+        // Ensure default passwords/pins exist for loaded super admin users
         const finalUsers = resultUsers.map((u) => ({
           ...u,
-          password:
-            u.password ||
-            (u.role === 'SUPER_ADMIN'
-              ? 'admin123'
-              : u.role === 'ACCOUNTANT'
-              ? 'account123'
-              : 'viewer123'),
+          password: u.password || 'admin123',
           securityPin: u.securityPin || '1234',
-          securityQuestion:
-            u.securityQuestion ||
-            (u.role === 'SUPER_ADMIN'
-              ? 'तपाईंको पहिलो विद्यालयको नाम के हो?'
-              : u.role === 'ACCOUNTANT'
-              ? 'तपाईंको जन्मस्थान कहाँ हो?'
-              : 'तपाईंको मनपर्ने रङ्ग कुन हो?'),
-          securityAnswer:
-            u.securityAnswer ||
-            (u.role === 'SUPER_ADMIN' ? 'नेपाल' : u.role === 'ACCOUNTANT' ? 'काठमाडौँ' : 'हरियो'),
+          securityQuestion: u.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+          securityAnswer: u.securityAnswer || 'नेपाल',
         }));
 
         try {
@@ -712,8 +654,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const saved = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
       if (session === 'true' && saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.id === 'user_rbthapa_mgr' || parsed.id === 'user_rbthapa_mgf' || parsed.username === 'rbthapamgr09' || parsed.username === 'rbthapamgf09') {
-          return DEFAULT_USERS[0];
+        const matchedDef = DEFAULT_USERS.find(
+          (u) =>
+            u.id === parsed.id ||
+            (u.username && parsed.username && u.username.toLowerCase() === parsed.username.toLowerCase())
+        );
+        if (matchedDef) {
+          return matchedDef;
         }
         return {
           ...parsed,
@@ -1234,7 +1181,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [organizations, setOrganizations] = useState<OrganizationItem[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.ORGANIZATIONS);
-      return saved ? JSON.parse(saved) : DEFAULT_ORGANIZATIONS;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter((o) => o.id !== 'org_default' && o.officeName !== 'महाकाली पुल योजना');
+          return filtered;
+        }
+      }
+      return DEFAULT_ORGANIZATIONS;
     } catch {
       return DEFAULT_ORGANIZATIONS;
     }
@@ -1243,9 +1197,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [activeOrganizationId, setActiveOrganizationIdState] = useState<string>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.ACTIVE_ORG_ID);
-      return saved || 'org_default';
+      if (saved && saved !== 'org_default') return saved;
+      return '';
     } catch {
-      return 'org_default';
+      return '';
     }
   });
 
@@ -1278,7 +1233,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const activeOrganization = useMemo(() => {
-    return organizations.find((o) => o.id === activeOrganizationId) || organizations[0];
+    return organizations.find((o) => o.id === activeOrganizationId) || organizations[0] || DEFAULT_ORGANIZATION;
   }, [organizations, activeOrganizationId]);
 
   // Sync active scoped data to fyDatabase when local states change

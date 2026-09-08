@@ -1015,8 +1015,28 @@ export const SettingsView: React.FC = () => {
             </div>
 
             {/* Organizations Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-              {visibleOrganizations.map((org, index) => {
+            {visibleOrganizations.length === 0 ? (
+              <div className="text-center py-12 px-4 bg-white rounded-2xl border border-dashed border-[#ccdcc7] space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-[#edf4ea] text-[#4B6043] flex items-center justify-center mx-auto">
+                  <Building className="w-6 h-6" />
+                </div>
+                <h4 className="text-sm font-bold text-[#24331C]">कुनै कार्यालय दर्ता गरिएको छैन</h4>
+                <p className="text-xs text-gray-500 max-w-md mx-auto">
+                  प्रणालीमा हाल कुनै पनि कार्यालय सेटअप गरिएको छैन। तलको बटन थिचेर नयाँ कार्यालय दर्ता गर्नुहोस्।
+                </p>
+                {currentUser?.role === 'SUPER_ADMIN' && (
+                  <button
+                    onClick={handleOpenAddOrg}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#4B6043] hover:bg-[#394a33] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>नयाँ कार्यालय दर्ता गर्नुहोस्</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                {visibleOrganizations.map((org, index) => {
                 const isActive = org.id === activeOrganizationId;
                 const orgUsers = users.filter((u) => u.organizationId === org.id || (!u.organizationId && org.id === 'default_org'));
                 const orgAdmins = orgUsers.filter((u) => u.role === 'ADMIN' || u.role === 'SUPER_ADMIN');
@@ -1130,6 +1150,7 @@ export const SettingsView: React.FC = () => {
                 );
               })}
             </div>
+            )}
 
             {/* Multi-Tenancy Explanatory Box */}
             <div className="p-4 bg-[#f8faf6] rounded-xl border border-[#d8e4d3] text-xs space-y-1.5">
