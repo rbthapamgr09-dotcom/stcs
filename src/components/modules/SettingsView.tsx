@@ -86,6 +86,7 @@ export const SettingsView: React.FC = () => {
     addOrganization,
     updateOrganizationDetails,
     deleteOrganization,
+    toggleOrganizationActive,
     supportContact,
     updateSupportContact,
   } = useApp();
@@ -165,7 +166,7 @@ export const SettingsView: React.FC = () => {
       whatsapp: '',
       pan: '',
       registrationNo: '',
-      createAdminUser: true,
+      createAdminUser: false,
       adminUsername: '',
       adminPassword: 'admin' + Math.floor(100 + Math.random() * 900),
       adminFullName: '',
@@ -1037,27 +1038,42 @@ export const SettingsView: React.FC = () => {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 {visibleOrganizations.map((org, index) => {
-                const isActive = org.id === activeOrganizationId;
+                const isCurrentWorkspace = org.id === activeOrganizationId;
+                const isOrgOperative = org.isActive !== false;
                 const orgUsers = users.filter((u) => u.organizationId === org.id || (!u.organizationId && org.id === 'default_org'));
                 const orgAdmins = orgUsers.filter((u) => u.role === 'ADMIN' || u.role === 'SUPER_ADMIN');
+                const sheetTitle = org.spreadsheetId ? (org.officeName ? `stcs_${org.officeName}_${org.district || ''}` : `stcs_office`) : null;
+                const sheetUrl = org.spreadsheetUrl || (org.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${org.spreadsheetId}/edit` : null);
 
                 return (
                   <div
                     key={org.id}
                     className={`p-4 rounded-xl border transition-all ${
-                      isActive
+                      isCurrentWorkspace
                         ? 'bg-[#fbfdfa] border-[#4B6043] shadow-md ring-1 ring-[#4B6043]/30'
-                        : 'bg-white border-[#d6e3d2] hover:border-[#a8c4a1] shadow-xs'
+                        : isOrgOperative
+                        ? 'bg-white border-[#d6e3d2] hover:border-[#a8c4a1] shadow-xs'
+                        : 'bg-gray-50 border-gray-200 opacity-90'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2 border-b border-gray-100 pb-2.5">
-                      <div className="space-y-0.5">
+                      <div className="space-y-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-mono text-[10px] text-gray-400 font-bold">#{index + 1}</span>
                           <h4 className="text-sm font-bold text-[#24331C]">{org.officeName}</h4>
-                          {isActive && (
+                          {/* Independent Status Badge */}
+                          {isOrgOperative ? (
                             <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-300">
-                              <Check className="w-3 h-3" /> सक्रिय
+                              <Check className="w-3 h-3" /> सक्रिय (Active)
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-300">
+                              <XCircle className="w-3 h-3" /> निष्क्रिय (Inactive)
+                            </span>
+                          )}
+                          {isCurrentWorkspace && (
+                            <span className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-300">
+                              चालू कार्यक्षेत्र
                             </span>
                           )}
                         </div>
@@ -1094,7 +1110,7 @@ export const SettingsView: React.FC = () => {
                       </div>
                       <div>
                         <span className="text-gray-400 block text-[10px]">स्थानीय तह र ठेगाना:</span>
-                        <span className="font-medium">
+                        <span className="font-medium truncate block">
                           {org.localLevel ? `${org.localLevel}${org.address ? `, ${org.address}` : ''}` : org.address || '-'}
                         </span>
                       </div>
@@ -1122,27 +1138,63 @@ export const SettingsView: React.FC = () => {
                           {orgUsers.length} जना (प्रशासक: {orgAdmins.length})
                         </span>
                       </div>
+                      <div>
+                        <span className="text-gray-400 block text-[10px]">गुगल ड्राइभ सिट (Drive Sheet):</span>
+                        {sheetUrl ? (
+                          <a
+                            href={sheetUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-emerald-700 hover:text-emerald-900 font-mono font-semibold flex items-center gap-1 text-[10px] hover:underline"
+                            title="गुगल सिट खोल्नुहोस्"
+                          >
+                            <ExternalLink className="w-3 h-3 inline" />
+                            <span className="truncate">{sheetTitle || 'सिट खोल्नुहोस्'}</span>
+                          </a>
+                        ) : (
+                          <span className="text-gray-400 text-[10px]">सिट सिर्जना हुँदैछ...</span>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Action Bar */}
-                    <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-gray-500 font-mono">
-                          दर्ता मिति: {org.createdAt ? org.createdAt.split('T')[0] : '2081/04/01'}
-                        </span>
-                      </div>
+                    {/* Action Bar with Independent Activation & Workspace Switching */}
+                    <div className="pt-2.5 border-t border-gray-100 flex items-center justify-between gap-2 flex-wrap">
+                      {/* Independent Activate/Deactivate Toggle */}
+                      <button
+                        type="button"
+                        onClick={() => toggleOrganizationActive(org.id)}
+                        className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                          isOrgOperative
+                            ? 'text-amber-800 bg-amber-50 border-amber-200 hover:bg-amber-100'
+                            : 'text-emerald-800 bg-emerald-50 border-emerald-200 hover:bg-emerald-100'
+                        }`}
+                        title="यस कार्यालयको सक्रिय/निष्क्रिय अवस्था परिवर्तन गर्नुहोस् (अन्य कार्यालय यथावत रहनेछन्)"
+                      >
+                        {isOrgOperative ? (
+                          <>
+                            <XCircle className="w-3 h-3 text-amber-600" />
+                            <span>निष्क्रिय गर्नुहोस्</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="w-3 h-3 text-emerald-600" />
+                            <span>सक्रिय गर्नुहोस्</span>
+                          </>
+                        )}
+                      </button>
 
-                      {!isActive ? (
+                      {/* Workspace Switcher */}
+                      {!isCurrentWorkspace ? (
                         <button
                           onClick={() => setActiveOrganizationId(org.id)}
-                          className="px-3 py-1.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-lg shadow-xs transition-all flex items-center gap-1 cursor-pointer text-[11px]"
+                          className="px-3 py-1 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-lg shadow-xs transition-all flex items-center gap-1 cursor-pointer text-[11px]"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>डाटा सक्रिय गर्नुहोस् (Switch Data)</span>
+                          <span>कार्यक्षेत्र खोल्नुहोस् (Open Workspace)</span>
                         </button>
                       ) : (
                         <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                          ✓ वर्तमान सक्रिय डाटाबेस
+                          ✓ वर्तमान सक्रिय कार्यक्षेत्र
                         </span>
                       )}
                     </div>

@@ -239,7 +239,8 @@ export function checkRateLimit(
   isLocked: boolean;
 } {
   const store = getRateLimitStore();
-  const record = store[identifier.toLowerCase().trim()];
+  const key = String(identifier || '').toLowerCase().trim();
+  const record = store[key];
   const now = Date.now();
 
   if (!record) {
@@ -264,7 +265,7 @@ export function checkRateLimit(
 
   // Reset if window duration has passed
   if (now - record.firstAttemptTime > windowDurationSeconds * 1000) {
-    delete store[identifier.toLowerCase().trim()];
+    delete store[key];
     saveRateLimitStore(store);
     return {
       allowed: true,
@@ -296,7 +297,7 @@ export function recordFailedAttempt(
   retryAfterSeconds: number;
 } {
   const store = getRateLimitStore();
-  const key = identifier.toLowerCase().trim();
+  const key = String(identifier || '').toLowerCase().trim();
   const now = Date.now();
   const record = store[key] || {
     attempts: 0,
@@ -325,7 +326,7 @@ export function recordFailedAttempt(
  */
 export function resetRateLimit(identifier: string): void {
   const store = getRateLimitStore();
-  const key = identifier.toLowerCase().trim();
+  const key = String(identifier || '').toLowerCase().trim();
   if (store[key]) {
     delete store[key];
     saveRateLimitStore(store);
@@ -338,9 +339,10 @@ export function resetRateLimit(identifier: string): void {
  * Masks a bank account number showing only the last 4 digits
  * e.g. "0123456789012" -> "•••• •••• ••012"
  */
-export function maskAccountNumber(accountNo?: string): string {
-  if (!accountNo) return '-';
-  const clean = accountNo.trim();
+export function maskAccountNumber(accountNo?: string | number): string {
+  if (accountNo === undefined || accountNo === null || accountNo === '') return '-';
+  const clean = String(accountNo).trim();
+  if (!clean) return '-';
   if (clean.length <= 4) return clean;
   const lastFour = clean.slice(-4);
   return '•••• •••• ' + lastFour;
@@ -350,9 +352,10 @@ export function maskAccountNumber(accountNo?: string): string {
  * Masks a citizenship number
  * e.g. "27-01-78-12345" -> "••••••••-12345"
  */
-export function maskCitizenship(citizenshipNo?: string): string {
-  if (!citizenshipNo) return '-';
-  const clean = citizenshipNo.trim();
+export function maskCitizenship(citizenshipNo?: string | number): string {
+  if (citizenshipNo === undefined || citizenshipNo === null || citizenshipNo === '') return '-';
+  const clean = String(citizenshipNo).trim();
+  if (!clean) return '-';
   if (clean.length <= 4) return clean;
   const lastFour = clean.slice(-4);
   return '••••••••' + lastFour;
@@ -362,9 +365,10 @@ export function maskCitizenship(citizenshipNo?: string): string {
  * Masks a PAN number
  * e.g. "123456789" -> "••••••789"
  */
-export function maskPan(pan?: string): string {
-  if (!pan) return '-';
-  const clean = pan.trim();
+export function maskPan(pan?: string | number): string {
+  if (pan === undefined || pan === null || pan === '') return '-';
+  const clean = String(pan).trim();
+  if (!clean) return '-';
   if (clean.length <= 3) return clean;
   const lastThree = clean.slice(-3);
   return '••••••' + lastThree;
@@ -374,9 +378,10 @@ export function maskPan(pan?: string): string {
  * Masks a phone/mobile number
  * e.g. "9851234567" -> "98•••••567"
  */
-export function maskPhone(phone?: string): string {
-  if (!phone) return '-';
-  const clean = phone.trim();
+export function maskPhone(phone?: string | number): string {
+  if (phone === undefined || phone === null || phone === '') return '-';
+  const clean = String(phone).trim();
+  if (!clean) return '-';
   if (clean.length <= 5) return clean;
   const prefix = clean.slice(0, 2);
   const suffix = clean.slice(-3);
@@ -388,7 +393,9 @@ export function maskPhone(phone?: string): string {
  */
 export function maskEmail(email?: string): string {
   if (!email) return '-';
-  const parts = email.split('@');
+  const clean = String(email).trim();
+  if (!clean) return '-';
+  const parts = clean.split('@');
   if (parts.length !== 2) return '••••••';
   const [user, domain] = parts;
   if (user.length <= 2) return `*@${domain}`;
@@ -400,10 +407,10 @@ export function maskEmail(email?: string): string {
  * Universal sensitive data masking dispatcher
  */
 export function maskSensitiveData(
-  value?: string,
+  value?: any,
   type: 'bank' | 'pan' | 'phone' | 'email' | 'citizenship' = 'bank'
 ): string {
-  if (!value) return '-';
+  if (value === undefined || value === null || value === '') return '-';
   switch (type) {
     case 'bank':
       return maskAccountNumber(value);
@@ -412,7 +419,7 @@ export function maskSensitiveData(
     case 'phone':
       return maskPhone(value);
     case 'email':
-      return maskEmail(value);
+      return maskEmail(String(value));
     case 'citizenship':
       return maskCitizenship(value);
     default:
