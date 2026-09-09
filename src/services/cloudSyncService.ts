@@ -7,6 +7,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { GoogleSheetsConfig, OrganizationSetup, OrganizationItem, User, SystemSupportContact } from '../types';
+import { verifyPasswordSync } from '../utils/securityUtils';
 
 // Initialize Firebase App safely
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -380,17 +381,39 @@ export async function saveSingleUserToCloud(u: User): Promise<boolean> {
     },
   };
 
+  let sqlOk = false;
   try {
     const res = await fetch('/api/users/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return res.ok;
+    sqlOk = res.ok;
   } catch (sqlErr) {
     console.warn('Could not sync single user to Cloud SQL:', sqlErr);
-    return false;
   }
+
+  // Sync to Firestore for multi-device reliability
+  try {
+    const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
+    const snap = await getDoc(docRef);
+    let currentUsers: User[] = [];
+    if (snap.exists() && Array.isArray(snap.data()?.users)) {
+      currentUsers = snap.data().users;
+    }
+    const filtered = currentUsers.filter(
+      (item) => item.id !== u.id && item.username.toLowerCase() !== u.username.toLowerCase()
+    );
+    filtered.push(u);
+    await setDoc(docRef, {
+      users: filtered,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (fsErr) {
+    console.warn('Could not sync single user to Firestore:', fsErr);
+  }
+
+  return sqlOk;
 }
 
 /**
@@ -463,7 +486,7 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
 export async function cloudLogin(
   username: string,
   password?: string
-): Promise<{ success: boolean; user?: User; notFound?: boolean; wrongPassword?: boolean; message?: string }> {
+): Promise<{ success: boolean; user?: User; notFound?: boolean; wrongPassword?: boolean; inactive?: boolean; message?: string }> {
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
