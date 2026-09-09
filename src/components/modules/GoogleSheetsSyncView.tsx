@@ -582,6 +582,14 @@ function doPost(e) {
 
     var ss = getTargetSpreadsheet(payload.spreadsheetId);
 
+    // एकल प्रयोगकर्ता प्रोफाइल तुरुन्त सुरक्षित / अपडेट गर्ने (Instant Single User Upsert)
+    if (action === 'saveUser' || action === 'addUser' || action === 'upsertUser') {
+      var singleUser = payload.user || payload;
+      var saveRes = upsertUserInSheet(ss, singleUser, payload.officeName);
+      logSyncAudit(ss, 'प्रयोगकर्ता प्रविष्टि (' + (singleUser.username || singleUser.fullName) + ')', 'Success', singleUser.username);
+      return ContentService.createTextOutput(JSON.stringify(saveRes)).setMimeType(ContentService.MimeType.JSON);
+    }
+
     // प्रयोगकर्ता सूची सिंक गर्ने (Sync Users Profile to Office Sheet)
     if (action === 'syncUsers') {
       var userList = payload.users || [];
@@ -690,6 +698,85 @@ function saveOfficeUsersList(ss, users, officeName) {
     count: users.length,
     message: 'गुगल सिटको प्रयोगकर्ता_सूचीमा ' + users.length + ' जना प्रयोगकर्ता प्रोफाइल सफलतापूर्वक सुरक्षित भयो।'
   };
+}
+
+/**
+ * एकल प्रयोगकर्ता (Single User) प्रोफाइललाई 'प्रयोगकर्ता_सूची' सिटमा तुरुन्तै सुरक्षित वा अद्यावधिक (Upsert) गर्ने
+ */
+function upsertUserInSheet(ss, user, officeName) {
+  if (!ss) return { success: false, message: 'Spreadsheet उपलब्ध छैन।' };
+  if (!user || (!user.username && !user.id)) {
+    return { success: false, message: 'अमान्य प्रयोगकर्ता डाटा।' };
+  }
+
+  var sheet = ss.getSheetByName('प्रयोगकर्ता_सूची') || ss.insertSheet('प्रयोगकर्ता_सूची');
+  var header = [
+    'क्र.सं.',
+    'User ID',
+    'प्रयोगकर्ताको नाम (Username)',
+    'पूरा नाम (Full Name)',
+    'भूमिका (Role)',
+    'इमेल (Email)',
+    'फोन नं.',
+    'पद (Designation)',
+    'सम्बद्ध कार्यालय (Office Name)',
+    'स्थिति (Status)',
+    'पासवर्ड (Password)',
+    'दर्ता मिति (Created At)',
+    'पछिल्लो लगइन (Last Login)'
+  ];
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(header);
+    sheet.getRange(1, 1, 1, header.length).setFontWeight('bold').setBackground('#edf4ea');
+  }
+
+  var data = sheet.getDataRange().getValues();
+  var targetUsername = String(user.username || '').trim().toLowerCase();
+  var targetUserId = String(user.id || '').trim().toLowerCase();
+  var foundRowIndex = -1;
+
+  for (var r = 1; r < data.length; r++) {
+    var rowUid = String(data[r][1] || '').trim().toLowerCase();
+    var rowUname = String(data[r][2] || '').trim().toLowerCase();
+    if ((targetUsername && rowUname === targetUsername) || (targetUserId && rowUid === targetUserId)) {
+      foundRowIndex = r + 1; // 1-based row index in sheet
+      break;
+    }
+  }
+
+  var officeLabel = user.organizationName || officeName || ss.getName().replace(/^stcs_/, '');
+  var rowData = [
+    foundRowIndex > 0 ? (foundRowIndex - 1) : sheet.getLastRow(),
+    user.id || ('user_' + Date.now()),
+    user.username || '',
+    user.fullName || '',
+    user.role || 'ACCOUNTANT',
+    user.email || '',
+    user.phone || '',
+    user.designation || '',
+    officeLabel,
+    user.isActive !== false ? 'सक्रिय' : 'निष्क्रिय',
+    user.password || '',
+    user.createdAt || getKathmanduTimestamp(),
+    user.lastLogin || ''
+  ];
+
+  if (foundRowIndex > 0) {
+    sheet.getRange(foundRowIndex, 1, 1, rowData.length).setValues([rowData]);
+    return {
+      success: true,
+      action: 'updated',
+      message: 'प्रयोगकर्ता ' + user.fullName + ' (' + user.username + ') को विवरण सफलतापूर्वक अपडेट गरियो।'
+    };
+  } else {
+    sheet.appendRow(rowData);
+    return {
+      success: true,
+      action: 'inserted',
+      message: 'नयाँ प्रयोगकर्ता ' + user.fullName + ' (' + user.username + ') को विवरण सिटमा सफलतापूर्वक दर्ता भयो।'
+    };
+  }
 }
 
 /**
