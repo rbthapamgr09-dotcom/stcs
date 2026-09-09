@@ -449,6 +449,7 @@ function setupAllSheetsForSpreadsheet(ss) {
     { name: 'TaxReference', headers: ['id', 'fiscalYear', 'filingType', 'slabs', 'disabilityExemptionPercent', 'femaleTaxRebatePercent'] },
     { name: 'MonthlySalarySheet', headers: ['empCode', 'name', 'designation', 'month', 'basicSalary', 'gradeAmount', 'totalReceivable', 'totalDeduction', 'netPayable'] },
     { name: 'AnnualTaxReport', headers: ['empCode', 'name', 'designation', 'fiscalYear', 'annualGrossIncome', 'totalDeductions', 'taxableIncome', 'totalTaxPayable', 'monthlyTaxDeduction'] },
+    { name: 'प्रयोगकर्ता_सूची', headers: ['क्र.सं.', 'User ID', 'प्रयोगकर्ताको नाम (Username)', 'पूरा नाम (Full Name)', 'भूमिका (Role)', 'इमेल (Email)', 'फोन नं.', 'पद (Designation)', 'सम्बद्ध कार्यालय (Office Name)', 'स्थिति (Status)', 'पासवर्ड (Password)', 'दर्ता मिति (Created At)', 'पछिल्लो लगइन (Last Login)'] },
     { name: 'AuditLog', headers: ['Timestamp (UTC+05:45 Kathmandu)', 'Action', 'Status', 'User', 'Details'] }
   ];
 
@@ -479,6 +480,7 @@ function doGet(e) {
       salarySetups: getSheetDataAsObjectMap(ss, 'SalarySetup', 'employeeId'),
       deductionSetups: getSheetDataAsObjectMap(ss, 'DeductionSetup', 'employeeId'),
       taxReferences: getSheetDataAsArray(ss, 'TaxReference'),
+      users: getSheetDataAsArray(ss, 'प्रयोगकर्ता_सूची'),
       updatedAt: new Date().toISOString()
     };
     
@@ -487,6 +489,12 @@ function doGet(e) {
       data: result,
       message: 'गुगल सिट्सबाट डाटा सफलतापूर्वक प्राप्त भयो।' 
     })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // प्रयोगकर्ता लगइन प्रमाणीकरण (GET Fallback)
+  if (action === 'login' || action === 'verifyUser') {
+    var checkRes = verifyUserCredentials(explicitId, parameter.username, parameter.password);
+    return ContentService.createTextOutput(JSON.stringify(checkRes)).setMimeType(ContentService.MimeType.JSON);
   }
   
   // Default Status / Connection Test Response
@@ -566,7 +574,21 @@ function doPost(e) {
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
+    // प्रयोगकर्ता लगइन प्रमाणीकरण (Cross-Device Login Verification)
+    if (action === 'login' || action === 'verifyUser') {
+      var loginCheck = verifyUserCredentials(payload.spreadsheetId, payload.username, payload.password);
+      return ContentService.createTextOutput(JSON.stringify(loginCheck)).setMimeType(ContentService.MimeType.JSON);
+    }
+
     var ss = getTargetSpreadsheet(payload.spreadsheetId);
+
+    // प्रयोगकर्ता सूची सिंक गर्ने (Sync Users Profile to Office Sheet)
+    if (action === 'syncUsers') {
+      var userList = payload.users || [];
+      var syncRes = saveOfficeUsersList(ss, userList, payload.officeName);
+      logSyncAudit(ss, 'प्रयोगकर्ता सिंक (Sync Users: ' + userList.length + ' users)', 'Success');
+      return ContentService.createTextOutput(JSON.stringify(syncRes)).setMimeType(ContentService.MimeType.JSON);
+    }
     
     // डाटा निकाल्ने (Pull Action)
     if (action === 'pull') {
@@ -576,6 +598,7 @@ function doPost(e) {
         salarySetups: getSheetDataAsObjectMap(ss, 'SalarySetup', 'employeeId'),
         deductionSetups: getSheetDataAsObjectMap(ss, 'DeductionSetup', 'employeeId'),
         taxReferences: getSheetDataAsArray(ss, 'TaxReference'),
+        users: getSheetDataAsArray(ss, 'प्रयोगकर्ता_सूची'),
         updatedAt: new Date().toISOString()
       };
       logSyncAudit(ss, 'डाटा तानियो (Pull Data)', 'Success');
@@ -596,13 +619,14 @@ function doPost(e) {
     if (data.taxReferences) saveArrayToSheet(ss, 'TaxReference', data.taxReferences);
     if (data.monthlyItems) saveArrayToSheet(ss, 'MonthlySalarySheet', data.monthlyItems);
     if (data.calculatedResults) saveArrayToSheet(ss, 'AnnualTaxReport', data.calculatedResults);
+    if (data.users && Array.isArray(data.users)) saveOfficeUsersList(ss, data.users, data.officeName);
     
     // Log Audit Record
     logSyncAudit(ss, 'डाटा सिंक (Push Sync: ' + (payload.fiscalYear || '') + ')', 'Success');
     
     return ContentService.createTextOutput(JSON.stringify({ 
       success: true, 
-      message: 'गुगल सिट्समा सबै विवरणहरू (कर्मचारी, तलब, कट्टी, प्रतिवेदन) सफलतापूर्वक सुरक्षित भयो।' 
+      message: 'गुगल सिट्समा सबै विवरणहरू (कर्मचारी, तलब, कट्टी, प्रतिवेदन, प्रयोगकर्ता) सफलतापूर्वक सुरक्षित भयो।' 
     })).setMimeType(ContentService.MimeType.JSON);
     
   } catch (err) {
@@ -612,6 +636,178 @@ function doPost(e) {
       message: 'सिंक गर्दा त्रुटि भयो: ' + err.toString()
     })).setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+/**
+ * प्रयोगकर्ताहरूको सूची 'प्रयोगकर्ता_सूची' सिटमा सुरक्षित गर्ने
+ */
+function saveOfficeUsersList(ss, users, officeName) {
+  if (!ss) return { success: false, message: 'Spreadsheet उपलब्ध छैन।' };
+  var sheet = ss.getSheetByName('प्रयोगकर्ता_सूची') || ss.insertSheet('प्रयोगकर्ता_सूची');
+  var header = [
+    'क्र.सं.',
+    'User ID',
+    'प्रयोगकर्ताको नाम (Username)',
+    'पूरा नाम (Full Name)',
+    'भूमिका (Role)',
+    'इमेल (Email)',
+    'फोन नं.',
+    'पद (Designation)',
+    'सम्बद्ध कार्यालय (Office Name)',
+    'स्थिति (Status)',
+    'पासवर्ड (Password)',
+    'दर्ता मिति (Created At)',
+    'पछिल्लो लगइन (Last Login)'
+  ];
+
+  sheet.clear();
+  var rows = [header];
+  var officeLabel = officeName || ss.getName().replace(/^stcs_/, '');
+
+  for (var i = 0; i < users.length; i++) {
+    var u = users[i];
+    rows.push([
+      i + 1,
+      u.id || ('user_' + (i + 1)),
+      u.username || '',
+      u.fullName || '',
+      u.role || 'ACCOUNTANT',
+      u.email || '',
+      u.phone || '',
+      u.designation || '',
+      u.organizationName || officeLabel,
+      u.isActive !== false ? 'सक्रिय' : 'निष्क्रिय',
+      u.password || '',
+      u.createdAt || getKathmanduTimestamp(),
+      u.lastLogin || ''
+    ]);
+  }
+
+  sheet.getRange(1, 1, rows.length, header.length).setValues(rows);
+  sheet.getRange(1, 1, 1, header.length).setFontWeight('bold').setBackground('#edf4ea');
+  return {
+    success: true,
+    count: users.length,
+    message: 'गुगल सिटको प्रयोगकर्ता_सूचीमा ' + users.length + ' जना प्रयोगकर्ता प्रोफाइल सफलतापूर्वक सुरक्षित भयो।'
+  };
+}
+
+/**
+ * गुगल सिटमा प्रयोगकर्ताको User ID र Password जाँच गर्ने
+ * यदि सक्रिय सिटमा भेटिएन भने TARGET_FOLDER_ID भित्रका अन्य सबै सिटहरूमा समेत खोजी गर्दछ।
+ */
+function verifyUserCredentials(spreadsheetId, inputUsername, inputPassword) {
+  if (!inputUsername) {
+    return { success: false, message: 'प्रयोगकर्ता नाम प्रविष्ट गर्नुहोस्।' };
+  }
+  var cleanUser = String(inputUsername).trim().toLowerCase();
+  var cleanPass = String(inputPassword || '');
+
+  // १. सम्बन्धित सिटमा खोजी गर्ने
+  var targetList = [];
+  try {
+    var ssPrimary = getTargetSpreadsheet(spreadsheetId);
+    if (ssPrimary) targetList.push(ssPrimary);
+  } catch (e) {}
+
+  // २. यदि फोल्डर आईडी उपलब्ध छ भने फोल्डर भित्रका सबै stcs_* सिटहरू पनि संकलन गर्ने
+  try {
+    if (TARGET_FOLDER_ID && TARGET_FOLDER_ID !== 'YOUR_FOLDER_ID_HERE') {
+      var folder = DriveApp.getFolderById(TARGET_FOLDER_ID);
+      var files = folder.getFilesByType(MimeType.GOOGLE_SHEETS);
+      while (files.hasNext()) {
+        var file = files.next();
+        var fid = file.getId();
+        if (!targetList.some(function(s) { return s.getId() === fid; })) {
+          try {
+            targetList.push(SpreadsheetApp.openById(fid));
+          } catch (e) {}
+        }
+      }
+    }
+  } catch (err) {}
+
+  for (var sIdx = 0; sIdx < targetList.length; sIdx++) {
+    var currSs = targetList[sIdx];
+    var sheet = currSs.getSheetByName('प्रयोगकर्ता_सूची');
+    if (!sheet) continue;
+
+    var data = sheet.getDataRange().getValues();
+    if (!data || data.length <= 1) continue;
+
+    for (var r = 1; r < data.length; r++) {
+      var row = data[r];
+      var rowUid = String(row[1] || '').trim();
+      var rowUname = String(row[2] || '').trim();
+      var rowPass = String(row[10] || '').trim();
+      var rowStatus = String(row[9] || '').trim();
+      var isActive = (rowStatus === 'सक्रिय' || rowStatus === 'Active' || rowStatus === 'true');
+
+      if (rowUname.toLowerCase() === cleanUser || rowUid.toLowerCase() === cleanUser) {
+        // पासवर्ड प्रमाणीकरण (Direct string match OR SHA-256 match)
+        var isPassValid = (rowPass === cleanPass);
+        if (!isPassValid && rowPass.indexOf('sha256:') === 0) {
+          try {
+            var parts = rowPass.split(':');
+            if (parts.length === 3) {
+              var salt = parts[1];
+              var expectedHash = parts[2];
+              var rawDigest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + ':' + cleanPass, Utilities.Charset.UTF_8);
+              var hexDigest = rawDigest.map(function(b) {
+                return ('0' + (b & 0xFF).toString(16)).slice(-2);
+              }).join('');
+              if (hexDigest === expectedHash) {
+                isPassValid = true;
+              }
+            }
+          } catch (pErr) {}
+        }
+
+        if (!isPassValid) {
+          return { success: false, wrongPassword: true, message: 'गलत पासवर्ड प्रविष्ट भयो।' };
+        }
+
+        if (!isActive) {
+          return { success: false, message: 'गुगल सिटमा यो प्रयोगकर्ता निष्क्रिय (Inactive) गरिएको छ।' };
+        }
+
+        // पछिल्लो लगइन मिति अपडेट गर्ने
+        try {
+          sheet.getRange(r + 1, 13).setValue(getKathmanduTimestamp());
+        } catch (uErr) {}
+
+        var authenticatedUser = {
+          id: rowUid || ('user_' + r),
+          username: rowUname,
+          fullName: String(row[3] || rowUname),
+          role: String(row[4] || 'ACCOUNTANT'),
+          email: String(row[5] || ''),
+          phone: String(row[6] || ''),
+          designation: String(row[7] || ''),
+          organizationName: String(row[8] || currSs.getName()),
+          organizationId: currSs.getId(),
+          isActive: true,
+          createdAt: String(row[11] || ''),
+          lastLogin: getKathmanduTimestamp()
+        };
+
+        logSyncAudit(currSs, 'सिट लगइन (Google Sheet Login: ' + rowUname + ')', 'Success', rowUname);
+
+        return {
+          success: true,
+          user: authenticatedUser,
+          spreadsheetId: currSs.getId(),
+          spreadsheetName: currSs.getName(),
+          message: 'कार्यालय ' + currSs.getName() + ' को गुगल सिटबाट प्रयोगकर्ता प्रमाणीकरण सफल भयो।'
+        };
+      }
+    }
+  }
+
+  return {
+    success: false,
+    message: 'गुगल सिटमा यो प्रयोगकर्ता (User ID) फेला परेन।'
+  };
 }
 
 /**

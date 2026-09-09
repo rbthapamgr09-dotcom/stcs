@@ -1,0 +1,18 @@
+[
+  {
+    "id": "org_default",
+    "name": "नेपाल सरकार",
+    "officeName": "आन्तरिक राजस्व कार्यालय",
+    "officeCode": "IRO-001",
+    "code": "IRO-001",
+    "ministryName": "अर्थ मन्त्रालय",
+    "departmentName": "आन्तरिक राजस्व विभाग",
+    "province": "बागमती प्रदेश",
+    "district": "काठमाडौं",
+    "address": "लाजिम्पाट, काठमाडौं",
+    "panNumber": "999999999",
+    "pan": "999999999",
+    "currentFiscalYear": "२०८१/८२",
+    "isActive": true
+  }
+]

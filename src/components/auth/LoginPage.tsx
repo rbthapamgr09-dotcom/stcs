@@ -45,6 +45,7 @@ export const LoginPage: React.FC = () => {
     completeFirstTimePasswordChange,
     users,
     organization,
+    organizations,
     supportContact,
     fiscalYears,
     activeFiscalYear,
@@ -57,6 +58,9 @@ export const LoginPage: React.FC = () => {
 
   // Selected fiscal year for login
   const [selectedFy, setSelectedFy] = useState<string>(activeFiscalYear || fiscalYears[0] || '२०८१/८२');
+
+  // Selected organization for login (default: 'all' for automatic multi-sheet lookup)
+  const [selectedOrgId, setSelectedOrgId] = useState<string>('all');
 
   // Login form state
   const [loginUsername, setLoginUsername] = useState('');
@@ -118,7 +122,7 @@ export const LoginPage: React.FC = () => {
 
     setLoginLoading(true);
     try {
-      const result = await login(trimmedUser, loginPassword);
+      const result = await login(trimmedUser, loginPassword, selectedOrgId);
       setLoginLoading(false);
 
       if (result.mustChangePassword && result.user) {
@@ -454,6 +458,32 @@ export const LoginPage: React.FC = () => {
                     </div>
                   </div>
                 </div>
+
+                {/* 3b. Optional Office Selector if Multiple Offices Exist */}
+                {organizations && organizations.length > 1 && (
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-[#24331C]">
+                      कार्यालय (Office - ऐच्छिक):
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={selectedOrgId}
+                        onChange={(e) => setSelectedOrgId(e.target.value)}
+                        className="w-full px-3 py-2 pr-8 rounded-lg border border-[#c8d7c2] text-[#24331C] text-xs font-medium outline-none focus:ring-2 focus:ring-[#4B6043] focus:border-[#4B6043] transition-all bg-white appearance-none cursor-pointer"
+                      >
+                        <option value="all">स्वचालित खोजी (सबै कार्यालयका गुगल सिट्स)</option>
+                        {organizations.map((org) => (
+                          <option key={org.id} value={org.id}>
+                            {org.officeName}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-gray-500 text-xs">
+                        ▼
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* 4. Forgot Password Action Link */}
                 <div className="flex items-center justify-end pt-0.5">

@@ -1,5 +1,6 @@
 import NepaliDate from 'nepali-date-converter';
 import { normalizeLogoUrl } from '../utils/logoUtils';
+import { verifyPasswordSync } from '../utils/securityUtils';
 import {
   Employee,
   SalarySetup,
@@ -1180,33 +1181,48 @@ export async function saveUsersToOfficeSpreadsheet(
     }
   }
 
-  // Try via Apps Script Web App
+  // Try via Apps Script Web App (with proxy fallback)
   if (webAppUrl) {
+    const payload = {
+      action: 'syncUsers',
+      spreadsheetId,
+      officeName,
+      users,
+      timestamp: getKathmanduTimestamp(),
+    };
+
     try {
-      const res = await fetch(webAppUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'syncUsers',
-          spreadsheetId,
-          officeName,
-          users,
-          timestamp: getKathmanduTimestamp(),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (data.success) {
-        return {
-          success: true,
-          message: data.message || `Apps Script मार्फत ${users.length} जना प्रयोगकर्ता सिटमा सुरक्षित गरियो।`,
-        };
+      let res: Response | null = null;
+      try {
+        res = await fetch(webAppUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+        });
+      } catch (directErr) {
+        // Fallback to local server proxy if direct fetch is blocked
+        res = await fetch('/api/sheets/proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetUrl: webAppUrl, payload }),
+        });
+      }
+
+      if (res && res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.success) {
+          return {
+            success: true,
+            message: data.message || `Apps Script मार्फत ${users.length} जना प्रयोगकर्ता सिटमा सुरक्षित गरियो।`,
+          };
+        }
       }
     } catch (e: any) {
-      return { success: false, message: e?.message || 'Apps Script बाट प्रयोगकर्ता सिंक गर्न सकिएन।' };
+      console.warn('Apps Script user sync error:', e);
     }
   }
 
-  return { success: false, message: 'गुगल सिटमा प्रयोगकर्ता सुरक्षित गर्न जडान उपलब्ध छैन।' };
+  return { success: false, message: 'गुगल सिटमा प्रयोगकर्ता सुरक्षित गर्न जडान उपलब्ध छैन वा असफल भयो।' };
 }
 
 /**
@@ -1228,32 +1244,47 @@ export async function verifyUserFromSpreadsheet(
   const passwordInput = options.passwordInput || options.password || '';
   const cleanInput = (username || '').trim().toLowerCase();
 
-  // Method 1: Check via Apps Script Web App (Works seamlessly on ANY device/browser without requiring OAuth login!)
+  // Method 1: Check via Apps Script Web App (Works seamlessly on ANY device/browser)
   if (webAppUrl) {
     try {
-      const res = await fetch(webAppUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'login',
-          spreadsheetId,
-          username: cleanInput,
-          password: passwordInput,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (data && data.success && data.user) {
-        return {
-          success: true,
-          user: data.user,
-          message: 'गुगल सिटबाट प्रयोगकर्ता प्रमाणीकरण सफल भयो।',
-        };
+      const payload = {
+        action: 'login',
+        spreadsheetId,
+        username: cleanInput,
+        password: passwordInput,
+      };
+
+      let res: Response | null = null;
+      try {
+        res = await fetch(webAppUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload),
+        });
+      } catch (directErr) {
+        // Fallback to server proxy if CORS or direct fetch failed
+        res = await fetch('/api/sheets/proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetUrl: webAppUrl, payload }),
+        });
       }
-      if (data && data.wrongPassword) {
-        return { success: false, message: data.message || 'गलत पासवर्ड।', wrongPassword: true };
-      }
-      if (data && data.message) {
-        return { success: false, message: data.message };
+
+      if (res && res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data && data.success && data.user) {
+          return {
+            success: true,
+            user: data.user,
+            message: 'गुगल सिटबाट प्रयोगकर्ता प्रमाणीकरण सफल भयो।',
+          };
+        }
+        if (data && data.wrongPassword) {
+          return { success: false, message: data.message || 'गलत पासवर्ड।', wrongPassword: true };
+        }
+        if (data && data.message && data.message !== 'Failed to fetch') {
+          return { success: false, message: data.message };
+        }
       }
     } catch (e) {
       console.warn('Apps Script login check warning:', e);
@@ -1283,7 +1314,10 @@ export async function verifyUserFromSpreadsheet(
             const isActive = activeStr === 'सक्रिय' || activeStr === 'Active' || activeStr === 'true';
 
             if (uname.toLowerCase() === cleanInput || uid.toLowerCase() === cleanInput) {
-              if (pwd !== passwordInput) {
+              const passCheck = verifyPasswordSync(passwordInput, pwd);
+              const isPasswordCorrect = passCheck.isValid || pwd === passwordInput;
+
+              if (!isPasswordCorrect) {
                 return { success: false, message: 'गलत पासवर्ड।', wrongPassword: true };
               }
               if (!isActive) {

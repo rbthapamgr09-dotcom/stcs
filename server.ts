@@ -241,30 +241,143 @@ async function startServer() {
     }
   });
 
-  // Organization settings
+  // Data directory and local files for cross-device shared config without Cloud SQL / Firestore
+  const DATA_DIR = path.join(process.cwd(), 'data');
+  const ORGS_FILE = path.join(DATA_DIR, 'organizations.json');
+
+  function readLocalOrgs(): any[] {
+    try {
+      if (fs.existsSync(ORGS_FILE)) {
+        const content = fs.readFileSync(ORGS_FILE, 'utf8');
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('readLocalOrgs error:', e);
+    }
+    return [];
+  }
+
+  function writeLocalOrgs(orgs: any[]): void {
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      fs.writeFileSync(ORGS_FILE, JSON.stringify(orgs, null, 2), 'utf8');
+    } catch (e) {
+      console.warn('writeLocalOrgs error:', e);
+    }
+  }
+
+  // Google Sheets Web App Proxy endpoint (Bypasses any client-side CORS / network restrictions)
+  app.post('/api/sheets/proxy', async (req, res) => {
+    try {
+      const { targetUrl, payload } = req.body;
+      if (!targetUrl || typeof targetUrl !== 'string') {
+        return res.status(400).json({ success: false, message: 'targetUrl is required' });
+      }
+
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload || {}),
+      });
+
+      const text = await response.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { success: response.ok, rawText: text };
+      }
+      res.status(response.status).json(data);
+    } catch (proxyErr: any) {
+      console.error('Sheets proxy error:', proxyErr);
+      res.status(500).json({ success: false, message: proxyErr.message || 'Sheets proxy failed' });
+    }
+  });
+
+  // Organization settings (Shared cross-device via local JSON and/or DB)
   app.get(['/api/organization', '/api/organizations'], optionalAuth, async (_req, res) => {
     try {
-      const orgs = await getOrganizations();
-      res.json({ success: true, organizations: orgs });
+      let dbOrgs: any[] = [];
+      try {
+        dbOrgs = await getOrganizations();
+      } catch {
+        // Fallback when DB is not configured
+      }
+
+      const localOrgs = readLocalOrgs();
+      const mergedMap = new Map();
+
+      for (const o of localOrgs) {
+        if (o && o.id) mergedMap.set(o.id, o);
+      }
+      for (const o of dbOrgs) {
+        if (o && o.id) {
+          const existing = mergedMap.get(o.id) || {};
+          mergedMap.set(o.id, { ...existing, ...o });
+        }
+      }
+
+      const finalOrgs = Array.from(mergedMap.values());
+      res.json({ success: true, organizations: finalOrgs.length > 0 ? finalOrgs : localOrgs });
     } catch (error: any) {
-      console.error('Failed to fetch organization:', error);
-      res.status(500).json({ error: error.message || 'Failed to fetch organization' });
+      const localOrgs = readLocalOrgs();
+      res.json({ success: true, organizations: localOrgs });
     }
   });
 
   app.post(['/api/organization', '/api/organizations'], optionalAuth, async (req: AuthRequest, res) => {
     try {
-      const saved = await upsertOrganization(req.body);
-      res.json({ success: true, organization: saved });
+      const body = req.body;
+      const orgId = body.id || `org_${Date.now()}`;
+      const updatedOrg = { ...body, id: orgId, updatedAt: new Date().toISOString() };
+
+      // 1. Always update local JSON file
+      const localOrgs = readLocalOrgs();
+      const idx = localOrgs.findIndex((o) => o.id === orgId);
+      if (idx >= 0) {
+        localOrgs[idx] = { ...localOrgs[idx], ...updatedOrg };
+      } else {
+        localOrgs.push(updatedOrg);
+      }
+      writeLocalOrgs(localOrgs);
+
+      // 2. Try DB if available
+      let saved = updatedOrg;
+      try {
+        saved = await upsertOrganization(body);
+      } catch {}
+
+      res.json({ success: true, organization: saved || updatedOrg });
     } catch (error: any) {
-      console.error('Failed to save organization:', error);
       res.status(500).json({ error: error.message || 'Failed to save organization' });
+    }
+  });
+
+  app.post('/api/organizations/batch', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const list = req.body.organizations || req.body;
+      if (Array.isArray(list)) {
+        writeLocalOrgs(list);
+      }
+      res.json({ success: true, message: 'Organizations synced locally' });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
   });
 
   app.delete(['/api/organization/:id', '/api/organizations/:id'], optionalAuth, async (req, res) => {
     try {
-      await deleteOrganizationById(req.params.id);
+      const targetId = req.params.id;
+      const localOrgs = readLocalOrgs().filter((o) => o.id !== targetId);
+      writeLocalOrgs(localOrgs);
+
+      try {
+        await deleteOrganizationById(targetId);
+      } catch {}
+
       res.json({ success: true, message: 'Organization deleted successfully' });
     } catch (error: any) {
       console.error('Failed to delete organization:', error);

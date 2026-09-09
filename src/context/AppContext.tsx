@@ -183,7 +183,8 @@ interface AppContextType {
   currentUser: User | null;
   login: (
     userIdOrUsername: string,
-    password?: string
+    password?: string,
+    targetOrgId?: string
   ) => Promise<{ success: boolean; mustChangePassword?: boolean; user?: User; message?: string }>;
   logout: () => void;
   addUser: (user: Omit<User, 'id' | 'createdAt'>) => boolean;
@@ -1483,7 +1484,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // User Management functions (Hardened with Rate-limiting, Hashing & Audit Trails)
   const login = async (
     userIdOrUsername: string,
-    password?: string
+    password?: string,
+    targetOrgId?: string
   ): Promise<{ success: boolean; mustChangePassword?: boolean; user?: User; message?: string }> => {
     const trimmedInput = sanitizeInput(userIdOrUsername).trim().toLowerCase();
 
@@ -1540,6 +1542,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Verify against Office Google Sheet (प्रयोगकर्ता_सूची tab) across devices / browsers
     if (!found || !isLocalPasswordValid) {
       try {
+        // First, refresh organizations from server registry to discover any new offices added on another device
+        let freshOrgs = organizations;
+        try {
+          const orgRes = await fetch('/api/organizations');
+          if (orgRes.ok) {
+            const orgJson = await orgRes.json();
+            if (Array.isArray(orgJson.organizations) && orgJson.organizations.length > 0) {
+              freshOrgs = orgJson.organizations;
+              setOrganizations(freshOrgs);
+            }
+          }
+        } catch {}
+
         let token: string | undefined = undefined;
         try {
           token = await getAccessToken();
@@ -1548,8 +1563,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // Target office spreadsheets to verify credentials against
         const targetSpreadsheets: { spreadsheetId?: string; webAppUrl?: string; officeName?: string; orgId?: string }[] = [];
 
-        for (const org of organizations) {
-          if (org.spreadsheetId || org.webAppUrl) {
+        // If target office was specified or active
+        if (targetOrgId && targetOrgId !== 'all') {
+          const pref = freshOrgs.find((o) => o.id === targetOrgId);
+          if (pref && (pref.spreadsheetId || pref.webAppUrl)) {
+            targetSpreadsheets.push({
+              spreadsheetId: pref.spreadsheetId,
+              webAppUrl: pref.webAppUrl,
+              officeName: pref.officeName,
+              orgId: pref.id,
+            });
+          }
+        }
+
+        for (const org of freshOrgs) {
+          if ((!targetOrgId || targetOrgId === 'all' || org.id !== targetOrgId) && (org.spreadsheetId || org.webAppUrl)) {
             targetSpreadsheets.push({
               spreadsheetId: org.spreadsheetId,
               webAppUrl: org.webAppUrl,
@@ -1601,6 +1629,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (verifiedUser) {
           found = verifiedUser;
           isLocalPasswordValid = true;
+
+          // Switch active organization to the verified user's organization
+          if (verifiedUser.organizationId) {
+            setActiveOrganizationIdState(verifiedUser.organizationId);
+            const matchedOrg = freshOrgs.find((o) => o.id === verifiedUser.organizationId);
+            if (matchedOrg) {
+              setOrganization(matchedOrg);
+            }
+          }
+
           // Update local state and cache to localStorage
           setUsers((prev) => {
             const updated = prev.filter(
@@ -1866,14 +1904,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         (u) => !u.organizationId || u.organizationId === 'all' || u.organizationId === orgId
       );
 
-      await saveUsersToOfficeSpreadsheet({
+      const res = await saveUsersToOfficeSpreadsheet({
         spreadsheetId: targetSpreadsheetId,
         accessToken: token,
         webAppUrl: targetWebAppUrl,
         users: officeUsers,
         officeName: targetOfficeName,
       });
-    } catch (sheetSyncErr) {
+
+      if (res && res.success) {
+        addToast(
+          'success',
+          'गुगल सिटमा प्रयोगकर्ता सुरक्षित',
+          `कार्यालय '${targetOfficeName}' को गुगल सिट ('प्रयोगकर्ता_सूची') मा ${officeUsers.length} जना प्रयोगकर्ता प्रोफाइल सुरक्षित भयो। अब अन्य Device वा ब्राउजरबाट सिधै लगइन गर्न सकिन्छ।`
+        );
+      } else if (res && !res.success) {
+        addToast('warning', 'गुगल सिट सिंक सूचना', res.message || 'सिटमा प्रयोगकर्ता सिंक हुन सकेन।');
+      }
+    } catch (sheetSyncErr: any) {
       console.warn('Google Sheet users sync notice:', sheetSyncErr);
     }
   };
@@ -1907,12 +1955,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const rawPassword = userData.password || 'user123';
     const hashed = hashPasswordSync(rawPassword);
 
+    const targetOrg = organizations.find((o) => o.id === userData.organizationId);
+    const officeName = targetOrg?.officeName || organization.officeName;
+
     const newUser: User = {
       ...userData,
+      organizationName: officeName,
       fullName: sanitizeInput(userData.fullName),
       username: cleanUsername,
       email: userData.email ? sanitizeInput(userData.email).toLowerCase() : undefined,
-      password: hashed.encoded,
+      password: rawPassword, // Raw password stored for reliable cross-device Google Sheet authentication
       securityPin: userData.securityPin || '1234',
       securityQuestion: userData.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
       securityAnswer: userData.securityAnswer || 'नेपाल',
@@ -1929,6 +1981,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // Storage error ignore
     }
 
+    // अनिवार्य रूपमा सम्बन्धित कार्यालयको Google Sheet मा प्रयोगकर्ता प्रोफाइल सिंक गर्ने
     syncUsersToGoogleSheet(updatedUsers, newUser.organizationId).catch(console.warn);
     triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
@@ -1938,13 +1991,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       userId: currentUser?.id,
       username: currentUser?.username,
       userRole: currentUser?.role,
-      description: `नयाँ प्रयोगकर्ता '${newUser.fullName}' (${newUser.username}, भूमिका: ${newUser.role}) दर्ता गरियो`,
+      description: `नयाँ प्रयोगकर्ता '${newUser.fullName}' (${newUser.username}, भूमिका: ${newUser.role}, कार्यालय: ${officeName}) दर्ता गरियो`,
     });
 
     addToast(
       'success',
       'प्रयोगकर्ता दर्ता भयो',
-      `${newUser.fullName} लाई ${newUser.role} भूमिका सहित दर्ता गरियो। गुगल सिटमा रेकर्ड सुरक्षित भयो।`
+      `${newUser.fullName} लाई ${newUser.role} भूमिका सहित दर्ता गरियो। सम्बन्धित कार्यालयको गुगल सिटमा सिंक भइरहेको छ...`
     );
     return true;
   };
