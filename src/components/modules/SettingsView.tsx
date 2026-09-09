@@ -138,7 +138,7 @@ export const SettingsView: React.FC = () => {
     pan: '',
     registrationNo: '',
     // Initial Admin User creation fields (Optional during org creation)
-    createAdminUser: true,
+    createAdminUser: false,
     adminUsername: '',
     adminPassword: '',
     adminFullName: '',
@@ -2594,54 +2594,6 @@ export const SettingsView: React.FC = () => {
                   </div>
                 </div>
               </div>
-
-              {/* Initial Admin User for New Org */}
-              {!editingOrg && (
-                <div className="p-3.5 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-3">
-                  <p className="font-bold text-emerald-950 flex items-center gap-1.5">
-                    <UserPlus className="w-4 h-4 text-emerald-700" />
-                    <span>यस कार्यालयको प्रारम्भिक प्रशासक (Initial Admin User for this Office):</span>
-                  </p>
-                  <p className="text-[10px] text-emerald-800">
-                    यस कार्यालयको व्यवस्थापनका लागि एक जना प्रशासक (Admin) प्रयोगकर्ता स्वतः सिर्जना हुनेछ।
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-bold text-emerald-900">प्रशासकको नाम (Admin Name):</label>
-                      <input
-                        type="text"
-                        value={orgFormData.adminFullName}
-                        onChange={(e) => setOrgFormData({ ...orgFormData, adminFullName: e.target.value })}
-                        placeholder="कार्यालय प्रशासक"
-                        className="w-full p-2 rounded-xl border border-emerald-300 bg-white font-medium outline-none focus:ring-2 focus:ring-emerald-600"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="font-bold text-emerald-900">प्रयोगकर्ता आइडी (User ID):</label>
-                      <input
-                        type="text"
-                        value={orgFormData.adminUsername}
-                        onChange={(e) => setOrgFormData({ ...orgFormData, adminUsername: e.target.value.toLowerCase().replace(/\s+/g, '') })}
-                        placeholder="admin_office"
-                        className="w-full p-2 rounded-xl border border-emerald-300 bg-white font-mono font-bold outline-none focus:ring-2 focus:ring-emerald-600"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="font-bold text-emerald-900">पासवर्ड (Password):</label>
-                      <input
-                        type="text"
-                        value={orgFormData.adminPassword}
-                        onChange={(e) => setOrgFormData({ ...orgFormData, adminPassword: e.target.value })}
-                        placeholder="pass1234"
-                        className="w-full p-2 rounded-xl border border-emerald-300 bg-white font-mono font-bold outline-none focus:ring-2 focus:ring-emerald-600"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
 
               <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
                 <button
