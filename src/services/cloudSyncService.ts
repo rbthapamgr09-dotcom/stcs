@@ -4,6 +4,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  deleteDoc,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { GoogleSheetsConfig, OrganizationSetup, OrganizationItem, User, SystemSupportContact } from '../types';
@@ -81,15 +82,33 @@ export async function saveCloudOrganization(org: OrganizationItem): Promise<bool
     console.warn('Could not save organization to Cloud SQL API:', sqlErr);
   }
 
-  // 2. Sync to Firestore
+  // 2. Sync individual doc to Firestore
   try {
     const orgDocRef = doc(db, ORGANIZATIONS_COLLECTION, org.id);
     await setDoc(orgDocRef, { ...payload, updatedAt: new Date().toISOString() }, { merge: true });
-    return true;
   } catch (err) {
-    console.warn('Could not save organization to Cloud Firestore:', err);
-    return true;
+    console.warn('Could not save organization to Cloud Firestore doc:', err);
   }
+
+  // 3. Sync to main_orgs array in Firestore
+  try {
+    const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
+    const snap = await getDoc(listDocRef);
+    let existingList: OrganizationItem[] = [];
+    if (snap.exists() && Array.isArray(snap.data()?.organizations)) {
+      existingList = snap.data().organizations;
+    }
+    const filtered = existingList.filter((item) => item.id !== org.id);
+    filtered.push(org);
+    await setDoc(listDocRef, {
+      organizations: filtered,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('Could not save organization to Cloud Firestore main_orgs:', err);
+  }
+
+  return true;
 }
 
 /**
@@ -116,83 +135,119 @@ export async function saveCloudOrganizations(orgs: OrganizationItem[]): Promise<
 }
 
 /**
- * Retrieves all registered organizations from Cloud SQL or Firestore
+ * Retrieves all registered organizations from Cloud SQL AND Firestore
  */
 export async function getCloudOrganizations(): Promise<OrganizationItem[] | null> {
-  // 1. Try Cloud SQL
+  const orgMap = new Map<string, OrganizationItem>();
+
+  // 1. Fetch from Cloud SQL
   try {
     const res = await fetch('/api/organization');
     if (res.ok) {
       const json = await res.json();
       if (Array.isArray(json.organizations) && json.organizations.length > 0) {
-        return json.organizations.map((o: any) => ({
-          id: o.id || 'org_default',
-          name: o.name || 'नेपाल सरकार',
-          officeName: o.officeName || o.office_name || '',
-          officeCode: o.officeCode || o.office_code || '',
-          code: o.officeCode || o.office_code || '',
-          ministryName: o.ministryName || o.ministry_name || '',
-          departmentName: o.departmentName || o.department_name || '',
-          parentBodyName: o.parentBodyName || o.parent_body_name || '',
-          province: o.province || 'बागमती प्रदेश',
-          district: o.district || 'काठमाडौं',
-          localLevel: o.localLevel || o.local_level || '',
-          address: o.address || '',
-          email: o.email || '',
-          phone: o.phone || '',
-          mobile: o.mobile || '',
-          whatsapp: o.whatsapp || '',
-          website: o.website || '',
-          panNumber: o.panNumber || o.pan_number || '',
-          pan: o.panNumber || o.pan_number || '',
-          registrationNo: o.registrationNo || o.registration_no || '',
-          authorizedPersonName: o.authorizedPersonName || o.authorized_person_name || '',
-          authorizedPersonDesignation: o.authorizedPersonDesignation || o.authorized_person_designation || '',
-          currentFiscalYear: o.currentFiscalYear || o.current_fiscal_year || '२०८१/८२',
-          logoUrl: o.logoUrl || o.logo_url || '',
-          signatureUrl: o.signatureUrl || o.signature_url || '',
-          headerText: o.headerText || o.header_text || '',
-          footerText: o.footerText || o.footer_text || '',
-          alignment: o.alignment || 'center',
-          isActive: o.isActive ?? o.is_active ?? true,
-          createdAt: o.createdAt || o.created_at || new Date().toISOString(),
-        })) as OrganizationItem[];
+        for (const o of json.organizations) {
+          const item: OrganizationItem = {
+            id: o.id || 'org_default',
+            name: o.name || 'नेपाल सरकार',
+            officeName: o.officeName || o.office_name || '',
+            officeCode: o.officeCode || o.office_code || '',
+            code: o.officeCode || o.office_code || '',
+            ministryName: o.ministryName || o.ministry_name || '',
+            departmentName: o.departmentName || o.department_name || '',
+            parentBodyName: o.parentBodyName || o.parent_body_name || '',
+            province: o.province || 'बागमती प्रदेश',
+            district: o.district || 'काठमाडौं',
+            localLevel: o.localLevel || o.local_level || '',
+            address: o.address || '',
+            email: o.email || '',
+            phone: o.phone || '',
+            mobile: o.mobile || '',
+            whatsapp: o.whatsapp || '',
+            website: o.website || '',
+            panNumber: o.panNumber || o.pan_number || '',
+            pan: o.panNumber || o.pan_number || '',
+            registrationNo: o.registrationNo || o.registration_no || '',
+            authorizedPersonName: o.authorizedPersonName || o.authorized_person_name || '',
+            authorizedPersonDesignation: o.authorizedPersonDesignation || o.authorized_person_designation || '',
+            currentFiscalYear: o.currentFiscalYear || o.current_fiscal_year || '२०८१/८२',
+            logoUrl: o.logoUrl || o.logo_url || '',
+            signatureUrl: o.signatureUrl || o.signature_url || '',
+            headerText: o.headerText || o.header_text || '',
+            footerText: o.footerText || o.footer_text || '',
+            alignment: o.alignment || 'center',
+            isActive: o.isActive ?? o.is_active ?? true,
+            createdAt: o.createdAt || o.created_at || new Date().toISOString(),
+          };
+          if (item.officeName || item.id !== 'org_default') {
+            orgMap.set(item.id, item);
+          }
+        }
       }
     }
   } catch (sqlErr) {
     console.warn('Could not fetch organizations from Cloud SQL:', sqlErr);
   }
 
-  // 2. Try Firestore fallback
+  // 2. Fetch from Firestore (main_orgs doc)
   try {
     const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
     const snap = await getDoc(listDocRef);
     if (snap.exists()) {
       const data = snap.data();
       if (Array.isArray(data.organizations) && data.organizations.length > 0) {
-        return data.organizations as OrganizationItem[];
+        for (const item of data.organizations) {
+          if (item && item.id && (item.officeName || item.id !== 'org_default')) {
+            if (!orgMap.has(item.id)) {
+              orgMap.set(item.id, item as OrganizationItem);
+            } else {
+              orgMap.set(item.id, { ...orgMap.get(item.id)!, ...item });
+            }
+          }
+        }
       }
     }
-    return null;
   } catch (err) {
     console.warn('Could not fetch organizations from Cloud Firestore:', err);
-    return null;
   }
+
+  if (orgMap.size > 0) {
+    return Array.from(orgMap.values());
+  }
+  return null;
 }
 
 /**
- * Removes an organization from Cloud SQL
+ * Removes an organization from Cloud SQL and Firestore
  */
 export async function deleteCloudOrganization(orgId: string): Promise<boolean> {
   try {
     await fetch(`/api/organization/${encodeURIComponent(orgId)}`, {
       method: 'DELETE',
     });
-    return true;
   } catch (err) {
     console.warn('Could not delete organization from Cloud SQL API:', err);
-    return false;
   }
+
+  try {
+    await deleteDoc(doc(db, ORGANIZATIONS_COLLECTION, orgId));
+  } catch (fsErr) {
+    console.warn('Could not delete organization doc from Firestore:', fsErr);
+  }
+
+  try {
+    const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
+    const snap = await getDoc(listDocRef);
+    if (snap.exists() && Array.isArray(snap.data()?.organizations)) {
+      const existing: OrganizationItem[] = snap.data().organizations;
+      const filtered = existing.filter((item) => item.id !== orgId);
+      await setDoc(listDocRef, { organizations: filtered, updatedAt: new Date().toISOString() });
+    }
+  } catch (fsErr) {
+    console.warn('Could not delete organization from main_orgs Firestore:', fsErr);
+  }
+
+  return true;
 }
 
 /**

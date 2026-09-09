@@ -1070,24 +1070,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // 2. Multi-Organization Cloud Sync across Devices
     getCloudOrganizations().then((cloudOrgs) => {
-      if (isMounted) {
-        if (cloudOrgs && cloudOrgs.length > 0) {
-          const filtered = cloudOrgs.filter(
-            (co) =>
-              co.id !== 'org_default' &&
-              co.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' &&
-              co.officeName !== 'महाकाली पुल योजना' &&
-              Boolean(co.officeName)
-          );
-          setOrganizations(filtered);
-          try {
-            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(filtered));
-          } catch {}
-        } else {
-          setOrganizations([]);
-          try {
-            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify([]));
-          } catch {}
+      if (isMounted && cloudOrgs && cloudOrgs.length > 0) {
+        const filtered = cloudOrgs.filter(
+          (co) =>
+            co.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' &&
+            co.officeName !== 'महाकाली पुल योजना' &&
+            Boolean(co.officeName)
+        );
+        if (filtered.length > 0) {
+          setOrganizations((prev) => {
+            const map = new Map<string, OrganizationItem>();
+            for (const item of prev) {
+              if (item.officeName) map.set(item.id, item);
+            }
+            for (const item of filtered) {
+              map.set(item.id, item);
+            }
+            const merged = Array.from(map.values());
+            try {
+              localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
         }
       }
     }).catch((e) => console.warn('Cloud organizations sync notice:', e));
@@ -1182,7 +1186,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (Array.isArray(parsed)) {
           const filtered = parsed.filter(
             (o) =>
-              o.id !== 'org_default' &&
               o.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' &&
               o.officeName !== 'महाकाली पुल योजना' &&
               Boolean(o.officeName)
