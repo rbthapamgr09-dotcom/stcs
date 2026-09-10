@@ -45,7 +45,6 @@ export const LoginPage: React.FC = () => {
     completeFirstTimePasswordChange,
     users,
     organization,
-    organizations,
     supportContact,
     fiscalYears,
     activeFiscalYear,
@@ -58,9 +57,6 @@ export const LoginPage: React.FC = () => {
 
   // Selected fiscal year for login
   const [selectedFy, setSelectedFy] = useState<string>(activeFiscalYear || fiscalYears[0] || '२०८१/८२');
-
-  // Selected organization for login (default: 'all' for automatic multi-sheet lookup)
-  const [selectedOrgId, setSelectedOrgId] = useState<string>('all');
 
   // Login form state
   const [loginUsername, setLoginUsername] = useState('');
@@ -122,7 +118,7 @@ export const LoginPage: React.FC = () => {
 
     setLoginLoading(true);
     try {
-      const result = await login(trimmedUser, loginPassword, selectedOrgId);
+      const result = await login(trimmedUser, loginPassword);
       setLoginLoading(false);
 
       if (result.mustChangePassword && result.user) {
@@ -319,41 +315,41 @@ export const LoginPage: React.FC = () => {
                 </span>
               </h3>
               <div className="space-y-1.5 font-medium text-[11px] leading-relaxed text-emerald-50">
-                {Boolean(supportContact?.phone?.trim()) && (
+                {Boolean(String(supportContact?.phone || '').trim()) && (
                   <div className="flex items-start gap-1.5">
                     <span className="font-bold text-white shrink-0">सम्पर्क नं. (Contact No.):</span>
-                    <a href={`tel:${supportContact.phone.trim()}`} className="font-mono text-emerald-100 hover:underline">
-                      {supportContact.phone.trim()}
+                    <a href={`tel:${String(supportContact?.phone || '').trim()}`} className="font-mono text-emerald-100 hover:underline">
+                      {String(supportContact?.phone || '').trim()}
                     </a>
                   </div>
                 )}
-                {Boolean(supportContact?.email?.trim()) && (
+                {Boolean(String(supportContact?.email || '').trim()) && (
                   <div className="flex items-start gap-1.5">
                     <span className="font-bold text-white shrink-0">इमेल (Email):</span>
-                    <a href={`mailto:${supportContact.email.trim()}`} className="font-mono text-[10px] text-emerald-100 hover:underline">
-                      {supportContact.email.trim()}
+                    <a href={`mailto:${String(supportContact?.email || '').trim()}`} className="font-mono text-[10px] text-emerald-100 hover:underline">
+                      {String(supportContact?.email || '').trim()}
                     </a>
                   </div>
                 )}
-                {Boolean(supportContact?.whatsapp?.trim()) && (
+                {Boolean(String(supportContact?.whatsapp || '').trim()) && (
                   <div className="flex items-start gap-1.5">
                     <span className="font-bold text-white shrink-0">वाट्सएप (WhatsApp):</span>
                     <a
-                      href={`https://wa.me/${supportContact.whatsapp.trim().replace(/[^0-9]/g, '')}`}
+                      href={`https://wa.me/${String(supportContact?.whatsapp || '').trim().replace(/[^0-9]/g, '')}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-mono text-[10px] text-emerald-100 hover:underline"
                     >
-                      {supportContact.whatsapp.trim()}
+                      {String(supportContact?.whatsapp || '').trim()}
                     </a>
                   </div>
                 )}
-                {Boolean(supportContact?.supportNote?.trim()) && (
+                {Boolean(String(supportContact?.supportNote || '').trim()) && (
                   <p className="text-[10px] text-emerald-100/90 leading-tight pt-0.5 italic">
-                    {supportContact.supportNote!.trim()}
+                    {String(supportContact?.supportNote || '').trim()}
                   </p>
                 )}
-                {!supportContact?.phone?.trim() && !supportContact?.email?.trim() && !supportContact?.whatsapp?.trim() && !supportContact?.supportNote?.trim() && (
+                {!String(supportContact?.phone || '').trim() && !String(supportContact?.email || '').trim() && !String(supportContact?.whatsapp || '').trim() && !String(supportContact?.supportNote || '').trim() && (
                   <div className="text-[10px] text-emerald-100/85">
                     प्रणाली सम्बन्धी सहायताको लागि सुपर एडमिन वा कार्यालय प्रशासकमा सम्पर्क राख्नुहोस्।
                   </div>
@@ -458,32 +454,6 @@ export const LoginPage: React.FC = () => {
                     </div>
                   </div>
                 </div>
-
-                {/* 3b. Optional Office Selector if Multiple Offices Exist */}
-                {organizations && organizations.length > 1 && (
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-[#24331C]">
-                      कार्यालय (Office - ऐच्छिक):
-                    </label>
-                    <div className="relative">
-                      <select
-                        value={selectedOrgId}
-                        onChange={(e) => setSelectedOrgId(e.target.value)}
-                        className="w-full px-3 py-2 pr-8 rounded-lg border border-[#c8d7c2] text-[#24331C] text-xs font-medium outline-none focus:ring-2 focus:ring-[#4B6043] focus:border-[#4B6043] transition-all bg-white appearance-none cursor-pointer"
-                      >
-                        <option value="all">स्वचालित खोजी (सबै कार्यालयका गुगल सिट्स)</option>
-                        {organizations.map((org) => (
-                          <option key={org.id} value={org.id}>
-                            {org.officeName}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-gray-500 text-xs">
-                        ▼
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {/* 4. Forgot Password Action Link */}
                 <div className="flex items-center justify-end pt-0.5">

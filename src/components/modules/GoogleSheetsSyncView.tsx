@@ -449,7 +449,6 @@ function setupAllSheetsForSpreadsheet(ss) {
     { name: 'TaxReference', headers: ['id', 'fiscalYear', 'filingType', 'slabs', 'disabilityExemptionPercent', 'femaleTaxRebatePercent'] },
     { name: 'MonthlySalarySheet', headers: ['empCode', 'name', 'designation', 'month', 'basicSalary', 'gradeAmount', 'totalReceivable', 'totalDeduction', 'netPayable'] },
     { name: 'AnnualTaxReport', headers: ['empCode', 'name', 'designation', 'fiscalYear', 'annualGrossIncome', 'totalDeductions', 'taxableIncome', 'totalTaxPayable', 'monthlyTaxDeduction'] },
-    { name: 'प्रयोगकर्ता_सूची', headers: ['क्र.सं.', 'User ID', 'प्रयोगकर्ताको नाम (Username)', 'पूरा नाम (Full Name)', 'भूमिका (Role)', 'इमेल (Email)', 'फोन नं.', 'पद (Designation)', 'सम्बद्ध कार्यालय (Office Name)', 'स्थिति (Status)', 'पासवर्ड (Password)', 'दर्ता मिति (Created At)', 'पछिल्लो लगइन (Last Login)'] },
     { name: 'AuditLog', headers: ['Timestamp (UTC+05:45 Kathmandu)', 'Action', 'Status', 'User', 'Details'] }
   ];
 
@@ -480,7 +479,6 @@ function doGet(e) {
       salarySetups: getSheetDataAsObjectMap(ss, 'SalarySetup', 'employeeId'),
       deductionSetups: getSheetDataAsObjectMap(ss, 'DeductionSetup', 'employeeId'),
       taxReferences: getSheetDataAsArray(ss, 'TaxReference'),
-      users: getSheetDataAsArray(ss, 'प्रयोगकर्ता_सूची'),
       updatedAt: new Date().toISOString()
     };
     
@@ -489,12 +487,6 @@ function doGet(e) {
       data: result,
       message: 'गुगल सिट्सबाट डाटा सफलतापूर्वक प्राप्त भयो।' 
     })).setMimeType(ContentService.MimeType.JSON);
-  }
-
-  // प्रयोगकर्ता लगइन प्रमाणीकरण (GET Fallback)
-  if (action === 'login' || action === 'verifyUser') {
-    var checkRes = verifyUserCredentials(explicitId, parameter.username, parameter.password);
-    return ContentService.createTextOutput(JSON.stringify(checkRes)).setMimeType(ContentService.MimeType.JSON);
   }
   
   // Default Status / Connection Test Response
@@ -574,29 +566,7 @@ function doPost(e) {
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // प्रयोगकर्ता लगइन प्रमाणीकरण (Cross-Device Login Verification)
-    if (action === 'login' || action === 'verifyUser') {
-      var loginCheck = verifyUserCredentials(payload.spreadsheetId, payload.username, payload.password);
-      return ContentService.createTextOutput(JSON.stringify(loginCheck)).setMimeType(ContentService.MimeType.JSON);
-    }
-
     var ss = getTargetSpreadsheet(payload.spreadsheetId);
-
-    // एकल प्रयोगकर्ता प्रोफाइल तुरुन्त सुरक्षित / अपडेट गर्ने (Instant Single User Upsert)
-    if (action === 'saveUser' || action === 'addUser' || action === 'upsertUser') {
-      var singleUser = payload.user || payload;
-      var saveRes = upsertUserInSheet(ss, singleUser, payload.officeName);
-      logSyncAudit(ss, 'प्रयोगकर्ता प्रविष्टि (' + (singleUser.username || singleUser.fullName) + ')', 'Success', singleUser.username);
-      return ContentService.createTextOutput(JSON.stringify(saveRes)).setMimeType(ContentService.MimeType.JSON);
-    }
-
-    // प्रयोगकर्ता सूची सिंक गर्ने (Sync Users Profile to Office Sheet)
-    if (action === 'syncUsers') {
-      var userList = payload.users || [];
-      var syncRes = saveOfficeUsersList(ss, userList, payload.officeName);
-      logSyncAudit(ss, 'प्रयोगकर्ता सिंक (Sync Users: ' + userList.length + ' users)', 'Success');
-      return ContentService.createTextOutput(JSON.stringify(syncRes)).setMimeType(ContentService.MimeType.JSON);
-    }
     
     // डाटा निकाल्ने (Pull Action)
     if (action === 'pull') {
@@ -606,7 +576,6 @@ function doPost(e) {
         salarySetups: getSheetDataAsObjectMap(ss, 'SalarySetup', 'employeeId'),
         deductionSetups: getSheetDataAsObjectMap(ss, 'DeductionSetup', 'employeeId'),
         taxReferences: getSheetDataAsArray(ss, 'TaxReference'),
-        users: getSheetDataAsArray(ss, 'प्रयोगकर्ता_सूची'),
         updatedAt: new Date().toISOString()
       };
       logSyncAudit(ss, 'डाटा तानियो (Pull Data)', 'Success');
@@ -627,14 +596,13 @@ function doPost(e) {
     if (data.taxReferences) saveArrayToSheet(ss, 'TaxReference', data.taxReferences);
     if (data.monthlyItems) saveArrayToSheet(ss, 'MonthlySalarySheet', data.monthlyItems);
     if (data.calculatedResults) saveArrayToSheet(ss, 'AnnualTaxReport', data.calculatedResults);
-    if (data.users && Array.isArray(data.users)) saveOfficeUsersList(ss, data.users, data.officeName);
     
     // Log Audit Record
     logSyncAudit(ss, 'डाटा सिंक (Push Sync: ' + (payload.fiscalYear || '') + ')', 'Success');
     
     return ContentService.createTextOutput(JSON.stringify({ 
       success: true, 
-      message: 'गुगल सिट्समा सबै विवरणहरू (कर्मचारी, तलब, कट्टी, प्रतिवेदन, प्रयोगकर्ता) सफलतापूर्वक सुरक्षित भयो।' 
+      message: 'गुगल सिट्समा सबै विवरणहरू (कर्मचारी, तलब, कट्टी, प्रतिवेदन) सफलतापूर्वक सुरक्षित भयो।' 
     })).setMimeType(ContentService.MimeType.JSON);
     
   } catch (err) {
@@ -644,257 +612,6 @@ function doPost(e) {
       message: 'सिंक गर्दा त्रुटि भयो: ' + err.toString()
     })).setMimeType(ContentService.MimeType.JSON);
   }
-}
-
-/**
- * प्रयोगकर्ताहरूको सूची 'प्रयोगकर्ता_सूची' सिटमा सुरक्षित गर्ने
- */
-function saveOfficeUsersList(ss, users, officeName) {
-  if (!ss) return { success: false, message: 'Spreadsheet उपलब्ध छैन।' };
-  var sheet = ss.getSheetByName('प्रयोगकर्ता_सूची') || ss.insertSheet('प्रयोगकर्ता_सूची');
-  var header = [
-    'क्र.सं.',
-    'User ID',
-    'प्रयोगकर्ताको नाम (Username)',
-    'पूरा नाम (Full Name)',
-    'भूमिका (Role)',
-    'इमेल (Email)',
-    'फोन नं.',
-    'पद (Designation)',
-    'सम्बद्ध कार्यालय (Office Name)',
-    'स्थिति (Status)',
-    'पासवर्ड (Password)',
-    'दर्ता मिति (Created At)',
-    'पछिल्लो लगइन (Last Login)'
-  ];
-
-  sheet.clear();
-  var rows = [header];
-  var officeLabel = officeName || ss.getName().replace(/^stcs_/, '');
-
-  for (var i = 0; i < users.length; i++) {
-    var u = users[i];
-    rows.push([
-      i + 1,
-      u.id || ('user_' + (i + 1)),
-      u.username || '',
-      u.fullName || '',
-      u.role || 'ACCOUNTANT',
-      u.email || '',
-      u.phone || '',
-      u.designation || '',
-      u.organizationName || officeLabel,
-      u.isActive !== false ? 'सक्रिय' : 'निष्क्रिय',
-      u.password || '',
-      u.createdAt || getKathmanduTimestamp(),
-      u.lastLogin || ''
-    ]);
-  }
-
-  sheet.getRange(1, 1, rows.length, header.length).setValues(rows);
-  sheet.getRange(1, 1, 1, header.length).setFontWeight('bold').setBackground('#edf4ea');
-  return {
-    success: true,
-    count: users.length,
-    message: 'गुगल सिटको प्रयोगकर्ता_सूचीमा ' + users.length + ' जना प्रयोगकर्ता प्रोफाइल सफलतापूर्वक सुरक्षित भयो।'
-  };
-}
-
-/**
- * एकल प्रयोगकर्ता (Single User) प्रोफाइललाई 'प्रयोगकर्ता_सूची' सिटमा तुरुन्तै सुरक्षित वा अद्यावधिक (Upsert) गर्ने
- */
-function upsertUserInSheet(ss, user, officeName) {
-  if (!ss) return { success: false, message: 'Spreadsheet उपलब्ध छैन।' };
-  if (!user || (!user.username && !user.id)) {
-    return { success: false, message: 'अमान्य प्रयोगकर्ता डाटा।' };
-  }
-
-  var sheet = ss.getSheetByName('प्रयोगकर्ता_सूची') || ss.insertSheet('प्रयोगकर्ता_सूची');
-  var header = [
-    'क्र.सं.',
-    'User ID',
-    'प्रयोगकर्ताको नाम (Username)',
-    'पूरा नाम (Full Name)',
-    'भूमिका (Role)',
-    'इमेल (Email)',
-    'फोन नं.',
-    'पद (Designation)',
-    'सम्बद्ध कार्यालय (Office Name)',
-    'स्थिति (Status)',
-    'पासवर्ड (Password)',
-    'दर्ता मिति (Created At)',
-    'पछिल्लो लगइन (Last Login)'
-  ];
-
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(header);
-    sheet.getRange(1, 1, 1, header.length).setFontWeight('bold').setBackground('#edf4ea');
-  }
-
-  var data = sheet.getDataRange().getValues();
-  var targetUsername = String(user.username || '').trim().toLowerCase();
-  var targetUserId = String(user.id || '').trim().toLowerCase();
-  var foundRowIndex = -1;
-
-  for (var r = 1; r < data.length; r++) {
-    var rowUid = String(data[r][1] || '').trim().toLowerCase();
-    var rowUname = String(data[r][2] || '').trim().toLowerCase();
-    if ((targetUsername && rowUname === targetUsername) || (targetUserId && rowUid === targetUserId)) {
-      foundRowIndex = r + 1; // 1-based row index in sheet
-      break;
-    }
-  }
-
-  var officeLabel = user.organizationName || officeName || ss.getName().replace(/^stcs_/, '');
-  var rowData = [
-    foundRowIndex > 0 ? (foundRowIndex - 1) : sheet.getLastRow(),
-    user.id || ('user_' + Date.now()),
-    user.username || '',
-    user.fullName || '',
-    user.role || 'ACCOUNTANT',
-    user.email || '',
-    user.phone || '',
-    user.designation || '',
-    officeLabel,
-    user.isActive !== false ? 'सक्रिय' : 'निष्क्रिय',
-    user.password || '',
-    user.createdAt || getKathmanduTimestamp(),
-    user.lastLogin || ''
-  ];
-
-  if (foundRowIndex > 0) {
-    sheet.getRange(foundRowIndex, 1, 1, rowData.length).setValues([rowData]);
-    return {
-      success: true,
-      action: 'updated',
-      message: 'प्रयोगकर्ता ' + user.fullName + ' (' + user.username + ') को विवरण सफलतापूर्वक अपडेट गरियो।'
-    };
-  } else {
-    sheet.appendRow(rowData);
-    return {
-      success: true,
-      action: 'inserted',
-      message: 'नयाँ प्रयोगकर्ता ' + user.fullName + ' (' + user.username + ') को विवरण सिटमा सफलतापूर्वक दर्ता भयो।'
-    };
-  }
-}
-
-/**
- * गुगल सिटमा प्रयोगकर्ताको User ID र Password जाँच गर्ने
- * यदि सक्रिय सिटमा भेटिएन भने TARGET_FOLDER_ID भित्रका अन्य सबै सिटहरूमा समेत खोजी गर्दछ।
- */
-function verifyUserCredentials(spreadsheetId, inputUsername, inputPassword) {
-  if (!inputUsername) {
-    return { success: false, message: 'प्रयोगकर्ता नाम प्रविष्ट गर्नुहोस्।' };
-  }
-  var cleanUser = String(inputUsername).trim().toLowerCase();
-  var cleanPass = String(inputPassword || '');
-
-  // १. सम्बन्धित सिटमा खोजी गर्ने
-  var targetList = [];
-  try {
-    var ssPrimary = getTargetSpreadsheet(spreadsheetId);
-    if (ssPrimary) targetList.push(ssPrimary);
-  } catch (e) {}
-
-  // २. यदि फोल्डर आईडी उपलब्ध छ भने फोल्डर भित्रका सबै stcs_* सिटहरू पनि संकलन गर्ने
-  try {
-    if (TARGET_FOLDER_ID && TARGET_FOLDER_ID !== 'YOUR_FOLDER_ID_HERE') {
-      var folder = DriveApp.getFolderById(TARGET_FOLDER_ID);
-      var files = folder.getFilesByType(MimeType.GOOGLE_SHEETS);
-      while (files.hasNext()) {
-        var file = files.next();
-        var fid = file.getId();
-        if (!targetList.some(function(s) { return s.getId() === fid; })) {
-          try {
-            targetList.push(SpreadsheetApp.openById(fid));
-          } catch (e) {}
-        }
-      }
-    }
-  } catch (err) {}
-
-  for (var sIdx = 0; sIdx < targetList.length; sIdx++) {
-    var currSs = targetList[sIdx];
-    var sheet = currSs.getSheetByName('प्रयोगकर्ता_सूची');
-    if (!sheet) continue;
-
-    var data = sheet.getDataRange().getValues();
-    if (!data || data.length <= 1) continue;
-
-    for (var r = 1; r < data.length; r++) {
-      var row = data[r];
-      var rowUid = String(row[1] || '').trim();
-      var rowUname = String(row[2] || '').trim();
-      var rowPass = String(row[10] || '').trim();
-      var rowStatus = String(row[9] || '').trim();
-      var isActive = (rowStatus === 'सक्रिय' || rowStatus === 'Active' || rowStatus === 'true');
-
-      if (rowUname.toLowerCase() === cleanUser || rowUid.toLowerCase() === cleanUser) {
-        // पासवर्ड प्रमाणीकरण (Direct string match OR SHA-256 match)
-        var isPassValid = (rowPass === cleanPass);
-        if (!isPassValid && rowPass.indexOf('sha256:') === 0) {
-          try {
-            var parts = rowPass.split(':');
-            if (parts.length === 3) {
-              var salt = parts[1];
-              var expectedHash = parts[2];
-              var rawDigest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + ':' + cleanPass, Utilities.Charset.UTF_8);
-              var hexDigest = rawDigest.map(function(b) {
-                return ('0' + (b & 0xFF).toString(16)).slice(-2);
-              }).join('');
-              if (hexDigest === expectedHash) {
-                isPassValid = true;
-              }
-            }
-          } catch (pErr) {}
-        }
-
-        if (!isPassValid) {
-          return { success: false, wrongPassword: true, message: 'गलत पासवर्ड प्रविष्ट भयो।' };
-        }
-
-        if (!isActive) {
-          return { success: false, message: 'गुगल सिटमा यो प्रयोगकर्ता निष्क्रिय (Inactive) गरिएको छ।' };
-        }
-
-        // पछिल्लो लगइन मिति अपडेट गर्ने
-        try {
-          sheet.getRange(r + 1, 13).setValue(getKathmanduTimestamp());
-        } catch (uErr) {}
-
-        var authenticatedUser = {
-          id: rowUid || ('user_' + r),
-          username: rowUname,
-          fullName: String(row[3] || rowUname),
-          role: String(row[4] || 'ACCOUNTANT'),
-          email: String(row[5] || ''),
-          phone: String(row[6] || ''),
-          designation: String(row[7] || ''),
-          organizationName: String(row[8] || currSs.getName()),
-          organizationId: currSs.getId(),
-          isActive: true,
-          createdAt: String(row[11] || ''),
-          lastLogin: getKathmanduTimestamp()
-        };
-
-        logSyncAudit(currSs, 'सिट लगइन (Google Sheet Login: ' + rowUname + ')', 'Success', rowUname);
-
-        return {
-          success: true,
-          user: authenticatedUser,
-          spreadsheetId: currSs.getId(),
-          spreadsheetName: currSs.getName(),
-          message: 'कार्यालय ' + currSs.getName() + ' को गुगल सिटबाट प्रयोगकर्ता प्रमाणीकरण सफल भयो।'
-        };
-      }
-    }
-  }
-
-  return {
-    success: false,
-    message: 'गुगल सिटमा यो प्रयोगकर्ता (User ID) फेला परेन।'
-  };
 }
 
 /**
@@ -1668,6 +1385,104 @@ function logSyncAudit(ss, action, status, user, details) {
                   <span className="text-[10px] text-emerald-700">Time log (UTC+05:45) Kathmandu</span>
                 </div>
                 <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-emerald-300 text-emerald-800 font-semibold">अडिट लग</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Google Drive Apps Script "Unable to open file" Error Resolution Box */}
+          <div className="bg-linear-to-r from-red-50 via-amber-50 to-emerald-50 border-2 border-amber-300 p-5 rounded-2xl text-xs space-y-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold shrink-0 shadow-xs">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm text-gray-900 flex items-center gap-1.5">
+                    <span>Apps Script खोल्दा "माफ गर्नुहोस्, अहिले फाइल खोल्न असमर्थ भयो" आएको खण्डमा:</span>
+                  </h4>
+                  <p className="text-[11px] text-gray-600">
+                    ब्राउजरमा एकभन्दा बढी Google Account लगइन भएको अवस्थामा Google Drive ले Apps Script खोल्न नसक्दा यो समस्या आउँछ।
+                  </p>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 bg-amber-200 text-amber-900 font-bold rounded-full text-[10px] shrink-0">
+                १००% समाधान
+              </span>
+            </div>
+
+            {/* 4 Instant Solutions Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              {/* Solution 1: Standalone script.new */}
+              <div className="bg-white p-3.5 rounded-xl border-2 border-emerald-400/80 space-y-2 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-emerald-900 text-xs flex items-center gap-1.5">
+                    <span className="w-5 h-5 bg-emerald-600 text-white rounded-full flex items-center justify-center text-[11px]">१</span>
+                    <span>विधि १: Standalone Script (सबैभन्दा सजिलो)</span>
+                  </span>
+                  <span className="text-[9px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">सिफारिस</span>
+                </div>
+                <p className="text-[11px] text-gray-700 leading-relaxed">
+                  Google Sheet भित्रको Extensions मेनु नखोली सिधै नयाँ ट्याबमा <strong className="text-emerald-800">script.new</strong> खोल्नुहोस्। दायाँपट्टिको Code.gs मा तपाईंको स्प्रेडसिट ID पहिले नै राखिएको छ!
+                </p>
+                <div className="flex gap-2 pt-1">
+                  <a
+                    href="https://script.new"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-center flex items-center justify-center gap-1.5 text-[11px] shadow-xs cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>script.new खोल्नुहोस् ↗</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={copyToClipboard}
+                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-lg text-[11px] flex items-center gap-1"
+                  >
+                    {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>कपी</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Solution 2: Incognito Window */}
+              <div className="bg-white p-3.5 rounded-xl border border-gray-200 space-y-2 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-gray-900 text-xs flex items-center gap-1.5">
+                    <span className="w-5 h-5 bg-[#4B6043] text-white rounded-full flex items-center justify-center text-[11px]">२</span>
+                    <span>विधि २: Incognito / Private Window</span>
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-700 leading-relaxed">
+                  ब्राउजरमा <strong>Ctrl + Shift + N</strong> थिची Incognito विन्डो खोल्नुहोस् र केवल <strong className="text-blue-700">{TARGET_ADMIN_ACCOUNT_EMAIL}</strong> लगइन गर्नुहोस्। बहु-खाता द्वन्द्व हट्नेछ र सिटमा Extensions &gt; Apps Script तुरुन्तै खुल्नेछ।
+                </p>
+              </div>
+
+              {/* Solution 3: Change /u/0 to /u/1 in URL */}
+              <div className="bg-white p-3.5 rounded-xl border border-gray-200 space-y-2 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-gray-900 text-xs flex items-center gap-1.5">
+                    <span className="w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-[11px]">३</span>
+                    <span>विधि ३: URL मा खाता नम्बर मिलाउने</span>
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-700 leading-relaxed">
+                  त्रुटि आएको पृष्ठको URL bar मा <code>script.google.com/u/0/...</code> लाई परिवर्तन गरि <code>script.google.com/u/1/...</code> वा <code>script.google.com/u/2/...</code> लेखेर Enter थिच्नुहोस्।
+                </p>
+              </div>
+
+              {/* Solution 4: Direct REST API Sync (No Apps Script needed) */}
+              <div className="bg-white p-3.5 rounded-xl border border-gray-200 space-y-2 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-gray-900 text-xs flex items-center gap-1.5">
+                    <span className="w-5 h-5 bg-purple-600 text-white rounded-full flex items-center justify-center text-[11px]">४</span>
+                    <span>विधि ४: Direct Google Sheets API सिंक</span>
+                  </span>
+                  <span className="text-[9px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold">No Script</span>
+                </div>
+                <p className="text-[11px] text-gray-700 leading-relaxed">
+                  Apps Script विना नै माथिको <strong>"गुगल खाता जडान"</strong> र <strong>"सिटमा पठाउनुहोस्"</strong> बाट सिधै सबै ८ वटै पानाहरूमा पूर्ण डेटा स्वतः अपडेट गर्न सक्नुहुन्छ।
+                </p>
               </div>
             </div>
           </div>

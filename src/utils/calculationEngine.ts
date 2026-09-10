@@ -474,12 +474,14 @@ export function calculateAnnualSalaryAndTax(
     ? Number(taxReference.femaleTaxRebatePercent)
     : 10;
   let femaleTaxRebate = 0;
-  const isFemale = employee.gender
-    ? (employee.gender.trim() === 'महिला' ||
-       employee.gender.includes('महिला') ||
-       employee.gender.trim().toLowerCase() === 'female' ||
-       employee.gender.trim().toLowerCase() === 'f')
-    : false;
+  const genderStr = String(employee.gender || '').trim();
+  const isFemale = Boolean(
+    genderStr &&
+      (genderStr === 'महिला' ||
+        genderStr.includes('महिला') ||
+        genderStr.toLowerCase() === 'female' ||
+        genderStr.toLowerCase() === 'f')
+  );
 
   if (deductionSetup.femaleTaxRebateOverride !== undefined && Number(deductionSetup.femaleTaxRebateOverride) > 0) {
     femaleTaxRebate = round2(Number(deductionSetup.femaleTaxRebateOverride));

@@ -228,7 +228,7 @@ function saveRateLimitStore(store: Record<string, RateLimitRecord>): void {
  * Default: 5 attempts within 2 minutes; lockout for 60 seconds if exceeded.
  */
 export function checkRateLimit(
-  identifier: string,
+  identifier: string | number | undefined | null,
   maxAttempts = 5,
   lockoutDurationSeconds = 60,
   windowDurationSeconds = 120
@@ -238,9 +238,17 @@ export function checkRateLimit(
   retryAfterSeconds: number;
   isLocked: boolean;
 } {
+  const cleanId = String(identifier || '').toLowerCase().trim();
+  if (!cleanId) {
+    return {
+      allowed: true,
+      remainingAttempts: maxAttempts,
+      retryAfterSeconds: 0,
+      isLocked: false,
+    };
+  }
   const store = getRateLimitStore();
-  const key = String(identifier || '').toLowerCase().trim();
-  const record = store[key];
+  const record = store[cleanId];
   const now = Date.now();
 
   if (!record) {
@@ -265,7 +273,7 @@ export function checkRateLimit(
 
   // Reset if window duration has passed
   if (now - record.firstAttemptTime > windowDurationSeconds * 1000) {
-    delete store[key];
+    delete store[cleanId];
     saveRateLimitStore(store);
     return {
       allowed: true,
@@ -288,7 +296,7 @@ export function checkRateLimit(
  * Records a failed attempt for an identifier
  */
 export function recordFailedAttempt(
-  identifier: string,
+  identifier: string | number | undefined | null,
   maxAttempts = 5,
   lockoutDurationSeconds = 60
 ): {
@@ -298,6 +306,9 @@ export function recordFailedAttempt(
 } {
   const store = getRateLimitStore();
   const key = String(identifier || '').toLowerCase().trim();
+  if (!key) {
+    return { remainingAttempts: maxAttempts, isLocked: false, retryAfterSeconds: 0 };
+  }
   const now = Date.now();
   const record = store[key] || {
     attempts: 0,
@@ -324,10 +335,10 @@ export function recordFailedAttempt(
 /**
  * Resets the rate limit counter for an identifier after successful action
  */
-export function resetRateLimit(identifier: string): void {
+export function resetRateLimit(identifier: string | number | undefined | null): void {
   const store = getRateLimitStore();
   const key = String(identifier || '').toLowerCase().trim();
-  if (store[key]) {
+  if (key && store[key]) {
     delete store[key];
     saveRateLimitStore(store);
   }
@@ -339,7 +350,7 @@ export function resetRateLimit(identifier: string): void {
  * Masks a bank account number showing only the last 4 digits
  * e.g. "0123456789012" -> "•••• •••• ••012"
  */
-export function maskAccountNumber(accountNo?: string | number): string {
+export function maskAccountNumber(accountNo?: string | number | null): string {
   if (accountNo === undefined || accountNo === null || accountNo === '') return '-';
   const clean = String(accountNo).trim();
   if (!clean) return '-';
@@ -352,7 +363,7 @@ export function maskAccountNumber(accountNo?: string | number): string {
  * Masks a citizenship number
  * e.g. "27-01-78-12345" -> "••••••••-12345"
  */
-export function maskCitizenship(citizenshipNo?: string | number): string {
+export function maskCitizenship(citizenshipNo?: string | number | null): string {
   if (citizenshipNo === undefined || citizenshipNo === null || citizenshipNo === '') return '-';
   const clean = String(citizenshipNo).trim();
   if (!clean) return '-';
@@ -365,7 +376,7 @@ export function maskCitizenship(citizenshipNo?: string | number): string {
  * Masks a PAN number
  * e.g. "123456789" -> "••••••789"
  */
-export function maskPan(pan?: string | number): string {
+export function maskPan(pan?: string | number | null): string {
   if (pan === undefined || pan === null || pan === '') return '-';
   const clean = String(pan).trim();
   if (!clean) return '-';
@@ -378,7 +389,7 @@ export function maskPan(pan?: string | number): string {
  * Masks a phone/mobile number
  * e.g. "9851234567" -> "98•••••567"
  */
-export function maskPhone(phone?: string | number): string {
+export function maskPhone(phone?: string | number | null): string {
   if (phone === undefined || phone === null || phone === '') return '-';
   const clean = String(phone).trim();
   if (!clean) return '-';
@@ -391,8 +402,8 @@ export function maskPhone(phone?: string | number): string {
 /**
  * Masks an email address: e.g. "account@gov.np" -> "ac••••@gov.np"
  */
-export function maskEmail(email?: string): string {
-  if (!email) return '-';
+export function maskEmail(email?: string | null): string {
+  if (email === undefined || email === null || email === '') return '-';
   const clean = String(email).trim();
   if (!clean) return '-';
   const parts = clean.split('@');
@@ -407,7 +418,7 @@ export function maskEmail(email?: string): string {
  * Universal sensitive data masking dispatcher
  */
 export function maskSensitiveData(
-  value?: any,
+  value?: string | number | null,
   type: 'bank' | 'pan' | 'phone' | 'email' | 'citizenship' = 'bank'
 ): string {
   if (value === undefined || value === null || value === '') return '-';
@@ -419,7 +430,7 @@ export function maskSensitiveData(
     case 'phone':
       return maskPhone(value);
     case 'email':
-      return maskEmail(String(value));
+      return maskEmail(typeof value === 'string' ? value : String(value));
     case 'citizenship':
       return maskCitizenship(value);
     default:
@@ -432,9 +443,10 @@ export function maskSensitiveData(
 /**
  * Sanitizes input text to prevent Cross-Site Scripting (XSS)
  */
-export function sanitizeInput(text?: string): string {
-  if (!text) return '';
-  return text
+export function sanitizeInput(text?: any): string {
+  if (text === undefined || text === null) return '';
+  const str = String(text);
+  return str
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
     .replace(/<[^>]+>/g, '') // Strip HTML tags
     .replace(/javascript:/gi, '')
