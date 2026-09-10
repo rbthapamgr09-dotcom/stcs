@@ -195,6 +195,7 @@ export interface OrganizationSetup {
   spreadsheetId?: string; // प्रत्येक कार्यालयको आफ्नै Google Sheet ID
   spreadsheetUrl?: string; // Google Sheet को Direct Link
   driveFolderId?: string; // Google Drive Folder ID
+  webAppUrl?: string; // Google Apps Script Web App URL (वैकल्पिक)
   lastSyncedAt?: string; // पछिल्लो पटक सिंक भएको समय
   syncStatus?: 'IDLE' | 'SYNCING' | 'SUCCESS' | 'ERROR'; // सिंक अवस्था
   createdById?: string;

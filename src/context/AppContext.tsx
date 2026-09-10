@@ -276,6 +276,7 @@ interface AppContextType {
     options?: {
       isAutoSync?: boolean;
       spreadsheetIdOverride?: string;
+      promptForOAuth?: boolean;
       overrideEmployees?: Employee[];
       overrideSalarySetups?: Record<string, SalarySetup>;
       overrideDeductionSetups?: Record<string, DeductionSetup>;
@@ -4242,6 +4243,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     options?: {
       isAutoSync?: boolean;
       spreadsheetIdOverride?: string;
+      promptForOAuth?: boolean;
       overrideEmployees?: Employee[];
       overrideSalarySetups?: Record<string, SalarySetup>;
       overrideDeductionSetups?: Record<string, DeductionSetup>;
@@ -4267,13 +4269,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       googleSheetsConfig.spreadsheetId ||
       '';
     let url = (
+      options?.overrideOrganization?.webAppUrl ||
       activeOrgObj?.webAppUrl ||
+      targetOrg?.webAppUrl ||
       resolvedSheetsConfig.webAppUrl ||
       googleSheetsConfig.webAppUrl ||
       ''
     ).trim();
 
-    const token = await getAccessToken();
+    let token = await getAccessToken();
+
+    // If no token or webAppUrl and promptForOAuth is requested interactively, prompt for Google account sign-in
+    if (!token && !url && targetSpreadsheetId && options?.promptForOAuth) {
+      try {
+        const authRes = await googleSignIn(true);
+        if (authRes?.accessToken) {
+          token = authRes.accessToken;
+          setIsGoogleAccountConnected(true);
+          setGoogleConnectedEmail(authRes.user.email || undefined);
+        }
+      } catch (authErr) {
+        console.warn('OAuth prompt cancelled or error:', authErr);
+      }
+    }
+
     const hasDirectGoogle = Boolean(token && targetSpreadsheetId);
     const hasWebApp = Boolean(url);
 
