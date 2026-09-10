@@ -192,6 +192,13 @@ export interface OrganizationSetup {
   authorizedPersonDesignation?: string; // अधिकृत व्यक्तिको पद
   signatureUrl?: string; // हस्ताक्षर
   currentFiscalYear?: string;
+  spreadsheetId?: string; // प्रत्येक कार्यालयको आफ्नै Google Sheet ID
+  spreadsheetUrl?: string; // Google Sheet को Direct Link
+  driveFolderId?: string; // Google Drive Folder ID
+  lastSyncedAt?: string; // पछिल्लो पटक सिंक भएको समय
+  syncStatus?: 'IDLE' | 'SYNCING' | 'SUCCESS' | 'ERROR'; // सिंक अवस्था
+  createdById?: string;
+  isActive?: boolean; // कार्यालय सक्रिय वा निष्क्रिय अवस्था
 }
 
 export interface OrganizationItem extends OrganizationSetup {

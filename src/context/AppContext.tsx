@@ -152,6 +152,7 @@ interface AppContextType {
     }
   ) => { success: boolean; organization?: OrganizationItem; message: string };
   updateOrganizationDetails: (orgId: string, orgData: Partial<OrganizationItem>) => boolean;
+  toggleOrganizationActive: (orgId: string, isActive?: boolean) => boolean;
   deleteOrganization: (orgId: string) => { success: boolean; message: string };
 
   // Fiscal Year Management
@@ -3518,6 +3519,65 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return true;
   };
 
+  const toggleOrganizationActive = (orgId: string, isActive?: boolean): boolean => {
+    if (!hasPermission('MANAGE_SETTINGS') && currentUser?.role !== 'SUPER_ADMIN') {
+      addToast('error', 'अनाधिकृत कार्य', 'कार्यालयको अवस्था (सक्रिय/निष्क्रिय) परिवर्तन गर्न सुपर एडमिन वा एडमिनको अधिकार आवश्यक छ।');
+      return false;
+    }
+
+    const targetOrg = organizations.find((o) => o.id === orgId);
+    if (!targetOrg) {
+      addToast('error', 'कार्यालय फेला परेन', 'उल्लिखित कार्यालय प्रणालीमा फेला परेन।');
+      return false;
+    }
+
+    const newIsActive = isActive !== undefined ? isActive : !targetOrg.isActive;
+
+    // 1. Update organizations list without affecting other organizations
+    setOrganizations((prev) => {
+      const updated = prev.map((o) => (o.id === orgId ? { ...o, isActive: newIsActive } : o));
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
+      } catch {}
+      saveCloudOrganizations(updated).catch(() => {});
+      return updated;
+    });
+
+    // 2. Update specific organization store in orgDatabases
+    setOrgDatabases((prev) => {
+      if (!prev[orgId]) return prev;
+      const updated = {
+        ...prev,
+        [orgId]: {
+          ...prev[orgId],
+          organization: {
+            ...prev[orgId].organization,
+            isActive: newIsActive,
+          },
+        },
+      };
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    // 3. If currently active organization, update single active organization state
+    if (orgId === activeOrganizationId) {
+      setOrganization((prev) => ({ ...prev, isActive: newIsActive }));
+    }
+
+    // 4. Save to cloud
+    saveCloudOrganization({ ...targetOrg, isActive: newIsActive }).catch(() => {});
+
+    addToast(
+      newIsActive ? 'success' : 'info',
+      'कार्यालय अवस्था अद्यावधिक',
+      `'${targetOrg.officeName || targetOrg.name}' लाई ${newIsActive ? 'सक्रिय (Active)' : 'निष्क्रिय (Inactive)'} गरियो। (अन्य कार्यालय यथावत छन्)`
+    );
+    return true;
+  };
+
   const deleteOrganization = (orgId: string): { success: boolean; message: string } => {
     if (currentUser?.role !== 'SUPER_ADMIN') {
       const msg = 'कार्यालय मेटाउन केवल सुपर एडमिनलाई मात्र अधिकार छ।';
@@ -4202,14 +4262,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const targetSpreadsheetId =
       options?.spreadsheetIdOverride ||
+      activeOrgObj?.spreadsheetId ||
       resolvedSheetsConfig.spreadsheetId ||
       googleSheetsConfig.spreadsheetId ||
-      activeOrgObj?.spreadsheetId ||
       '';
     let url = (
+      activeOrgObj?.webAppUrl ||
       resolvedSheetsConfig.webAppUrl ||
       googleSheetsConfig.webAppUrl ||
-      activeOrgObj?.webAppUrl ||
       ''
     ).trim();
 
@@ -4524,6 +4584,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         errorMessage: undefined,
       }));
 
+      // Also update active organization syncStatus and lastSyncedAt
+      const syncedTimestamp = getKathmanduTimestamp();
+      setOrganizations((prev) =>
+        prev.map((o) =>
+          o.id === activeOrganizationId
+            ? {
+                ...o,
+                syncStatus: 'SUCCESS',
+                lastSyncedAt: syncedTimestamp,
+              }
+            : o
+        )
+      );
+      if (activeOrgObj) {
+        saveCloudOrganization({
+          ...activeOrgObj,
+          syncStatus: 'SUCCESS',
+          lastSyncedAt: syncedTimestamp,
+        });
+      }
+
       if (options?.isAutoSync) {
         addToast(
           'success',
@@ -4541,6 +4622,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         syncStatus: 'error',
         errorMessage: errorMessage || 'सिंक असफल भयो',
       }));
+
+      // Update active organization syncStatus to ERROR
+      setOrganizations((prev) =>
+        prev.map((o) =>
+          o.id === activeOrganizationId
+            ? {
+                ...o,
+                syncStatus: 'ERROR',
+              }
+            : o
+        )
+      );
 
       if (!options?.isAutoSync) {
         addToast('error', 'सिंक असफल', errorMessage || 'गुगल सिट्समा सुरक्षित गर्न सकिएन।');
@@ -4567,12 +4660,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const token = await getAccessToken();
     const targetSpreadsheetId =
+      activeOrgObj?.spreadsheetId ||
       currentConfig.spreadsheetId ||
       googleSheetsConfig.spreadsheetId ||
-      activeOrgObj?.spreadsheetId ||
       '';
     const targetWebAppUrl =
-      (currentConfig.webAppUrl || googleSheetsConfig.webAppUrl || activeOrgObj?.webAppUrl || '').trim();
+      (activeOrgObj?.webAppUrl || currentConfig.webAppUrl || googleSheetsConfig.webAppUrl || '').trim();
 
     const hasDirectGoogle = Boolean(token && targetSpreadsheetId);
     const hasWebApp = Boolean(targetWebAppUrl);
@@ -4852,6 +4945,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setActiveOrganizationId,
         addOrganization,
         updateOrganizationDetails,
+        toggleOrganizationActive,
         deleteOrganization,
         supportContact,
         updateSupportContact,

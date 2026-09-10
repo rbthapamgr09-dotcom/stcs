@@ -19,6 +19,18 @@ export async function getOrganizations() {
   }
 }
 
+export async function getOrganizationById(id: string) {
+  try {
+    const res = await withDbRetry(() =>
+      db.select().from(organizations).where(eq(organizations.id, id))
+    );
+    return res[0] || null;
+  } catch (error) {
+    console.error(`Error fetching organization ${id} from DB:`, error);
+    throw new Error(`Failed to fetch organization ${id}.`, { cause: error });
+  }
+}
+
 export async function upsertOrganization(data: any) {
   try {
     const orgId = data.id || 'org_default';
@@ -52,6 +64,12 @@ export async function upsertOrganization(data: any) {
           headerText: data.headerText || '',
           footerText: data.footerText || '',
           alignment: data.alignment || 'center',
+          spreadsheetId: data.spreadsheetId || null,
+          spreadsheetUrl: data.spreadsheetUrl || null,
+          driveFolderId: data.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
+          lastSyncedAt: data.lastSyncedAt ? new Date(data.lastSyncedAt) : null,
+          syncStatus: data.syncStatus || 'IDLE',
+          createdById: data.createdById || null,
           updatedAt: new Date(),
         })
         .onConflictDoUpdate({
@@ -82,6 +100,12 @@ export async function upsertOrganization(data: any) {
             headerText: data.headerText,
             footerText: data.footerText,
             alignment: data.alignment,
+            ...(data.spreadsheetId !== undefined ? { spreadsheetId: data.spreadsheetId } : {}),
+            ...(data.spreadsheetUrl !== undefined ? { spreadsheetUrl: data.spreadsheetUrl } : {}),
+            ...(data.driveFolderId !== undefined ? { driveFolderId: data.driveFolderId } : {}),
+            ...(data.lastSyncedAt !== undefined ? { lastSyncedAt: data.lastSyncedAt ? new Date(data.lastSyncedAt) : null } : {}),
+            ...(data.syncStatus !== undefined ? { syncStatus: data.syncStatus } : {}),
+            ...(data.createdById !== undefined ? { createdById: data.createdById } : {}),
             updatedAt: new Date(),
           },
         })

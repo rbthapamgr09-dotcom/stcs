@@ -1,5 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Building, Save, Image as ImageIcon, Eye, Upload, MapPin, Phone, Mail, FileText, CheckCircle2, Link2, Sparkles } from 'lucide-react';
+import {
+  Building,
+  Save,
+  Image as ImageIcon,
+  Eye,
+  Upload,
+  MapPin,
+  Phone,
+  Mail,
+  FileText,
+  CheckCircle2,
+  Link2,
+  Sparkles,
+  FileSpreadsheet,
+  ExternalLink,
+  RefreshCw,
+} from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Letterhead } from '../common/Letterhead';
 import { NepaliTextInput } from '../common/NepaliTextInput';
@@ -15,14 +31,42 @@ import {
 } from '../../data/nepalAdministrativeData';
 
 export const OrganizationSetupView: React.FC = () => {
-  const { organization, updateOrganization, addToast } = useApp();
+  const {
+    organization,
+    updateOrganization,
+    addToast,
+    syncWithGoogleSheets,
+    organizations,
+    activeOrganizationId,
+  } = useApp();
   const [formData, setFormData] = useState<OrganizationSetup>(organization);
   const [activeTab, setActiveTab] = useState<'form' | 'preview'>('form');
   const [logoPreviewError, setLogoPreviewError] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+
+  // Active organization details for sync status display
+  const currentOrg = organizations.find((o) => o.id === activeOrganizationId);
 
   useEffect(() => {
     setFormData(organization);
   }, [organization]);
+
+  const handleDirectSync = async () => {
+    setIsSyncing(true);
+    try {
+      updateOrganization(formData);
+      const res = await syncWithGoogleSheets('push', {
+        spreadsheetIdOverride: formData.spreadsheetId,
+      });
+      if (res.success) {
+        addToast('success', 'सिंक सफल भयो', 'कार्यालयको डाटा गुगल सिट्समा सफलतापूर्वक सिंक भयो।');
+      }
+    } catch (err: any) {
+      addToast('error', 'सिंक असफल', err?.message || 'गुगल सिट्समा सिंक गर्न सकिएन');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // Available districts based on selected province
   const availableDistricts = getDistrictsByProvince(formData.province);
@@ -183,85 +227,94 @@ export const OrganizationSetupView: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                  {/* संस्था / सरकारको तह */}
-                  <div>
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      संस्था / सरकारको तह <span className="text-red-600 font-bold">*</span>
-                    </label>
-                    <NepaliTextInput
-                      name="name"
-                      value={formData.name}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, name: val }))}
-                      isNepali={true}
-                      required
-                      placeholder="जस्तै: नेपाल सरकार / प्रदेश सरकार / स्थानीय तह / संस्थाको नाम"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-medium"
-                    />
-                    <p className="text-[11px] text-[#526a48] mt-1">
-                      यस फिल्डमा प्रविष्ट गरिएको विवरण सबै लेटरप्याड (Letterhead) को सबैभन्दा माथिल्लो पङ्क्तिमा "नेपाल सरकार" को ठाउँमा प्रयोग हुनेछ।
-                    </p>
+                <div className="space-y-4 text-xs">
+                  {/* Row 1: संस्था / तह र कार्यालयको नाम */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+                    {/* संस्था / सरकारको तह */}
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        संस्था / सरकारको तह <span className="text-red-600 font-bold">*</span>
+                      </label>
+                      <NepaliTextInput
+                        name="name"
+                        value={formData.name}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, name: val }))}
+                        isNepali={true}
+                        required
+                        placeholder="जस्तै: नेपाल सरकार / प्रदेश सरकार / स्थानीय तह"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-medium"
+                      />
+                      <p className="text-[11px] text-[#526a48] mt-1">
+                        लेटरप्याडको सबैभन्दा माथिल्लो पङ्क्तिमा प्रयोग हुने नाम
+                      </p>
+                    </div>
+
+                    {/* कार्यालयको नाम */}
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        कार्यालयको नाम (Office Name) <span className="text-red-600 font-bold">*</span>
+                      </label>
+                      <NepaliTextInput
+                        name="officeName"
+                        value={formData.officeName}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, officeName: val }))}
+                        isNepali={true}
+                        required
+                        placeholder="योजना कार्यालय / डिभिजन सडक कार्यालय / जिल्ला प्रशासन कार्यालय"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-semibold"
+                      />
+                      <p className="text-[11px] text-[#526a48] mt-1">
+                        लेटरप्याडको मुख्य कार्यालय नामको रूपमा प्रयोग हुने
+                      </p>
+                    </div>
                   </div>
 
-                  {/* मन्त्रालय */}
-                  <div>
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      मन्त्रालय (Ministry)
-                    </label>
-                    <NepaliTextInput
-                      name="ministryName"
-                      value={formData.ministryName || ''}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, ministryName: val }))}
-                      isNepali={true}
-                      placeholder="भौतिक पूर्वाधार तथा यातायात मन्त्रालय / गृह मन्त्रालय"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none"
-                    />
-                  </div>
+                  {/* Row 2: मन्त्रालय, विभाग र माथिल्लो निकाय */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-start">
+                    {/* मन्त्रालय */}
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        मन्त्रालय (Ministry)
+                      </label>
+                      <NepaliTextInput
+                        name="ministryName"
+                        value={formData.ministryName || ''}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, ministryName: val }))}
+                        isNepali={true}
+                        placeholder="भौतिक पूर्वाधार तथा यातायात मन्त्रालय"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none"
+                      />
+                    </div>
 
-                  {/* विभाग */}
-                  <div>
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      विभाग (Department)
-                    </label>
-                    <NepaliTextInput
-                      name="departmentName"
-                      value={formData.departmentName || ''}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, departmentName: val }))}
-                      isNepali={true}
-                      placeholder="सडक विभाग / आन्तरिक राजस्व विभाग"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none"
-                    />
-                  </div>
+                    {/* विभाग */}
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        विभाग (Department)
+                      </label>
+                      <NepaliTextInput
+                        name="departmentName"
+                        value={formData.departmentName || ''}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, departmentName: val }))}
+                        isNepali={true}
+                        placeholder="सडक विभाग / आन्तरिक राजस्व विभाग"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none"
+                      />
+                    </div>
 
-                  {/* विभाग अन्तर्गतको माथिल्लो निकाय */}
-                  <div>
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      विभाग अन्तर्गतको माथिल्लो निकाय (Directorate / Parent Body)
-                    </label>
-                    <NepaliTextInput
-                      name="parentBodyName"
-                      value={formData.parentBodyName || ''}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, parentBodyName: val }))}
-                      isNepali={true}
-                      placeholder="आयोजना निर्देशनालय / सुपरिवेक्षण कार्यालय"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none"
-                    />
-                  </div>
-
-                  {/* कार्यालयको नाम */}
-                  <div className="sm:col-span-2">
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      कार्यालयको नाम (Office Name) <span className="text-red-600 font-bold">*</span>
-                    </label>
-                    <NepaliTextInput
-                      name="officeName"
-                      value={formData.officeName}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, officeName: val }))}
-                      isNepali={true}
-                      required
-                      placeholder="योजना कार्यालय / जिल्ला प्रशासन कार्यालय / डिभिजन सडक कार्यालय"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-semibold text-sm"
-                    />
+                    {/* विभाग अन्तर्गतको माथिल्लो निकाय */}
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        माथिल्लो निकाय (Directorate / Parent Body)
+                      </label>
+                      <NepaliTextInput
+                        name="parentBodyName"
+                        value={formData.parentBodyName || ''}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, parentBodyName: val }))}
+                        isNepali={true}
+                        placeholder="आयोजना निर्देशनालय / सुपरिवेक्षण कार्यालय"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -278,7 +331,7 @@ export const OrganizationSetupView: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-start text-xs">
                   {/* Province Dropdown */}
                   <div>
                     <label className="block font-semibold text-[#304426] mb-1">
@@ -324,7 +377,7 @@ export const OrganizationSetupView: React.FC = () => {
                   {/* Local Level / Palika Dropdown based on District */}
                   <div>
                     <label className="block font-semibold text-[#304426] mb-1">
-                      स्थानीय तह / पालिका (Local Level) <span className="text-red-600 font-bold">*</span>
+                      स्थानीय तह / पालिका <span className="text-red-600 font-bold">*</span>
                     </label>
                     <select
                       name="localLevel"
@@ -333,7 +386,7 @@ export const OrganizationSetupView: React.FC = () => {
                       required
                       className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-medium"
                     >
-                      <option value="">-- स्थानीय तह / पालिका छान्नुहोस् --</option>
+                      <option value="">-- स्थानीय तह छान्नुहोस् --</option>
                       {availableLocalLevels.map((palika) => (
                         <option key={palika} value={palika}>
                           {palika}
@@ -352,7 +405,7 @@ export const OrganizationSetupView: React.FC = () => {
                       value={formData.address || ''}
                       onChange={(val) => setFormData((prev) => ({ ...prev, address: val }))}
                       isNepali={true}
-                      placeholder="वडा नं., टोल वा स्थान"
+                      placeholder="वडा नं. २, नयाँ बानेश्वर"
                       className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none"
                     />
                   </div>
@@ -371,94 +424,213 @@ export const OrganizationSetupView: React.FC = () => {
                   </span>
                 </div>
 
+                <div className="space-y-4 text-xs">
+                  {/* Row 1: Phone, Mobile, WhatsApp */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-start">
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        कार्यालय फोन नं. (Phone)
+                      </label>
+                      <NepaliTextInput
+                        name="phone"
+                        value={formData.phone || ''}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, phone: val }))}
+                        isNepali={false}
+                        placeholder="०१-४२२४४५५"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        मोबाईल नं. (Mobile No.)
+                      </label>
+                      <NepaliTextInput
+                        name="mobile"
+                        value={formData.mobile || ''}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, mobile: val }))}
+                        isNepali={false}
+                        placeholder="९८४१२३४५६७"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        वाट्सएप नं. (WhatsApp No.)
+                      </label>
+                      <NepaliTextInput
+                        name="whatsapp"
+                        value={formData.whatsapp || ''}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, whatsapp: val }))}
+                        isNepali={false}
+                        placeholder="९८५१०००००१"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Row 2: Email, PAN, Office Code */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-start">
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        इमेल ठेगाना (Email) <span className="text-red-600 font-bold">*</span>
+                      </label>
+                      <NepaliTextInput
+                        type="email"
+                        name="email"
+                        value={formData.email}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, email: val }))}
+                        onBlur={(e) => setFormData((prev) => ({ ...prev, email: e.target.value.trim() }))}
+                        isNepali={false}
+                        required
+                        placeholder="info@office.gov.np"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        कार्यालयको प्यान नम्बर (PAN)
+                      </label>
+                      <NepaliTextInput
+                        name="pan"
+                        value={formData.pan || formData.panNumber || ''}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, pan: val, panNumber: val }))}
+                        isNepali={false}
+                        placeholder="३००१२३४५६"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-[#304426] mb-1">
+                        कार्यालय कोड नं. (Office Code)
+                      </label>
+                      <NepaliTextInput
+                        name="officeCode"
+                        value={formData.officeCode || formData.registrationNo || ''}
+                        onChange={(val) => setFormData((prev) => ({ ...prev, officeCode: val, registrationNo: val }))}
+                        isNepali={false}
+                        placeholder="३२५०१३५०१ वा MBP-01"
+                        className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 4: Google Sheets & Drive Cloud Synchronization */}
+              <div className="bg-[#f7faf5] p-5 rounded-2xl border border-[#c5d8bf] shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#dce8d7] pb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-[#2e5b31] flex items-center justify-center text-white shadow-xs">
+                      <FileSpreadsheet className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-[#1e301a]">
+                        ४. गुगल सिट्स तथा ड्राइभ क्लाउड सिंक (Google Sheets & Drive Sync)
+                      </h3>
+                      <p className="text-[11px] text-[#4f6b48]">
+                        यस कार्यालयको सम्पूर्ण डाटा पृथक गुगल सिट र ड्राइभ फोल्डरमा स्वचालित रूपमा भण्डारण हुन्छ।
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {currentOrg?.syncStatus === 'SUCCESS' ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> सिंक सक्रिय
+                      </span>
+                    ) : currentOrg?.syncStatus === 'ERROR' ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                        त्रुटि
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
+                        कन्फिगर बाँकी
+                      </span>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleDirectSync}
+                      disabled={isSyncing || (!formData.spreadsheetId && !currentOrg?.spreadsheetId)}
+                      className="px-3 py-1.5 rounded-lg bg-[#2e5b31] text-white hover:bg-[#234726] disabled:opacity-50 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                      <span>{isSyncing ? 'सिंक हुँदै...' : 'अहिले सिंक गर्नुहोस्'}</span>
+                    </button>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                   <div>
                     <label className="block font-semibold text-[#304426] mb-1">
-                      कार्यालय फोन नं. (Phone No.)
+                      गुगल स्प्रिडसिट आईडी (Google Spreadsheet ID)
                     </label>
-                    <NepaliTextInput
-                      name="phone"
-                      value={formData.phone || ''}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, phone: val }))}
-                      isNepali={false}
-                      placeholder="०१-४२२४४५५"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono"
+                    <input
+                      type="text"
+                      name="spreadsheetId"
+                      value={formData.spreadsheetId || ''}
+                      onChange={(e) => {
+                        const val = e.target.value.trim();
+                        // Extract spreadsheet ID if full URL pasted
+                        const match = val.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+                        const extractedId = match ? match[1] : val;
+                        setFormData((prev) => ({
+                          ...prev,
+                          spreadsheetId: extractedId,
+                          spreadsheetUrl: extractedId ? `https://docs.google.com/spreadsheets/d/${extractedId}/edit` : '',
+                        }));
+                      }}
+                      placeholder="जस्तै: 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono text-[11px]"
                     />
+                    <p className="text-[11px] text-[#526a48] mt-1">
+                      सिटको URL पेस्ट गरेमा पनि आईडी स्वतः पत्ता लाग्नेछ।
+                    </p>
                   </div>
 
                   <div>
                     <label className="block font-semibold text-[#304426] mb-1">
-                      मोबाईल नं. (Mobile No.)
+                      गुगल ड्राइभ फोल्डर आईडी (Google Drive Folder ID)
                     </label>
-                    <NepaliTextInput
-                      name="mobile"
-                      value={formData.mobile || ''}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, mobile: val }))}
-                      isNepali={false}
-                      placeholder="९८४१२३४५६७"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono"
+                    <input
+                      type="text"
+                      name="driveFolderId"
+                      value={formData.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj'}
+                      onChange={(e) => {
+                        const val = e.target.value.trim();
+                        const match = val.match(/\/folders\/([a-zA-Z0-9-_]+)/);
+                        const extractedId = match ? match[1] : val;
+                        setFormData((prev) => ({ ...prev, driveFolderId: extractedId }));
+                      }}
+                      placeholder="1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj"
+                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono text-[11px]"
                     />
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      वाट्सएप नं. (WhatsApp No.)
-                    </label>
-                    <NepaliTextInput
-                      name="whatsapp"
-                      value={formData.whatsapp || ''}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, whatsapp: val }))}
-                      isNepali={false}
-                      placeholder="९८५१०००००१"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      इमेल ठेगाना (Email) <span className="text-red-600 font-bold">*</span>
-                    </label>
-                    <NepaliTextInput
-                      type="email"
-                      name="email"
-                      value={formData.email}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, email: val }))}
-                      onBlur={(e) => setFormData((prev) => ({ ...prev, email: e.target.value.trim() }))}
-                      isNepali={false}
-                      required
-                      placeholder="info@office.gov.np"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      कार्यालयको प्यान नम्बर (PAN No.)
-                    </label>
-                    <NepaliTextInput
-                      name="pan"
-                      value={formData.pan || formData.panNumber || ''}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, pan: val, panNumber: val }))}
-                      isNepali={false}
-                      placeholder="३००१२३४५६"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      कार्यालय कोड नं. (Office Code No.)
-                    </label>
-                    <NepaliTextInput
-                      name="officeCode"
-                      value={formData.officeCode || formData.registrationNo || ''}
-                      onChange={(val) => setFormData((prev) => ({ ...prev, officeCode: val, registrationNo: val }))}
-                      isNepali={false}
-                      placeholder="जस्तै: ३२५०१३५०१ वा MBP-KNP-01"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono"
-                    />
+                    <p className="text-[11px] text-[#526a48] mt-1">
+                      कार्यालयको ब्याकअप र फाइल सुरक्षित हुने आधिकारिक ड्राइभ फोल्डर
+                    </p>
                   </div>
                 </div>
+
+                {formData.spreadsheetId && (
+                  <div className="pt-2 flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-[#d6e3d2]">
+                    <span className="text-[11px] text-[#4f6b48] truncate font-mono">
+                      https://docs.google.com/spreadsheets/d/{formData.spreadsheetId}/edit
+                    </span>
+                    <a
+                      href={`https://docs.google.com/spreadsheets/d/${formData.spreadsheetId}/edit`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-[#2e5b31] hover:underline font-semibold shrink-0 ml-2"
+                    >
+                      <span>सिट खोल्नुहोस्</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
               </div>
             </div>
 

@@ -15,6 +15,7 @@ import {
 import { verifyPasswordSync } from './src/utils/securityUtils.ts';
 import {
   getOrganizations,
+  getOrganizationById,
   upsertOrganization,
   deleteOrganizationById,
   getSystemSetting,
@@ -246,6 +247,19 @@ async function startServer() {
     try {
       const orgs = await getOrganizations();
       res.json({ success: true, organizations: orgs });
+    } catch (error: any) {
+      console.error('Failed to fetch organization:', error);
+      res.status(500).json({ error: error.message || 'Failed to fetch organization' });
+    }
+  });
+
+  app.get(['/api/organization/:id', '/api/organizations/:id'], optionalAuth, async (req, res) => {
+    try {
+      const org = await getOrganizationById(req.params.id);
+      if (!org) {
+        return res.status(404).json({ success: false, error: 'Organization not found' });
+      }
+      res.json({ success: true, organization: org });
     } catch (error: any) {
       console.error('Failed to fetch organization:', error);
       res.status(500).json({ error: error.message || 'Failed to fetch organization' });

@@ -36,6 +36,12 @@ import {
   Globe,
   Save,
   Check,
+  ShieldCheck,
+  Power,
+  PowerOff,
+  CheckSquare,
+  Square,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { User, UserRole, OrganizationItem, SystemSupportContact } from '../../types';
@@ -85,6 +91,7 @@ export const SettingsView: React.FC = () => {
     setActiveOrganizationId,
     addOrganization,
     updateOrganizationDetails,
+    toggleOrganizationActive,
     deleteOrganization,
     supportContact,
     updateSupportContact,
@@ -136,6 +143,11 @@ export const SettingsView: React.FC = () => {
     whatsapp: '',
     pan: '',
     registrationNo: '',
+    isActive: true,
+    // Google Sheets & Drive Cloud Synchronization for this Office
+    spreadsheetId: '',
+    spreadsheetUrl: '',
+    driveFolderId: '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
     // Initial Admin User creation fields (Optional during org creation)
     createAdminUser: true,
     adminUsername: '',
@@ -165,6 +177,10 @@ export const SettingsView: React.FC = () => {
       whatsapp: '',
       pan: '',
       registrationNo: '',
+      isActive: true,
+      spreadsheetId: '',
+      spreadsheetUrl: '',
+      driveFolderId: '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
       createAdminUser: true,
       adminUsername: '',
       adminPassword: 'admin' + Math.floor(100 + Math.random() * 900),
@@ -195,6 +211,10 @@ export const SettingsView: React.FC = () => {
       whatsapp: org.whatsapp || '',
       pan: org.pan || '',
       registrationNo: org.registrationNo || '',
+      isActive: org.isActive !== false,
+      spreadsheetId: org.spreadsheetId || '',
+      spreadsheetUrl: org.spreadsheetUrl || '',
+      driveFolderId: org.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
       createAdminUser: false,
       adminUsername: '',
       adminPassword: '',
@@ -231,6 +251,10 @@ export const SettingsView: React.FC = () => {
         whatsapp: orgFormData.whatsapp,
         pan: orgFormData.pan,
         registrationNo: orgFormData.registrationNo,
+        isActive: orgFormData.isActive,
+        spreadsheetId: orgFormData.spreadsheetId || '',
+        spreadsheetUrl: orgFormData.spreadsheetUrl || (orgFormData.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${orgFormData.spreadsheetId}/edit` : ''),
+        driveFolderId: orgFormData.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
       });
       setShowOrgModal(false);
     } else {
@@ -264,7 +288,10 @@ export const SettingsView: React.FC = () => {
           whatsapp: orgFormData.whatsapp,
           pan: orgFormData.pan,
           registrationNo: orgFormData.registrationNo,
-          isActive: true,
+          isActive: orgFormData.isActive,
+          spreadsheetId: orgFormData.spreadsheetId || '',
+          spreadsheetUrl: orgFormData.spreadsheetUrl || (orgFormData.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${orgFormData.spreadsheetId}/edit` : ''),
+          driveFolderId: orgFormData.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
         },
         initialAdmin
       );
@@ -983,7 +1010,7 @@ export const SettingsView: React.FC = () => {
               )}
             </div>
 
-            {/* Current Active Org Context Banner */}
+            {/* Current Active Org Context Banner & Multi-Office Stats */}
             <div className="p-4 bg-[#f4f8f1] rounded-xl border border-[#cddcc8] flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-[#4B6043] text-white flex items-center justify-center font-bold shadow-xs">
@@ -992,7 +1019,7 @@ export const SettingsView: React.FC = () => {
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-md border border-emerald-300">
-                      हाल सक्रिय कार्यालय (Active Context)
+                      हाल कार्यरत कार्यालय (Current Workspace)
                     </span>
                     <span className="text-gray-400 font-mono text-[10px]">ID: {activeOrganizationId}</span>
                   </div>
@@ -1007,12 +1034,35 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-[#34472c]">
-                  कुल कार्यालय संख्या: <b>{visibleOrganizations.length}</b>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-2.5 py-1 bg-white border border-[#c8d7c2] rounded-lg text-xs font-semibold text-[#34472c]">
+                  कुल कार्यालय: <b>{visibleOrganizations.length}</b>
                 </span>
+                <span className="px-2.5 py-1 bg-emerald-50 border border-emerald-300 rounded-lg text-xs font-semibold text-emerald-800">
+                  सक्रिय (Active): <b>{visibleOrganizations.filter((o) => o.isActive !== false).length}</b>
+                </span>
+                {visibleOrganizations.some((o) => o.isActive === false) && (
+                  <span className="px-2.5 py-1 bg-gray-100 border border-gray-300 rounded-lg text-xs font-semibold text-gray-700">
+                    निष्क्रिय (Inactive): <b>{visibleOrganizations.filter((o) => o.isActive === false).length}</b>
+                  </span>
+                )}
               </div>
             </div>
+
+            {/* Multi-Office Independent Activation Notice */}
+            {visibleOrganizations.length >= 2 && (
+              <div className="p-3.5 bg-gradient-to-r from-emerald-50 to-[#edf5ea] border border-emerald-300 rounded-xl text-xs flex items-start gap-2.5 text-emerald-950 shadow-xs">
+                <ShieldCheck className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-bold text-[12px] text-emerald-900">
+                    बहु-कार्यालय स्वतन्त्र सञ्चालन व्यवस्था (Independent Multi-Office Activation)
+                  </p>
+                  <p className="text-emerald-800 text-[11px] leading-relaxed">
+                    प्रणालीमा २ वा २ भन्दा बढी कार्यालयहरू सेटअप भएकाले <strong>प्रत्येक कार्यालयलाई आवश्यकता अनुसार स्वतन्त्र रूपमा सक्रिय वा निष्क्रिय गर्न सकिन्छ</strong>। एउटा कार्यालयलाई सक्रिय वा निष्क्रिय गर्दा अर्को कार्यालयको अवस्थामा कुनै असर पर्ने छैन।
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Organizations Grid */}
             {visibleOrganizations.length === 0 ? (
@@ -1037,119 +1087,220 @@ export const SettingsView: React.FC = () => {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 {visibleOrganizations.map((org, index) => {
-                const isActive = org.id === activeOrganizationId;
-                const orgUsers = users.filter((u) => u.organizationId === org.id || (!u.organizationId && org.id === 'default_org'));
-                const orgAdmins = orgUsers.filter((u) => u.role === 'ADMIN' || u.role === 'SUPER_ADMIN');
+                  const isCurrentSelected = org.id === activeOrganizationId;
+                  const isOrgActive = org.isActive !== false;
+                  const orgUsers = users.filter((u) => u.organizationId === org.id || (!u.organizationId && org.id === 'default_org'));
+                  const orgAdmins = orgUsers.filter((u) => u.role === 'ADMIN' || u.role === 'SUPER_ADMIN');
 
-                return (
-                  <div
-                    key={org.id}
-                    className={`p-4 rounded-xl border transition-all ${
-                      isActive
-                        ? 'bg-[#fbfdfa] border-[#4B6043] shadow-md ring-1 ring-[#4B6043]/30'
-                        : 'bg-white border-[#d6e3d2] hover:border-[#a8c4a1] shadow-xs'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2 border-b border-gray-100 pb-2.5">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-mono text-[10px] text-gray-400 font-bold">#{index + 1}</span>
-                          <h4 className="text-sm font-bold text-[#24331C]">{org.officeName}</h4>
-                          {isActive && (
-                            <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-300">
-                              <Check className="w-3 h-3" /> सक्रिय
-                            </span>
+                  return (
+                    <div
+                      key={org.id}
+                      className={`p-4 rounded-xl border transition-all ${
+                        isCurrentSelected
+                          ? 'bg-[#fbfdfa] border-[#4B6043] shadow-md ring-1 ring-[#4B6043]/30'
+                          : isOrgActive
+                          ? 'bg-white border-[#d6e3d2] hover:border-[#a8c4a1] shadow-xs'
+                          : 'bg-gray-50/80 border-gray-200 opacity-85 shadow-2xs'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2 border-b border-gray-100 pb-2.5">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono text-[10px] text-gray-400 font-bold">#{index + 1}</span>
+                            <h4 className="text-sm font-bold text-[#24331C]">{org.officeName}</h4>
+                            
+                            {/* Operational Status Badge */}
+                            {isOrgActive ? (
+                              <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-300">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                                सक्रिय
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 bg-gray-200 text-gray-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-gray-300">
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-500" />
+                                निष्क्रिय
+                              </span>
+                            )}
+
+                            {isCurrentSelected && (
+                              <span className="inline-flex items-center gap-1 bg-[#4B6043] text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-2xs">
+                                <Check className="w-3 h-3" /> हाल चयन गरिएको
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-gray-600">
+                            {org.ministryName || org.parentBodyName || 'नेपाल सरकार'}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleOpenEditOrg(org)}
+                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                            title="कार्यालय विवरण सम्पादन गर्नुहोस्"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          {currentUser?.role === 'SUPER_ADMIN' && organizations.length > 1 && (
+                            <button
+                              onClick={() => handleDeleteOrg(org.id, org.officeName)}
+                              className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                              title="कार्यालय तथा डाटा मेटाउनुहोस्"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           )}
                         </div>
-                        <p className="text-[11px] text-gray-600">
-                          {org.ministryName || org.parentBodyName || 'नेपाल सरकार'}
-                        </p>
                       </div>
 
-                      <div className="flex items-center gap-1">
+                      {/* Org Details Info - Clean aligned paired rows */}
+                      <div className="space-y-2 py-2.5 text-[11px] text-gray-700">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="bg-[#f8faf6] p-2 rounded-lg border border-[#e8f0e5]">
+                            <span className="text-gray-400 block text-[10px]">प्रदेश र जिल्ला:</span>
+                            <span className="font-semibold text-[#24331C] truncate block">{org.province || '-'}, {org.district || '-'}</span>
+                          </div>
+                          <div className="bg-[#f8faf6] p-2 rounded-lg border border-[#e8f0e5]">
+                            <span className="text-gray-400 block text-[10px]">स्थानीय तह र ठेगाना:</span>
+                            <span className="font-semibold text-[#24331C] truncate block">
+                              {org.localLevel ? `${org.localLevel}${org.address ? `, ${org.address}` : ''}` : org.address || '-'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="bg-[#f8faf6] p-2 rounded-lg border border-[#e8f0e5]">
+                            <span className="text-gray-400 block text-[10px]">सम्पर्क फोन / मोबाइल:</span>
+                            <span className="font-medium text-[#24331C] truncate block">
+                              {org.phone || org.mobile ? [org.phone, org.mobile].filter(Boolean).join(' / ') : '-'}
+                            </span>
+                          </div>
+                          <div className="bg-[#f8faf6] p-2 rounded-lg border border-[#e8f0e5]">
+                            <span className="text-gray-400 block text-[10px]">इमेल ठेगाना:</span>
+                            <span className="font-medium text-[#24331C] truncate block">{org.email || '-'}</span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="bg-[#f8faf6] p-2 rounded-lg border border-[#e8f0e5]">
+                            <span className="text-gray-400 block text-[10px]">स्थायी लेखा नं. (PAN) / कोड:</span>
+                            <span className="font-mono font-bold text-gray-800 truncate block">
+                              {org.pan ? `PAN: ${org.pan}` : org.registrationNo ? `कोड: ${org.registrationNo}` : '-'}
+                            </span>
+                          </div>
+                          <div className="bg-[#f8faf6] p-2 rounded-lg border border-[#e8f0e5]">
+                            <span className="text-gray-400 block text-[10px]">सम्बद्ध प्रयोगकर्ताहरू:</span>
+                            <span className="font-medium text-emerald-800 truncate block">
+                              {orgUsers.length} जना (प्रशासक: {orgAdmins.length})
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Google Sheets Sync Integration Status for this Office */}
+                        <div className="p-2 bg-blue-50/60 rounded-lg border border-blue-200 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <FileSpreadsheet className="w-3.5 h-3.5 text-blue-700 shrink-0" />
+                            <div className="min-w-0">
+                              <span className="text-[10px] text-blue-900 block font-semibold">
+                                Google Sheet:
+                              </span>
+                              {org.spreadsheetId ? (
+                                <span className="text-[10px] font-mono text-blue-800 truncate block" title={org.spreadsheetId}>
+                                  ID: {org.spreadsheetId.substring(0, 14)}...
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-gray-500 block">
+                                  सिट लिंक भएको छैन
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {org.spreadsheetUrl ? (
+                              <a
+                                href={org.spreadsheetUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="px-2 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-800 text-[10px] font-bold rounded flex items-center gap-1 transition-colors"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                <span>खोल्नुहोस्</span>
+                              </a>
+                            ) : null}
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9.5px] font-bold ${
+                                org.syncStatus === 'SUCCESS'
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                  : org.syncStatus === 'SYNCING'
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse'
+                                  : org.syncStatus === 'ERROR'
+                                  ? 'bg-red-100 text-red-800 border border-red-300'
+                                  : 'bg-gray-100 text-gray-700 border border-gray-200'
+                              }`}
+                            >
+                              {org.syncStatus === 'SUCCESS'
+                                ? '✓ सिंक भएको'
+                                : org.syncStatus === 'SYNCING'
+                                ? 'सिंक हुँदैछ...'
+                                : org.syncStatus === 'ERROR'
+                                ? '⚠️ सिंक त्रुटि'
+                                : 'निष्क्रिय सिंक'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Bar with Toggle and Switch */}
+                      <div className="pt-2.5 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2">
+                        {/* Independent Active/Inactive Toggle Button */}
                         <button
-                          onClick={() => handleOpenEditOrg(org)}
-                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                          title="कार्यालय विवरण सम्पादन गर्नुहोस्"
+                          type="button"
+                          onClick={() => toggleOrganizationActive(org.id)}
+                          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+                            isOrgActive
+                              ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'
+                              : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+                          }`}
+                          title={
+                            isOrgActive
+                              ? 'यस कार्यालयलाई निष्क्रिय गर्नुहोस् (अरू कार्यालयहरू यथावत रहनेछन्)'
+                              : 'यस कार्यालयलाई सक्रिय गर्नुहोस् (अरू कार्यालयहरू यथावत रहनेछन्)'
+                          }
                         >
-                          <Edit2 className="w-3.5 h-3.5" />
+                          {isOrgActive ? (
+                            <>
+                              <PowerOff className="w-3.5 h-3.5 text-amber-700" />
+                              <span>निष्क्रिय गर्नुहोस्</span>
+                            </>
+                          ) : (
+                            <>
+                              <Power className="w-3.5 h-3.5 text-emerald-700" />
+                              <span>सक्रिय गर्नुहोस्</span>
+                            </>
+                          )}
                         </button>
-                        {currentUser?.role === 'SUPER_ADMIN' && organizations.length > 1 && (
+
+                        {/* Workspace Switcher */}
+                        {!isCurrentSelected ? (
                           <button
-                            onClick={() => handleDeleteOrg(org.id, org.officeName)}
-                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                            title="कार्यालय तथा डाटा मेटाउनुहोस्"
+                            type="button"
+                            onClick={() => setActiveOrganizationId(org.id)}
+                            className="px-3 py-1.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-lg shadow-xs transition-all flex items-center gap-1 cursor-pointer text-[11px]"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>डाटा स्विच गर्नुहोस्</span>
                           </button>
+                        ) : (
+                          <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5" /> वर्तमान सक्रिय डाटाबेस
+                          </span>
                         )}
                       </div>
                     </div>
-
-                    {/* Org Details Info */}
-                    <div className="grid grid-cols-2 gap-2 text-[11px] py-2.5 text-gray-700">
-                      <div>
-                        <span className="text-gray-400 block text-[10px]">प्रदेश र जिल्ला:</span>
-                        <span className="font-medium">{org.province || '-'}, {org.district || '-'}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400 block text-[10px]">स्थानीय तह र ठेगाना:</span>
-                        <span className="font-medium">
-                          {org.localLevel ? `${org.localLevel}${org.address ? `, ${org.address}` : ''}` : org.address || '-'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400 block text-[10px]">फोन नं. (Phone):</span>
-                        <span className="font-medium">{org.phone || '-'}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400 block text-[10px]">मोबाइल नं. (Mobile):</span>
-                        <span className="font-medium">{org.mobile || '-'}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400 block text-[10px]">इमेल (Email):</span>
-                        <span className="font-medium truncate block">{org.email || '-'}</span>
-                      </div>
-                      {org.pan && (
-                        <div>
-                          <span className="text-gray-400 block text-[10px]">स्थायी लेखा नं. (PAN):</span>
-                          <span className="font-mono font-bold text-gray-800">{org.pan}</span>
-                        </div>
-                      )}
-                      <div>
-                        <span className="text-gray-400 block text-[10px]">सम्बद्ध प्रयोगकर्ताहरू:</span>
-                        <span className="font-medium text-emerald-800">
-                          {orgUsers.length} जना (प्रशासक: {orgAdmins.length})
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Action Bar */}
-                    <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-gray-500 font-mono">
-                          दर्ता मिति: {org.createdAt ? org.createdAt.split('T')[0] : '2081/04/01'}
-                        </span>
-                      </div>
-
-                      {!isActive ? (
-                        <button
-                          onClick={() => setActiveOrganizationId(org.id)}
-                          className="px-3 py-1.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-lg shadow-xs transition-all flex items-center gap-1 cursor-pointer text-[11px]"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>डाटा सक्रिय गर्नुहोस् (Switch Data)</span>
-                        </button>
-                      ) : (
-                        <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                          ✓ वर्तमान सक्रिय डाटाबेस
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
             )}
 
             {/* Multi-Tenancy Explanatory Box */}
@@ -2283,7 +2434,7 @@ export const SettingsView: React.FC = () => {
       {/* Modal 4: Add / Edit Organization (Multi-Tenancy) */}
       {showOrgModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-[#d6e3d2] shadow-2xl max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl border border-[#d6e3d2] shadow-2xl max-w-3xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-[#e9efe4] pb-3">
               <h3 className="text-base font-bold text-[#24331C] flex items-center gap-2">
                 <Building2 className="w-5 h-5 text-[#4B6043]" />
@@ -2304,47 +2455,56 @@ export const SettingsView: React.FC = () => {
             <form onSubmit={handleSaveOrg} className="space-y-4 text-xs">
               {/* Basic Org Info */}
               <div className="p-3.5 bg-[#f8faf6] rounded-xl border border-[#d8e4d3] space-y-3">
-                <p className="font-bold text-[#24331C] flex items-center gap-1.5">
+                <p className="font-bold text-[#24331C] flex items-center gap-1.5 text-xs sm:text-sm">
                   <Building className="w-4 h-4 text-[#4B6043]" />
                   <span>कार्यालयको नाम तथा निकाय (Office Identity):</span>
                 </p>
 
+                {/* Row 1: Govt Level & Office Name with aligned inputs and helpers */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">
-                      संस्था / सरकारको तह (Govt / Org Level): <span className="text-red-500 font-bold">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={orgFormData.name}
-                      onChange={(e) => setOrgFormData({ ...orgFormData, name: e.target.value })}
-                      placeholder="जस्तै: नेपाल सरकार / प्रदेश सरकार / स्थानीय तह / संस्थाको नाम"
-                      className="w-full p-2.5 rounded-xl border border-[#c8d7c2] bg-white font-bold text-[#24331C] outline-none focus:ring-2 focus:ring-[#4B6043]"
-                    />
-                    <p className="text-[10px] text-gray-500">
+                  <div className="flex flex-col justify-between">
+                    <div>
+                      <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="संस्था / सरकारको तह (Govt / Org Level)">
+                        संस्था / सरकारको तह (Govt / Org Level): <span className="text-red-500 font-bold">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={orgFormData.name}
+                        onChange={(e) => setOrgFormData({ ...orgFormData, name: e.target.value })}
+                        placeholder="जस्तै: नेपाल सरकार / प्रदेश सरकार / स्थानीय तह"
+                        className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-bold text-[#24331C] text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      />
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-1">
                       लेटरप्याडको सबैभन्दा माथिल्लो पङ्क्तिमा यही नाम देखिनेछ।
                     </p>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">
-                      कार्यालय / संस्थाको नाम (Office Name): <span className="text-red-500 font-bold">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={orgFormData.officeName}
-                      onChange={(e) => setOrgFormData({ ...orgFormData, officeName: e.target.value })}
-                      placeholder="जस्तै: जलस्रोत तथा सिँचाइ विकास डिभिजन कार्यालय"
-                      className="w-full p-2.5 rounded-xl border border-[#c8d7c2] bg-white font-bold text-[#24331C] outline-none focus:ring-2 focus:ring-[#4B6043]"
-                    />
+                  <div className="flex flex-col justify-between">
+                    <div>
+                      <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="कार्यालय / संस्थाको नाम (Office Name)">
+                        कार्यालय / संस्थाको नाम (Office Name): <span className="text-red-500 font-bold">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={orgFormData.officeName}
+                        onChange={(e) => setOrgFormData({ ...orgFormData, officeName: e.target.value })}
+                        placeholder="जस्तै: जलस्रोत तथा सिँचाइ विकास डिभिजन कार्यालय"
+                        className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-bold text-[#24331C] text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      />
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-1">
+                      लेटरप्याडको मुख्य दोस्रो पङ्क्तिमा यही नाम देखिनेछ।
+                    </p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">
+                {/* Row 2: Ministry, Department, Parent Body */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="मन्त्रालयको नाम (Ministry Name)">
                       मन्त्रालयको नाम (Ministry Name):
                     </label>
                     <input
@@ -2352,12 +2512,12 @@ export const SettingsView: React.FC = () => {
                       value={orgFormData.ministryName}
                       onChange={(e) => setOrgFormData({ ...orgFormData, ministryName: e.target.value })}
                       placeholder="जस्तै: ऊर्जा, जलस्रोत तथा सिँचाइ मन्त्रालय"
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="विभागको नाम (Department Name)">
                       विभागको नाम (Department Name):
                     </label>
                     <input
@@ -2365,12 +2525,12 @@ export const SettingsView: React.FC = () => {
                       value={orgFormData.departmentName}
                       onChange={(e) => setOrgFormData({ ...orgFormData, departmentName: e.target.value })}
                       placeholder="जस्तै: जलस्रोत तथा सिँचाइ विभाग"
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="माथिल्लो निकाय (Parent Body)">
                       माथिल्लो निकाय (Parent Body):
                     </label>
                     <input
@@ -2378,7 +2538,7 @@ export const SettingsView: React.FC = () => {
                       value={orgFormData.parentBodyName}
                       onChange={(e) => setOrgFormData({ ...orgFormData, parentBodyName: e.target.value })}
                       placeholder="जस्तै: आयोजना निर्देशनालय"
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
                 </div>
@@ -2386,14 +2546,16 @@ export const SettingsView: React.FC = () => {
 
               {/* Geographic and Location info */}
               <div className="p-3.5 bg-[#f8faf6] rounded-xl border border-[#d8e4d3] space-y-3">
-                <p className="font-bold text-[#24331C] flex items-center gap-1.5">
+                <p className="font-bold text-[#24331C] flex items-center gap-1.5 text-xs sm:text-sm">
                   <MapPin className="w-4 h-4 text-[#4B6043]" />
                   <span>भौगोलिक ठेगाना (Location Details):</span>
                 </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">प्रदेश (Province):</label>
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="प्रदेश (Province)">
+                      प्रदेश (Province):
+                    </label>
                     <select
                       value={orgFormData.province}
                       onChange={(e) => {
@@ -2409,7 +2571,7 @@ export const SettingsView: React.FC = () => {
                           localLevel: firstLocal,
                         });
                       }}
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-semibold outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-semibold text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     >
                       {NEPAL_PROVINCES.map((prov) => (
                         <option key={prov} value={prov}>
@@ -2419,8 +2581,10 @@ export const SettingsView: React.FC = () => {
                     </select>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">जिल्ला (District):</label>
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="जिल्ला (District)">
+                      जिल्ला (District):
+                    </label>
                     <select
                       value={orgFormData.district}
                       onChange={(e) => {
@@ -2433,7 +2597,7 @@ export const SettingsView: React.FC = () => {
                           localLevel: firstLocal,
                         });
                       }}
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     >
                       {getDistrictsByProvince(orgFormData.province).map((dist) => (
                         <option key={dist} value={dist}>
@@ -2443,8 +2607,10 @@ export const SettingsView: React.FC = () => {
                     </select>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">स्थानीय तह (Local Level):</label>
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="स्थानीय तह (Local Level)">
+                      स्थानीय तह (Local Level):
+                    </label>
                     <select
                       value={orgFormData.localLevel}
                       onChange={(e) => {
@@ -2453,7 +2619,7 @@ export const SettingsView: React.FC = () => {
                           localLevel: e.target.value,
                         });
                       }}
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     >
                       {getLocalLevelsByDistrict(orgFormData.district).map((local) => (
                         <option key={local} value={local}>
@@ -2463,90 +2629,199 @@ export const SettingsView: React.FC = () => {
                     </select>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">वडा नं., टोल वा स्थान:</label>
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="वडा नं., टोल वा स्थान">
+                      वडा नं., टोल वा स्थान:
+                    </label>
                     <input
                       type="text"
                       value={orgFormData.address}
                       onChange={(e) => setOrgFormData({ ...orgFormData, address: e.target.value })}
                       placeholder="जस्तै: वडा नं. ६, रानीवन"
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Contact info */}
+              {/* Contact and Registration info */}
               <div className="p-3.5 bg-[#f8faf6] rounded-xl border border-[#d8e4d3] space-y-3">
-                <p className="font-bold text-[#24331C] flex items-center gap-1.5">
+                <p className="font-bold text-[#24331C] flex items-center gap-1.5 text-xs sm:text-sm">
                   <Phone className="w-4 h-4 text-[#4B6043]" />
                   <span>सम्पर्क तथा दर्ता विवरण (Contact & Registration):</span>
                 </p>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">फोन नं. (Phone):</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="फोन नं. (Phone)">
+                      फोन नं. (Phone):
+                    </label>
                     <input
                       type="text"
                       value={orgFormData.phone}
                       onChange={(e) => setOrgFormData({ ...orgFormData, phone: e.target.value })}
                       placeholder="०६४-४२०१२३"
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">इमेल (Email):</label>
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="मोबाइल नं. (Mobile No.)">
+                      मोबाइल नं. (Mobile No.):
+                    </label>
+                    <input
+                      type="text"
+                      value={orgFormData.mobile}
+                      onChange={(e) => setOrgFormData({ ...orgFormData, mobile: e.target.value })}
+                      placeholder="९८५६०६१५६५"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="वाट्सएप नं. (WhatsApp No.)">
+                      वाट्सएप नं. (WhatsApp No.):
+                    </label>
+                    <input
+                      type="text"
+                      value={orgFormData.whatsapp}
+                      onChange={(e) => setOrgFormData({ ...orgFormData, whatsapp: e.target.value })}
+                      placeholder="९८५६०००००१"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="इमेल (Email)">
+                      इमेल (Email):
+                    </label>
                     <input
                       type="email"
                       value={orgFormData.email}
                       onChange={(e) => setOrgFormData({ ...orgFormData, email: e.target.value })}
                       placeholder="office@gov.np"
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">मोबाइल नं. (Mobile No.):</label>
-                    <input
-                      type="text"
-                      value={orgFormData.mobile || orgFormData.whatsapp}
-                      onChange={(e) => setOrgFormData({ ...orgFormData, mobile: e.target.value, whatsapp: e.target.value })}
-                      placeholder="९८५६०६१५६५"
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-medium outline-none focus:ring-2 focus:ring-[#4B6043]"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">स्थायी लेखा नं. (PAN):</label>
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="स्थायी लेखा नं. (PAN)">
+                      स्थायी लेखा नं. (PAN):
+                    </label>
                     <input
                       type="text"
                       value={orgFormData.pan}
                       onChange={(e) => setOrgFormData({ ...orgFormData, pan: e.target.value })}
                       placeholder="३०४९२८१७२"
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-mono outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-mono text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-700">कार्यालय कोड नं.:</label>
+                  <div>
+                    <label className="text-xs font-bold text-gray-700 block mb-1 whitespace-nowrap truncate" title="कार्यालय कोड नं. (Office Code)">
+                      कार्यालय कोड नं. (Office Code):
+                    </label>
                     <input
                       type="text"
                       value={orgFormData.registrationNo}
                       onChange={(e) => setOrgFormData({ ...orgFormData, registrationNo: e.target.value })}
                       placeholder="जस्तै: MBP-KNP-01"
-                      className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-mono outline-none focus:ring-2 focus:ring-[#4B6043]"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-mono text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
                 </div>
               </div>
 
+              {/* Google Sheets & Drive Cloud Synchronization for this Office */}
+              <div className="p-3.5 bg-[#f0f6ff] rounded-xl border border-[#bcd6f7] space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="font-bold text-[#143d75] flex items-center gap-1.5 text-xs sm:text-sm">
+                    <FileSpreadsheet className="w-4 h-4 text-[#1d4ed8]" />
+                    <span>कार्यालयगत Google Sheet तथा Drive Synchronization:</span>
+                  </p>
+                  <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full border border-blue-200">
+                    प्रत्येक कार्यालयको आफ्नै सिट
+                  </span>
+                </div>
+                <p className="text-[11px] text-blue-900 leading-relaxed">
+                  यस कार्यालयको तलब, भत्ता, कर, कर्मचारी र भौचरको सम्पूर्ण डाटा भण्डारण गर्न छुट्टै Google Spreadsheet लिंक गर्नुहोस्।
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-[#143d75] block mb-1 whitespace-nowrap truncate" title="Google Spreadsheet ID">
+                      Google Spreadsheet ID:
+                    </label>
+                    <input
+                      type="text"
+                      value={orgFormData.spreadsheetId}
+                      onChange={(e) => {
+                        const val = e.target.value.trim();
+                        // Auto-extract ID if full Google Sheets URL is pasted
+                        const match = val.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+                        const extractedId = match ? match[1] : val;
+                        const url = extractedId ? `https://docs.google.com/spreadsheets/d/${extractedId}/edit` : '';
+                        setOrgFormData({
+                          ...orgFormData,
+                          spreadsheetId: extractedId,
+                          spreadsheetUrl: url,
+                        });
+                      }}
+                      placeholder="जस्तै: 1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj वा पूरा लिङ्क"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-blue-300 bg-white font-mono text-xs sm:text-sm outline-none focus:ring-2 focus:ring-blue-600"
+                    />
+                    <p className="text-[10px] text-blue-700 mt-1">
+                      गुगल सिटको ID वा ब्राउजरको पूरा URL पेस्ट गर्न सक्नुहुन्छ (ID स्वतः पत्ता लाग्नेछ)।
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-[#143d75] block mb-1 whitespace-nowrap truncate" title="Google Drive Folder ID">
+                      Google Drive Folder ID:
+                    </label>
+                    <input
+                      type="text"
+                      value={orgFormData.driveFolderId}
+                      onChange={(e) => {
+                        const val = e.target.value.trim();
+                        const match = val.match(/\/folders\/([a-zA-Z0-9-_]+)/);
+                        const extractedId = match ? match[1] : val;
+                        setOrgFormData({
+                          ...orgFormData,
+                          driveFolderId: extractedId,
+                        });
+                      }}
+                      placeholder="जस्तै: 1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj"
+                      className="w-full h-10 px-3 py-2 rounded-xl border border-blue-300 bg-white font-mono text-xs sm:text-sm outline-none focus:ring-2 focus:ring-blue-600"
+                    />
+                    <p className="text-[10px] text-blue-700 mt-1">
+                      कार्यालयको ब्याकअप र फाइलहरू सुरक्षित राख्न Google Drive फोल्डर ID।
+                    </p>
+                  </div>
+                </div>
+
+                {orgFormData.spreadsheetUrl && (
+                  <div className="pt-1 flex items-center justify-between gap-2 bg-white p-2.5 rounded-lg border border-blue-200">
+                    <span className="text-[11px] text-blue-900 font-mono truncate" title={orgFormData.spreadsheetUrl}>
+                      🔗 {orgFormData.spreadsheetUrl}
+                    </span>
+                    <a
+                      href={orgFormData.spreadsheetUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>खोल्नुहोस्</span>
+                    </a>
+                  </div>
+                )}
+              </div>
+
               {/* Initial Admin User for New Org */}
               {!editingOrg && (
                 <div className="p-3.5 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-3">
-                  <p className="font-bold text-emerald-950 flex items-center gap-1.5">
+                  <p className="font-bold text-emerald-950 flex items-center gap-1.5 text-xs sm:text-sm">
                     <UserPlus className="w-4 h-4 text-emerald-700" />
                     <span>यस कार्यालयको प्रारम्भिक प्रशासक (Initial Admin User for this Office):</span>
                   </p>
@@ -2555,41 +2830,79 @@ export const SettingsView: React.FC = () => {
                   </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <label className="font-bold text-emerald-900">प्रशासकको नाम (Admin Name):</label>
+                    <div>
+                      <label className="text-xs font-bold text-emerald-900 block mb-1 whitespace-nowrap truncate" title="प्रशासकको नाम (Admin Name)">
+                        प्रशासकको नाम (Admin Name):
+                      </label>
                       <input
                         type="text"
                         value={orgFormData.adminFullName}
                         onChange={(e) => setOrgFormData({ ...orgFormData, adminFullName: e.target.value })}
                         placeholder="कार्यालय प्रशासक"
-                        className="w-full p-2 rounded-xl border border-emerald-300 bg-white font-medium outline-none focus:ring-2 focus:ring-emerald-600"
+                        className="w-full h-10 px-3 py-2 rounded-xl border border-emerald-300 bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-emerald-600"
                       />
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="font-bold text-emerald-900">प्रयोगकर्ता आइडी (User ID):</label>
+                    <div>
+                      <label className="text-xs font-bold text-emerald-900 block mb-1 whitespace-nowrap truncate" title="प्रयोगकर्ता आइडी (User ID)">
+                        प्रयोगकर्ता आइडी (User ID):
+                      </label>
                       <input
                         type="text"
                         value={orgFormData.adminUsername}
                         onChange={(e) => setOrgFormData({ ...orgFormData, adminUsername: e.target.value.toLowerCase().replace(/\s+/g, '') })}
                         placeholder="admin_office"
-                        className="w-full p-2 rounded-xl border border-emerald-300 bg-white font-mono font-bold outline-none focus:ring-2 focus:ring-emerald-600"
+                        className="w-full h-10 px-3 py-2 rounded-xl border border-emerald-300 bg-white font-mono font-bold text-xs sm:text-sm outline-none focus:ring-2 focus:ring-emerald-600"
                       />
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="font-bold text-emerald-900">पासवर्ड (Password):</label>
+                    <div>
+                      <label className="text-xs font-bold text-emerald-900 block mb-1 whitespace-nowrap truncate" title="पासवर्ड (Password)">
+                        पासवर्ड (Password):
+                      </label>
                       <input
                         type="text"
                         value={orgFormData.adminPassword}
                         onChange={(e) => setOrgFormData({ ...orgFormData, adminPassword: e.target.value })}
                         placeholder="pass1234"
-                        className="w-full p-2 rounded-xl border border-emerald-300 bg-white font-mono font-bold outline-none focus:ring-2 focus:ring-emerald-600"
+                        className="w-full h-10 px-3 py-2 rounded-xl border border-emerald-300 bg-white font-mono font-bold text-xs sm:text-sm outline-none focus:ring-2 focus:ring-emerald-600"
                       />
                     </div>
                   </div>
                 </div>
               )}
+
+              {/* Operational Status (Active / Inactive) */}
+              <div className="p-3.5 bg-[#f5f8f3] rounded-xl border border-[#d6e3d2] space-y-2">
+                <p className="font-bold text-[#24331C] flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-[#4B6043]" />
+                  <span>कार्यालय सञ्चालन अवस्था (Operational Status):</span>
+                </p>
+                <div className="flex items-center justify-between gap-3 bg-white p-3 rounded-lg border border-[#c8d7c2]">
+                  <div>
+                    <label className="font-bold text-gray-800 text-xs block cursor-pointer" htmlFor="org-is-active-toggle">
+                      कार्यालय सक्रिय राख्नुहोस् (Active Office Status)
+                    </label>
+                    <p className="text-[11px] text-gray-500">
+                      यो कार्यालय प्रणालीमा सक्रिय वा निष्क्रिय राख्न चयन गर्नुहोस्। (अन्य कार्यालयको अवस्थामा कुनै असर पर्ने छैन)
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    id="org-is-active-toggle"
+                    onClick={() => setOrgFormData((prev) => ({ ...prev, isActive: !prev.isActive }))}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      orgFormData.isActive ? 'bg-[#4B6043]' : 'bg-gray-300'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        orgFormData.isActive ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
                 <button
