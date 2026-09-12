@@ -804,26 +804,35 @@ export const KitabkhanaSalaryReportForm: React.FC<KitabkhanaSalaryReportFormProp
           <div className="flex flex-wrap items-center gap-2.5">
             <button
               onClick={() => setShowPreviewModal(true)}
-              className="px-4 py-2.5 bg-[#edf4ea] text-[#344b2d] hover:bg-[#dbe8d6] text-xs font-bold rounded-xl border border-[#c5d7bf] transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+              className="px-4 py-1.5 bg-[#edf4ea] text-[#344b2d] hover:bg-[#dbe8d6] text-xs font-bold rounded-xl border border-[#c5d7bf] transition-all flex items-center gap-2 cursor-pointer shadow-xs"
             >
-              <Eye className="w-4 h-4 text-[#4B6043]" />
-              <span>फाराम पूर्वावलोकन (Preview Form)</span>
+              <Eye className="w-4 h-4 text-[#4B6043] shrink-0" />
+              <span className="flex flex-col text-left leading-tight">
+                <span>फाराम पूर्वावलोकन</span>
+                <span className="text-[10px] font-normal opacity-85">(Preview Form)</span>
+              </span>
             </button>
 
             <button
               onClick={handleExportExcel}
-              className="px-4 py-2.5 bg-[#edf4ea] text-[#344b2d] hover:bg-[#dbe8d6] text-xs font-bold rounded-xl border border-[#c5d7bf] transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+              className="px-4 py-1.5 bg-[#edf4ea] text-[#344b2d] hover:bg-[#dbe8d6] text-xs font-bold rounded-xl border border-[#c5d7bf] transition-all flex items-center gap-2 cursor-pointer shadow-xs"
             >
-              <Download className="w-4 h-4 text-[#4B6043]" />
-              <span>एक्सेल (Excel)</span>
+              <Download className="w-4 h-4 text-[#4B6043] shrink-0" />
+              <span className="flex flex-col text-left leading-tight">
+                <span>एक्सेल</span>
+                <span className="text-[10px] font-normal opacity-85">(Excel)</span>
+              </span>
             </button>
 
             <button
               onClick={() => window.print()}
-              className="px-5 py-2.5 bg-[#4B6043] text-white hover:bg-[#384c31] text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 cursor-pointer active:scale-98"
+              className="px-5 py-1.5 bg-[#4B6043] text-white hover:bg-[#384c31] text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 cursor-pointer active:scale-98"
             >
-              <Printer className="w-4 h-4" />
-              <span>प्रिन्ट तलबी प्रतिवेदन फाराम (Print / PDF)</span>
+              <Printer className="w-4 h-4 shrink-0" />
+              <span className="flex flex-col text-left leading-tight">
+                <span>प्रिन्ट तलबी प्रतिवेदन फाराम</span>
+                <span className="text-[10px] font-normal opacity-90">(Print / PDF)</span>
+              </span>
             </button>
           </div>
         </div>
@@ -1085,16 +1094,19 @@ export const KitabkhanaSalaryReportForm: React.FC<KitabkhanaSalaryReportFormProp
               <button
                 type="button"
                 onClick={handleResetSettings}
-                className="px-3.5 py-2 border border-[#c8d7c2] bg-white text-gray-700 hover:bg-gray-50 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="px-3.5 py-1.5 border border-[#c8d7c2] bg-white text-gray-700 hover:bg-gray-50 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
               >
-                <RotateCcw className="w-3.5 h-3.5 text-gray-500" />
-                <span>पूर्वनिर्धारित (Reset)</span>
+                <RotateCcw className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+                <span className="flex flex-col text-left leading-tight">
+                  <span>पूर्वनिर्धारित</span>
+                  <span className="text-[9px] font-normal text-gray-500">(Reset)</span>
+                </span>
               </button>
 
               <button
                 type="button"
                 onClick={handleSaveSettings}
-                className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer ${
+                className={`px-4 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-xs transition-all cursor-pointer ${
                   isSavedRecently
                     ? 'bg-[#2e5e24] text-white ring-2 ring-[#4B6043]/40'
                     : 'bg-[#4B6043] hover:bg-[#3b4d35] text-white active:scale-98'
@@ -1102,13 +1114,19 @@ export const KitabkhanaSalaryReportForm: React.FC<KitabkhanaSalaryReportFormProp
               >
                 {isSavedRecently ? (
                   <>
-                    <CheckCircle2 className="w-4 h-4 text-white animate-pulse" />
-                    <span>सुरक्षित गरियो (Saved)</span>
+                    <CheckCircle2 className="w-4 h-4 text-white animate-pulse shrink-0" />
+                    <span className="flex flex-col text-left leading-tight">
+                      <span>सुरक्षित गरियो</span>
+                      <span className="text-[9px] font-normal opacity-90">(Saved)</span>
+                    </span>
                   </>
                 ) : (
                   <>
-                    <Save className="w-4 h-4 text-white" />
-                    <span>सुरक्षित गर्नुहोस (Save)</span>
+                    <Save className="w-4 h-4 text-white shrink-0" />
+                    <span className="flex flex-col text-left leading-tight">
+                      <span>सुरक्षित गर्नुहोस</span>
+                      <span className="text-[9px] font-normal opacity-90">(Save)</span>
+                    </span>
                   </>
                 )}
               </button>
@@ -1156,10 +1174,13 @@ export const KitabkhanaSalaryReportForm: React.FC<KitabkhanaSalaryReportFormProp
 
                 <button
                   onClick={() => window.print()}
-                  className="px-4 py-1.5 bg-[#4B6043] text-white hover:bg-[#384c31] text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  className="px-4 py-1.5 bg-[#4B6043] text-white hover:bg-[#384c31] text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-2 cursor-pointer"
                 >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span>प्रिन्ट गर्नुहोस् (Print / PDF)</span>
+                  <Printer className="w-3.5 h-3.5 shrink-0" />
+                  <span className="flex flex-col text-left leading-tight">
+                    <span>प्रिन्ट गर्नुहोस्</span>
+                    <span className="text-[9px] font-normal opacity-90">(Print / PDF)</span>
+                  </span>
                 </button>
 
                 <button
@@ -1403,15 +1424,18 @@ export const KitabkhanaSalaryReportForm: React.FC<KitabkhanaSalaryReportFormProp
             <div className="flex items-center justify-end gap-3 pt-3 border-t">
               <button
                 onClick={() => setEditingRowId(null)}
-                className="px-4 py-2 border rounded-xl text-gray-600 hover:bg-gray-100 font-medium"
+                className="px-4 py-2 border rounded-xl text-gray-600 hover:bg-gray-100 font-medium text-xs cursor-pointer"
               >
                 रद्द गर्नुहोस्
               </button>
               <button
                 onClick={handleSaveEdit}
-                className="px-5 py-2 bg-[#4B6043] text-white rounded-xl font-bold hover:bg-[#384c31] shadow-xs"
+                className="px-5 py-1.5 bg-[#4B6043] text-white rounded-xl font-bold hover:bg-[#384c31] shadow-xs cursor-pointer"
               >
-                विवरण सुरक्षित गर्नुहोस् (Save)
+                <span className="flex flex-col text-left leading-tight">
+                  <span className="text-xs">विवरण सुरक्षित गर्नुहोस्</span>
+                  <span className="text-[9px] font-normal opacity-90">(Save)</span>
+                </span>
               </button>
             </div>
           </div>

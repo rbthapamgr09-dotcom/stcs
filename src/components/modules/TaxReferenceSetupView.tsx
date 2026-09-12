@@ -412,8 +412,11 @@ export const TaxReferenceSetupView: React.FC = () => {
             className="px-3 py-1.5 bg-[#edf4ea] text-[#344c2d] hover:bg-[#dbe8d6] rounded-xl border border-[#c5d7bf] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
             title="आधिकारिक पूर्वनिर्धारित स्ल्याब रिसेट गर्नुहोस्"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>मानक रिसेट (Reset Defaults)</span>
+            <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+            <span className="flex flex-col text-left leading-tight">
+              <span>मानक रिसेट</span>
+              <span className="text-[9px] font-normal opacity-85">(Reset Defaults)</span>
+            </span>
           </button>
         </div>
       </div>
@@ -440,8 +443,11 @@ export const TaxReferenceSetupView: React.FC = () => {
               onClick={handleAddRow}
               className="px-3 py-1.5 bg-[#edf4ea] hover:bg-[#dbe8d6] text-[#344b2d] text-xs font-bold rounded-lg border border-[#c5d7bf] flex items-center gap-1 cursor-pointer transition-colors"
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>नयाँ स्ल्याब थप्नुहोस् (Add Slab)</span>
+              <Plus className="w-3.5 h-3.5 shrink-0" />
+              <span className="flex flex-col text-left leading-tight">
+                <span>नयाँ स्ल्याब थप्नुहोस्</span>
+                <span className="text-[9px] font-normal opacity-85">(Add Slab)</span>
+              </span>
             </button>
           </div>
 

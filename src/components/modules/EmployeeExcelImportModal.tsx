@@ -303,9 +303,12 @@ export const EmployeeExcelImportModal: React.FC<EmployeeExcelImportModalProps> =
                   अथवा आफ्नो कम्प्युटरबाट फाइल छनोट गर्न यहाँ क्लिक गर्नुहोस्। फाइलमा कर्मचारीको व्यक्तिगत विवरण, पद, तलब, ग्रेड, भत्ता र कट्टी समावेश हुनुपर्छ।
                 </p>
 
-                <div className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 rounded-xl hover:bg-emerald-200 dark:hover:bg-emerald-900 transition-colors">
-                  <FileSpreadsheet className="w-4 h-4" />
-                  <span>फाइल छनोट गर्नुहोस् (Browse File)</span>
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 rounded-xl hover:bg-emerald-200 dark:hover:bg-emerald-900 transition-colors">
+                  <FileSpreadsheet className="w-4 h-4 shrink-0" />
+                  <span className="flex flex-col text-left leading-tight">
+                    <span>फाइल छनोट गर्नुहोस्</span>
+                    <span className="text-[9px] font-normal opacity-85">(Browse File)</span>
+                  </span>
                 </div>
               </div>
 

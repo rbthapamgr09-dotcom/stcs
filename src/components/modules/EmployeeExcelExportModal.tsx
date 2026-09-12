@@ -443,8 +443,11 @@ export const EmployeeExcelExportModal: React.FC<EmployeeExcelExportModalProps> =
                   {exportScope === 'all' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
                 </div>
                 <div>
-                  <div className="font-bold text-sm text-[#24331C]">सबै कर्मचारीहरू (All Employees)</div>
-                  <div className="text-[11px] text-[#556e4e] mt-0.5">
+                  <div className="font-bold text-sm text-[#24331C] flex flex-col leading-tight">
+                    <span>सबै कर्मचारीहरू</span>
+                    <span className="text-[11px] font-normal opacity-85">(All Employees)</span>
+                  </div>
+                  <div className="text-[11px] text-[#556e4e] mt-1">
                     कुल <strong>{toNepaliDigits(allEmployees.length)}</strong> जना कर्मचारीहरूको सम्पूर्ण रेकर्ड
                   </div>
                 </div>
@@ -464,8 +467,11 @@ export const EmployeeExcelExportModal: React.FC<EmployeeExcelExportModalProps> =
                   {exportScope === 'filtered' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
                 </div>
                 <div>
-                  <div className="font-bold text-sm text-[#24331C]">हाल फिल्टर/खोज गरिएका (Filtered)</div>
-                  <div className="text-[11px] text-[#556e4e] mt-0.5">
+                  <div className="font-bold text-sm text-[#24331C] flex flex-col leading-tight">
+                    <span>हाल फिल्टर/खोज गरिएका</span>
+                    <span className="text-[11px] font-normal opacity-85">(Filtered)</span>
+                  </div>
+                  <div className="text-[11px] text-[#556e4e] mt-1">
                     छानिएका <strong>{toNepaliDigits(filteredEmployees.length)}</strong> जना कर्मचारीहरू
                   </div>
                 </div>
@@ -631,19 +637,25 @@ export const EmployeeExcelExportModal: React.FC<EmployeeExcelExportModalProps> =
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl border border-[#c8d7c2] bg-white text-[#24331C] font-semibold hover:bg-gray-50 transition-colors cursor-pointer"
+              className="px-4 py-2 rounded-xl border border-[#c8d7c2] bg-white text-[#24331C] font-semibold hover:bg-gray-50 transition-colors cursor-pointer"
             >
-              रद्द गर्नुहोस् (Cancel)
+              <span className="flex flex-col items-center leading-tight">
+                <span>रद्द गर्नुहोस्</span>
+                <span className="text-[10px] font-normal text-gray-500">(Cancel)</span>
+              </span>
             </button>
 
             <button
               type="button"
               onClick={handleExecuteExport}
               disabled={isExporting || targetEmployees.length === 0}
-              className="px-5 py-2.5 rounded-xl bg-[#234e2c] hover:bg-[#1a3c22] text-white font-bold transition-all shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-5 py-2 rounded-xl bg-[#234e2c] hover:bg-[#1a3c22] text-white font-bold transition-all shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Download className="w-4 h-4 text-emerald-300" />
-              <span>{isExporting ? 'Export हुँदैछ...' : 'Excel डाउनलोड गर्नुहोस् (Download Excel)'}</span>
+              <Download className="w-4 h-4 text-emerald-300 shrink-0" />
+              <span className="flex flex-col text-left leading-tight">
+                <span>{isExporting ? 'Export हुँदैछ...' : 'Excel डाउनलोड गर्नुहोस्'}</span>
+                {!isExporting && <span className="text-[10px] font-normal opacity-90">(Download Excel)</span>}
+              </span>
             </button>
           </div>
         </div>

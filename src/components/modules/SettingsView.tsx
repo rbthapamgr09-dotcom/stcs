@@ -754,8 +754,11 @@ export const SettingsView: React.FC = () => {
                 : 'text-[#34472c] hover:bg-[#e4ede0]'
             }`}
           >
-            <Shield className="w-3.5 h-3.5" />
-            <span>सुरक्षा तथा अडिट (Security)</span>
+            <Shield className="w-3.5 h-3.5 shrink-0" />
+            <span className="flex flex-col text-left leading-tight">
+              <span>सुरक्षा तथा अडिट</span>
+              <span className="text-[9px] font-normal opacity-85">(Security)</span>
+            </span>
           </button>
           <button
             type="button"
@@ -1026,10 +1029,13 @@ export const SettingsView: React.FC = () => {
                 <button
                   type="submit"
                   disabled={!targetFy}
-                  className="px-5 py-2.5 bg-[#4B6043] hover:bg-[#384c31] disabled:opacity-50 text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+                  className="px-5 py-2 bg-[#4B6043] hover:bg-[#384c31] disabled:opacity-50 text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
                 >
-                  <ArrowRightLeft className="w-4 h-4" />
-                  <span>डाटा स्थानान्तरण गर्नुहोस् (Execute Carry Forward)</span>
+                  <ArrowRightLeft className="w-4 h-4 shrink-0" />
+                  <span className="flex flex-col text-left leading-tight">
+                    <span>डाटा स्थानान्तरण गर्नुहोस्</span>
+                    <span className="text-[10px] font-normal opacity-90">(Execute Carry Forward)</span>
+                  </span>
                 </button>
               </div>
             </form>
@@ -1056,20 +1062,26 @@ export const SettingsView: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleOpenAddOrg}
-                  className="px-3.5 py-1.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                  className="px-3.5 py-1.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
                 >
-                  <Plus className="w-4 h-4" />
-                  <span>नयाँ कार्यालय / संस्था दर्ता गर्नुहोस् (Add Office)</span>
+                  <Plus className="w-4 h-4 shrink-0" />
+                  <span className="flex flex-col text-left leading-tight">
+                    <span>नयाँ कार्यालय / संस्था दर्ता गर्नुहोस्</span>
+                    <span className="text-[9px] font-normal opacity-90">(Add Office)</span>
+                  </span>
                 </button>
               ) : (
                 <button
                   type="button"
                   disabled
                   title="नयाँ कार्यालय / संस्था दर्ता गर्न केवल सुपर एडमिन (Super Admin) प्रयोगकर्तालाई मात्र अधिकार छ"
-                  className="px-3.5 py-1.5 bg-gray-100 text-gray-400 font-bold rounded-xl shadow-xs flex items-center gap-1.5 cursor-not-allowed border border-gray-200 select-none opacity-60"
+                  className="px-3.5 py-1.5 bg-gray-100 text-gray-400 font-bold rounded-xl shadow-xs flex items-center gap-2 cursor-not-allowed border border-gray-200 select-none opacity-60"
                 >
-                  <Lock className="w-3.5 h-3.5 text-gray-400" />
-                  <span>नयाँ कार्यालय / संस्था दर्ता गर्नुहोस् (Add Office)</span>
+                  <Lock className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  <span className="flex flex-col text-left leading-tight">
+                    <span>नयाँ कार्यालय / संस्था दर्ता गर्नुहोस्</span>
+                    <span className="text-[9px] font-normal opacity-75">(Add Office)</span>
+                  </span>
                 </button>
               )}
             </div>
@@ -1408,10 +1420,13 @@ export const SettingsView: React.FC = () => {
             {(hasPermission('MANAGE_USERS') || hasPermission('MANAGE_GENERAL_USERS')) && (
               <button
                 onClick={handleOpenAddUser}
-                className="px-3.5 py-1.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                className="px-3.5 py-1.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
               >
-                <UserPlus className="w-4 h-4" />
-                <span>नयाँ प्रयोगकर्ता थप्नुहोस् (Add User)</span>
+                <UserPlus className="w-4 h-4 shrink-0" />
+                <span className="flex flex-col text-left leading-tight">
+                  <span>नयाँ प्रयोगकर्ता थप्नुहोस्</span>
+                  <span className="text-[9px] font-normal opacity-90">(Add User)</span>
+                </span>
               </button>
             )}
           </div>
@@ -1787,10 +1802,13 @@ export const SettingsView: React.FC = () => {
                 <button
                   type="button"
                   onClick={clearAllData}
-                  className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all shadow-xs flex items-center gap-2 cursor-pointer"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>सबै डाटा मेटाउनुहोस् (All Clear)</span>
+                  <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                  <span className="flex flex-col text-left leading-tight">
+                    <span>सबै डाटा मेटाउनुहोस्</span>
+                    <span className="text-[9px] font-normal opacity-90">(All Clear)</span>
+                  </span>
                 </button>
               </div>
             </div>
@@ -1902,10 +1920,13 @@ export const SettingsView: React.FC = () => {
                 <div className="flex justify-end">
                   <button
                     type="submit"
-                    className="px-5 py-2.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
+                    className="px-5 py-2 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
                   >
-                    <Save className="w-4 h-4" />
-                    <span>सम्पर्क विवरण सुरक्षित गर्नुहोस् (Save Contact Info)</span>
+                    <Save className="w-4 h-4 shrink-0" />
+                    <span className="flex flex-col text-left leading-tight">
+                      <span>सम्पर्क विवरण सुरक्षित गर्नुहोस्</span>
+                      <span className="text-[10px] font-normal opacity-90">(Save Contact Info)</span>
+                    </span>
                   </button>
                 </div>
               </form>

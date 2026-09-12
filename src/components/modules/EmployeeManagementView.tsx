@@ -1624,17 +1624,23 @@ export const EmployeeManagementView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setIsFormOpen(false)}
-                      className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors cursor-pointer"
+                      className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors cursor-pointer"
                     >
-                      रद्द गर्नुहोस् (Cancel)
+                      <span className="flex flex-col items-center leading-tight">
+                        <span>रद्द गर्नुहोस्</span>
+                        <span className="text-[9px] font-normal text-gray-500">(Cancel)</span>
+                      </span>
                     </button>
                     <button
                       type="button"
                       onClick={handleNextFromStep1}
-                      className="px-6 py-2 text-xs font-bold text-white bg-[#4B6043] hover:bg-[#384c31] rounded-lg transition-colors shadow-sm flex items-center gap-2 cursor-pointer"
+                      className="px-6 py-1.5 text-xs font-bold text-white bg-[#4B6043] hover:bg-[#384c31] rounded-lg transition-colors shadow-sm flex items-center gap-2 cursor-pointer"
                     >
-                      <span>अगाडी जानुहोस् (Next)</span>
-                      <ArrowRight className="w-4 h-4" />
+                      <span className="flex flex-col text-left leading-tight">
+                        <span>अगाडी जानुहोस्</span>
+                        <span className="text-[9px] font-normal opacity-90">(Next)</span>
+                      </span>
+                      <ArrowRight className="w-4 h-4 shrink-0" />
                     </button>
                   </div>
                 </div>
@@ -1859,27 +1865,36 @@ export const EmployeeManagementView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setIsFormOpen(false)}
-                      className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors cursor-pointer"
+                      className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors cursor-pointer"
                     >
-                      रद्द गर्नुहोस् (Cancel)
+                      <span className="flex flex-col items-center leading-tight">
+                        <span>रद्द गर्नुहोस्</span>
+                        <span className="text-[9px] font-normal text-gray-500">(Cancel)</span>
+                      </span>
                     </button>
 
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => setActiveStep(1)}
-                        className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                       >
-                        <ArrowLeft className="w-3.5 h-3.5" />
-                        <span>पछाडी जानुहोस् (Previous)</span>
+                        <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                        <span className="flex flex-col text-left leading-tight">
+                          <span>पछाडी जानुहोस्</span>
+                          <span className="text-[9px] font-normal text-gray-500">(Previous)</span>
+                        </span>
                       </button>
                       <button
                         type="button"
                         onClick={handleNextFromStep2}
-                        className="px-6 py-2 text-xs font-bold text-white bg-[#4B6043] hover:bg-[#384c31] rounded-lg transition-colors shadow-sm flex items-center gap-2 cursor-pointer"
+                        className="px-6 py-1.5 text-xs font-bold text-white bg-[#4B6043] hover:bg-[#384c31] rounded-lg transition-colors shadow-sm flex items-center gap-2 cursor-pointer"
                       >
-                        <span>अगाडी जानुहोस् (Next)</span>
-                        <ArrowRight className="w-4 h-4" />
+                        <span className="flex flex-col text-left leading-tight">
+                          <span>अगाडी जानुहोस्</span>
+                          <span className="text-[9px] font-normal opacity-90">(Next)</span>
+                        </span>
+                        <ArrowRight className="w-4 h-4 shrink-0" />
                       </button>
                     </div>
                   </div>
@@ -2116,27 +2131,36 @@ export const EmployeeManagementView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setIsFormOpen(false)}
-                      className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors cursor-pointer"
+                      className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors cursor-pointer"
                     >
-                      रद्द गर्नुहोस् (Cancel)
+                      <span className="flex flex-col items-center leading-tight">
+                        <span>रद्द गर्नुहोस्</span>
+                        <span className="text-[9px] font-normal text-gray-500">(Cancel)</span>
+                      </span>
                     </button>
 
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => setActiveStep(2)}
-                        className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                       >
-                        <ArrowLeft className="w-3.5 h-3.5" />
-                        <span>पछाडी जानुहोस् (Previous)</span>
+                        <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                        <span className="flex flex-col text-left leading-tight">
+                          <span>पछाडी जानुहोस्</span>
+                          <span className="text-[9px] font-normal text-gray-500">(Previous)</span>
+                        </span>
                       </button>
                       <button
                         type="button"
                         onClick={handleNextFromStep3}
-                        className="px-6 py-2 text-xs font-bold text-white bg-[#4B6043] hover:bg-[#384c31] rounded-lg transition-colors shadow-sm flex items-center gap-2 cursor-pointer"
+                        className="px-6 py-1.5 text-xs font-bold text-white bg-[#4B6043] hover:bg-[#384c31] rounded-lg transition-colors shadow-sm flex items-center gap-2 cursor-pointer"
                       >
-                        <span>अगाडी जानुहोस् (Next)</span>
-                        <ArrowRight className="w-4 h-4" />
+                        <span className="flex flex-col text-left leading-tight">
+                          <span>अगाडी जानुहोस्</span>
+                          <span className="text-[9px] font-normal opacity-90">(Next)</span>
+                        </span>
+                        <ArrowRight className="w-4 h-4 shrink-0" />
                       </button>
                     </div>
                   </div>
@@ -2410,27 +2434,36 @@ export const EmployeeManagementView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setIsFormOpen(false)}
-                      className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors cursor-pointer"
+                      className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors cursor-pointer"
                     >
-                      रद्द गर्नुहोस् (Cancel)
+                      <span className="flex flex-col items-center leading-tight">
+                        <span>रद्द गर्नुहोस्</span>
+                        <span className="text-[9px] font-normal text-gray-500">(Cancel)</span>
+                      </span>
                     </button>
 
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => setActiveStep(3)}
-                        className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                       >
-                        <ArrowLeft className="w-3.5 h-3.5" />
-                        <span>पछाडी जानुहोस् (Previous)</span>
+                        <ArrowLeft className="w-3.5 h-3.5 shrink-0" />
+                        <span className="flex flex-col text-left leading-tight">
+                          <span>पछाडी जानुहोस्</span>
+                          <span className="text-[9px] font-normal text-gray-500">(Previous)</span>
+                        </span>
                       </button>
                       <button
                         type="button"
                         onClick={handleSaveAll}
-                        className="px-6 py-2.5 text-xs font-bold text-white bg-[#4B6043] hover:bg-[#384c31] rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
+                        className="px-6 py-2 text-xs font-bold text-white bg-[#4B6043] hover:bg-[#384c31] rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
                       >
-                        <Save className="w-4 h-4" />
-                        <span>विवरण सुरक्षित गर्नुहोस् (Save Employee Details)</span>
+                        <Save className="w-4 h-4 shrink-0" />
+                        <span className="flex flex-col text-left leading-tight">
+                          <span>विवरण सुरक्षित गर्नुहोस्</span>
+                          <span className="text-[10px] font-normal opacity-90">(Save Employee Details)</span>
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -2630,10 +2663,13 @@ export const EmployeeManagementView: React.FC = () => {
                 onClick={() => {
                   setIsExportModalOpen(true);
                 }}
-                className="px-3.5 py-2 bg-[#1f5a34] hover:bg-[#164326] text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                className="px-3.5 py-1.5 bg-[#1f5a34] hover:bg-[#164326] text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
               >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-300" />
-                <span>एक्सेल Export (Excel)</span>
+                <FileSpreadsheet className="w-4 h-4 text-emerald-300 shrink-0" />
+                <span className="flex flex-col text-left leading-tight">
+                  <span>एक्सेल Export</span>
+                  <span className="text-[9px] font-normal opacity-90">(Excel)</span>
+                </span>
               </button>
 
               <button
