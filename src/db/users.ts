@@ -65,7 +65,7 @@ export async function getOrCreateUser(
       );
       return updated[0];
     } else {
-      // 2. Insert new user record
+      // 2. Insert new user record safely with onConflict handling
       const inserted = await withDbRetry(() =>
         db
           .insert(users)
@@ -82,6 +82,22 @@ export async function getOrCreateUser(
             isActive: cleanIsActive,
             metadata: metadata || {},
             updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: users.uid,
+            set: {
+              username: cleanUsername,
+              email: cleanEmail,
+              fullName: cleanFullName,
+              role: cleanRole,
+              organizationId: cleanOrgId,
+              organizationName: cleanOrgName,
+              designation: cleanDesignation,
+              phone: cleanPhone,
+              isActive: cleanIsActive,
+              metadata: metadata || {},
+              updatedAt: new Date(),
+            },
           })
           .returning()
       );

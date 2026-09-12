@@ -11,7 +11,9 @@ import { verifyPasswordSync } from '../utils/securityUtils';
 
 // Initialize Firebase App safely
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+export const db = (firebaseConfig as any).firestoreDatabaseId
+  ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
+  : getFirestore(app);
 
 export interface CloudAppConnectionData {
   webAppUrl?: string;
@@ -493,21 +495,32 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
 }
 
 /**
- * Authenticate directly against Cloud SQL backend API
+ * Authenticate directly against Cloud SQL backend API with Firestore fallback
  */
 export async function cloudLogin(
   username: string,
   password?: string
 ): Promise<{ success: boolean; user?: User; notFound?: boolean; wrongPassword?: boolean; inactive?: boolean; message?: string }> {
+  const cleanInput = (username || '').trim().toLowerCase();
+  if (!cleanInput) {
+    return { success: false, notFound: true, message: 'प्रयोगकर्ता नाम प्रविष्ट गर्नुहोस्।' };
+  }
+
+  // 1. Try backend authentication endpoint (Cloud SQL)
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username: cleanInput, password }),
     });
     const json = await res.json();
     if (json.success && json.user) {
-      return json;
+      // Ensure isActive is boolean
+      const userObj: User = {
+        ...json.user,
+        isActive: json.user.isActive !== false,
+      };
+      return { success: true, user: userObj };
     }
     if (json.wrongPassword || json.inactive) {
       return json;
@@ -516,19 +529,19 @@ export async function cloudLogin(
     console.warn('Cloud login API error:', err);
   }
 
-  // Fallback: Check Firestore if Cloud SQL returned notFound or threw an error
+  // 2. Fallback: Check Firestore if Cloud SQL returned notFound or threw an error
   try {
     const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       const data = snap.data();
       if (Array.isArray(data?.users)) {
-        const cleanInput = username.trim().toLowerCase();
         const foundUser = data.users.find(
           (u: User) =>
-            u.username.toLowerCase() === cleanInput ||
+            (u.username && u.username.toLowerCase() === cleanInput) ||
             (u.email && u.email.toLowerCase() === cleanInput) ||
-            u.id === username.trim()
+            (u.id && u.id.toLowerCase() === cleanInput) ||
+            (u.id && u.id === username.trim())
         );
 
         if (foundUser) {
@@ -548,14 +561,19 @@ export async function cloudLogin(
               ? 'account123'
               : 'viewer123');
 
+          const safeFoundUser: User = {
+            ...foundUser,
+            isActive: foundUser.isActive !== false,
+          };
+
           if (password === undefined || password === '') {
-            return { success: true, user: foundUser };
+            return { success: true, user: safeFoundUser };
           }
 
           const passCheck = verifyPasswordSync(password, userPass);
           if (passCheck.isValid) {
-            saveSingleUserToCloud(foundUser).catch(() => {});
-            return { success: true, user: foundUser };
+            saveSingleUserToCloud(safeFoundUser).catch(() => {});
+            return { success: true, user: safeFoundUser };
           } else {
             return { success: false, wrongPassword: true, message: 'गलत पासवर्ड प्रविष्ट भयो।' };
           }
@@ -574,7 +592,7 @@ export async function cloudLogin(
 }
 
 /**
- * Fetches registered users list from Cloud SQL or Firestore.
+ * Fetches registered users list from Cloud SQL and Firestore with intelligent two-way merge.
  */
 export async function getCloudUsers(): Promise<User[] | null> {
   let sqlUsers: User[] = [];
@@ -601,7 +619,7 @@ export async function getCloudUsers(): Promise<User[] | null> {
           securityAnswer: u.metadata?.securityAnswer || 'नेपाल',
           mustChangePassword: u.metadata?.mustChangePassword ?? false,
           isFirstLogin: u.metadata?.isFirstLogin ?? false,
-          isActive: u.isActive ?? u.is_active ?? true,
+          isActive: u.isActive !== undefined ? u.isActive !== false : (u.is_active !== undefined ? u.is_active !== false : true),
           createdAt: u.createdAt || u.created_at || new Date().toISOString(),
         })) as User[];
       }
@@ -622,9 +640,41 @@ export async function getCloudUsers(): Promise<User[] | null> {
           if (u.username) mergedMap.set(u.username.toLowerCase(), u);
         }
         for (const fu of data.users) {
-          if (fu.username && !mergedMap.has(fu.username.toLowerCase())) {
-            mergedMap.set(fu.username.toLowerCase(), fu);
-            saveSingleUserToCloud(fu).catch(() => {});
+          if (fu.username) {
+            const key = fu.username.toLowerCase();
+            const existing = mergedMap.get(key);
+            if (!existing) {
+              const cleanFu: User = {
+                ...fu,
+                isActive: fu.isActive !== false,
+              };
+              mergedMap.set(key, cleanFu);
+              saveSingleUserToCloud(cleanFu).catch(() => {});
+            } else {
+              // Intelligent field-level merge:
+              // Preserve password hash if Firestore has it or if SQL has fallback default
+              const resolvedPassword =
+                (fu.password && fu.password.startsWith('sha256:'))
+                  ? fu.password
+                  : (existing.password && existing.password.startsWith('sha256:'))
+                  ? existing.password
+                  : (fu.password || existing.password);
+
+              const mergedUser: User = {
+                ...existing,
+                ...fu,
+                password: resolvedPassword,
+                securityPin: fu.securityPin || existing.securityPin || '1234',
+                securityQuestion: fu.securityQuestion || existing.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+                securityAnswer: fu.securityAnswer || existing.securityAnswer || 'नेपाल',
+                mustChangePassword: fu.mustChangePassword ?? existing.mustChangePassword ?? false,
+                isFirstLogin: fu.isFirstLogin ?? existing.isFirstLogin ?? false,
+                isActive: fu.isActive !== undefined ? fu.isActive !== false : (existing.isActive !== undefined ? existing.isActive !== false : true),
+                organizationId: fu.organizationId || existing.organizationId || 'org_default',
+                organizationName: fu.organizationName || existing.organizationName,
+              };
+              mergedMap.set(key, mergedUser);
+            }
           }
         }
         return Array.from(mergedMap.values());
@@ -648,6 +698,76 @@ export async function deleteCloudUser(userId: string): Promise<void> {
   } catch (err) {
     console.warn('Could not delete user from Cloud SQL API:', err);
   }
+}
+
+/**
+ * Searches and retrieves a single user by username or email from Cloud SQL or Firestore.
+ * Critical for multi-device authentication and account recovery on fresh devices.
+ */
+export async function lookupCloudUser(usernameOrEmail: string): Promise<User | null> {
+  if (!usernameOrEmail || !usernameOrEmail.trim()) return null;
+  const clean = usernameOrEmail.trim().toLowerCase();
+
+  // 1. Try Cloud SQL lookup endpoint
+  try {
+    const res = await fetch(`/api/users/lookup?q=${encodeURIComponent(clean)}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && json.user) {
+        const u = json.user;
+        const meta = u.metadata || {};
+        return {
+          id: u.uid || String(u.id),
+          username: u.username,
+          fullName: u.fullName || u.full_name,
+          email: u.email,
+          role: u.role || 'GENERAL_USER',
+          organizationId: u.organizationId || u.organization_id || 'org_default',
+          organizationName: u.organizationName || u.organization_name || meta.organizationName,
+          designation: u.designation || meta.designation,
+          phone: u.phone || meta.phone,
+          password: meta.password,
+          securityPin: meta.securityPin || '1234',
+          securityQuestion: meta.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+          securityAnswer: meta.securityAnswer || 'नेपाल',
+          mustChangePassword: Boolean(meta.mustChangePassword),
+          isFirstLogin: Boolean(meta.isFirstLogin),
+          isActive: u.isActive !== undefined ? u.isActive !== false : true,
+          createdAt: u.createdAt || new Date().toISOString(),
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('Cloud SQL lookup warning:', e);
+  }
+
+  // 2. Fallback to Firestore
+  try {
+    const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      if (Array.isArray(data?.users)) {
+        const found = data.users.find(
+          (u: User) =>
+            (u.username && u.username.toLowerCase() === clean) ||
+            (u.email && u.email.toLowerCase() === clean) ||
+            (u.id && u.id.toLowerCase() === clean) ||
+            (u.id && u.id === usernameOrEmail.trim())
+        );
+        if (found) {
+          return {
+            ...found,
+            isActive: found.isActive !== false,
+          };
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Firestore user lookup fallback warning:', e);
+  }
+
+  return null;
 }
 
 /**

@@ -213,6 +213,24 @@ async function startServer() {
     }
   });
 
+  // User lookup endpoint by username, email, or UID
+  app.get('/api/users/lookup', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const q = String(req.query.q || '').trim();
+      if (!q) {
+        return res.status(400).json({ error: 'Query parameter q is required' });
+      }
+      const user = await getUserByUsernameOrEmailOrUid(q);
+      if (!user) {
+        return res.status(404).json({ success: false, error: 'User not found' });
+      }
+      res.json({ success: true, user });
+    } catch (error: any) {
+      console.error('Failed to lookup user:', error);
+      res.status(500).json({ error: error.message || 'Failed to lookup user' });
+    }
+  });
+
   // Delete user endpoint
   app.delete('/api/users/:uid', optionalAuth, async (req: AuthRequest, res) => {
     try {

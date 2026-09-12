@@ -1666,7 +1666,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     securityQuestion?: string;
     securityAnswer?: string;
   }): { success: boolean; message: string } => {
-    const target = users.find((u) => u.id === userId);
+    // Search user by ID, username, or UID
+    const cleanId = (userId || '').trim().toLowerCase();
+    let target = users.find(
+      (u) =>
+        u.id === userId ||
+        (u.id && u.id.toLowerCase() === cleanId) ||
+        (u.username && u.username.toLowerCase() === cleanId)
+    );
+
     if (!target) {
       const msg = 'प्रयोगकर्ता फेला परेन।';
       addToast('error', 'त्रुटि', msg);
@@ -1685,6 +1693,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       password: hashed.encoded,
       mustChangePassword: false,
       isFirstLogin: false,
+      isActive: target.isActive !== false,
       securityPin: securityPin || target.securityPin || '1234',
       securityQuestion: securityQuestion || target.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
       securityAnswer: securityAnswer || target.securityAnswer || 'नेपाल',
@@ -1693,7 +1702,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     setUsers((prev) => {
-      const updatedList = prev.map((u) => (u.id === userId ? updatedUser : u));
+      const filtered = prev.filter(
+        (u) =>
+          u.id !== target!.id &&
+          u.username.toLowerCase() !== target!.username.toLowerCase()
+      );
+      const updatedList = [...filtered, updatedUser];
+      try {
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedList));
+      } catch {}
       saveCloudUsers(updatedList).catch((e) => console.warn('Could not save updated user to cloud:', e));
       return updatedList;
     });

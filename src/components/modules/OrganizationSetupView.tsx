@@ -10,8 +10,6 @@ import {
   Mail,
   FileText,
   CheckCircle2,
-  FileSpreadsheet,
-  ExternalLink,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Letterhead } from '../common/Letterhead';
@@ -32,7 +30,6 @@ export const OrganizationSetupView: React.FC = () => {
     organization,
     updateOrganization,
     addToast,
-    setActiveTab: setAppActiveTab,
   } = useApp();
   const [formData, setFormData] = useState<OrganizationSetup>({
     ...organization,
@@ -499,33 +496,6 @@ export const OrganizationSetupView: React.FC = () => {
                     </div>
                   </div>
                 </div>
-              </div>
-
-              {/* Google Sheets Integration Link Card */}
-              <div className="bg-[#f7faf5] p-5 rounded-2xl border border-[#c5d8bf] shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-[#2e5b31] flex items-center justify-center text-white shrink-0 shadow-xs">
-                    <FileSpreadsheet className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-[#1e301a]">
-                      गुगल सिट्स तथा क्लाउड सिंक (Google Sheets Integration)
-                    </h3>
-                    <p className="text-xs text-[#4f6b48] mt-0.5 leading-relaxed">
-                      कर्मचारी, तलब, कर तथा प्रतिवेदनको डाटा सिधै गुगल सिट र ड्राइभमा सिंक गर्ने सम्पूर्ण विधिहरू (OAuth, १-क्लिक जडान, Web App URL, Push/Pull) समर्पित पृष्ठमा उपलब्ध छन्।
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setAppActiveTab('google_sheets')}
-                  className="px-4 py-2 rounded-xl bg-[#2e5b31] hover:bg-[#234726] active:scale-98 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-xs cursor-pointer shrink-0"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  <span>गुगल सिट्स सिंक खोल्नुहोस्</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </button>
               </div>
             </div>
 

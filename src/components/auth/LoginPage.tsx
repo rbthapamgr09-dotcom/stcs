@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { User, UserRole } from '../../types';
+import { verifyPasswordSync } from '../../utils/securityUtils';
 // @ts-ignore
 import loginIllustration from '../../assets/images/salary_tax_calc_1788096542080.jpg';
 
@@ -164,9 +165,12 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    if (firstTimeNewPassword === pendingUser.password) {
-      addToast('warning', 'नयाँ पासवर्ड राख्नुहोस्', 'नयाँ पासवर्ड पुरानो प्रारम्भिक पासवर्ड भन्दा फरक हुनुपर्दछ।');
-      return;
+    if (pendingUser.password) {
+      const passCheck = verifyPasswordSync(firstTimeNewPassword, pendingUser.password);
+      if (passCheck.isValid) {
+        addToast('warning', 'नयाँ पासवर्ड राख्नुहोस्', 'नयाँ पासवर्ड पुरानो प्रारम्भिक पासवर्ड भन्दा फरक हुनुपर्दछ।');
+        return;
+      }
     }
 
     if (firstTimeNewPassword !== firstTimeConfirmPassword) {

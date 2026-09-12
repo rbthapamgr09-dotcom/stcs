@@ -100,6 +100,15 @@ export const SettingsView: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeSubTab, setActiveSubTab] = useState<'system' | 'organizations' | 'users' | 'security' | 'backup' | 'support'>('system');
 
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+
+  // Automatically reset to 'system' if non-superadmin is on a restricted subtab
+  useEffect(() => {
+    if (!isSuperAdmin && (activeSubTab === 'backup' || activeSubTab === 'support')) {
+      setActiveSubTab('system');
+    }
+  }, [isSuperAdmin, activeSubTab]);
+
   // Support Contact Form State
   const [supportForm, setSupportForm] = useState<SystemSupportContact>({
     phone: supportContact?.phone || '',
@@ -121,6 +130,10 @@ export const SettingsView: React.FC = () => {
 
   const handleSaveSupportContact = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isSuperAdmin) {
+      addToast('error', 'पहुँच अस्वीकृत', 'सहायता तथा सम्पर्क विवरण परिमार्जन गर्न केवल सुपर एडमिनलाई मात्र अधिकार छ।');
+      return;
+    }
     updateSupportContact(supportForm);
   };
 
@@ -160,6 +173,10 @@ export const SettingsView: React.FC = () => {
   });
 
   const handleOpenAddOrg = () => {
+    if (!isSuperAdmin) {
+      addToast('error', 'पहुँच अस्वीकृत', 'नयाँ कार्यालय वा संस्था दर्ता गर्न केवल सुपर एडमिनलाई मात्र अधिकार छ।');
+      return;
+    }
     setEditingOrg(null);
     setOrgFormData({
       name: 'नेपाल सरकार',
@@ -581,6 +598,10 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleResetDemo = () => {
+    if (!isSuperAdmin) {
+      addToast('error', 'पहुँच अस्वीकृत', 'डेमो डाटा लोड गर्न केवल सुपर एडमिनलाई मात्र अधिकार छ।');
+      return;
+    }
     showConfirmation({
       title: 'डेमो डाटा पुनः लोड गर्ने?',
       message:
@@ -595,6 +616,10 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleExportBackup = () => {
+    if (!isSuperAdmin) {
+      addToast('error', 'पहुँच अस्वीकृत', 'ब्याकअप डाउनलोड गर्न केवल सुपर एडमिनलाई मात्र अधिकार छ।');
+      return;
+    }
     const backupData = {
       version: '3.0',
       exportedAt: new Date().toISOString(),
@@ -620,6 +645,10 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!isSuperAdmin) {
+      addToast('error', 'पहुँच अस्वीकृत', 'ब्याकअप रिस्टोर गर्न केवल सुपर एडमिनलाई मात्र अधिकार छ।');
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -729,25 +758,49 @@ export const SettingsView: React.FC = () => {
             <span>सुरक्षा तथा अडिट (Security)</span>
           </button>
           <button
-            onClick={() => setActiveSubTab('backup')}
-            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-              activeSubTab === 'backup'
-                ? 'bg-[#4B6043] text-white shadow-xs'
-                : 'text-[#34472c] hover:bg-[#e4ede0]'
+            type="button"
+            onClick={() => {
+              if (!isSuperAdmin) {
+                addToast('warning', 'पहुँच प्रतिबन्धित', 'ब्याकअप तथा रिसेट पृष्ठ केवल सुपर एडमिन (Super Admin) प्रयोगकर्ताका लागि मात्र खुला गरिएको छ।');
+                return;
+              }
+              setActiveSubTab('backup');
+            }}
+            disabled={!isSuperAdmin}
+            title={!isSuperAdmin ? 'यो खण्ड केवल सुपर एडमिन (Super Admin) को लागि मात्र उपलब्ध छ' : undefined}
+            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+              !isSuperAdmin
+                ? 'opacity-50 cursor-not-allowed text-gray-400 bg-gray-100 hover:bg-gray-100'
+                : activeSubTab === 'backup'
+                ? 'bg-[#4B6043] text-white shadow-xs cursor-pointer'
+                : 'text-[#34472c] hover:bg-[#e4ede0] cursor-pointer'
             }`}
           >
-            ब्याकअप तथा रिसेट
+            {!isSuperAdmin && <Lock className="w-3 h-3 text-gray-400" />}
+            <span>ब्याकअप तथा रिसेट</span>
           </button>
           <button
-            onClick={() => setActiveSubTab('support')}
-            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeSubTab === 'support'
-                ? 'bg-[#4B6043] text-white shadow-xs'
-                : 'text-[#34472c] hover:bg-[#e4ede0]'
+            type="button"
+            onClick={() => {
+              if (!isSuperAdmin) {
+                addToast('warning', 'पहुँच प्रतिबन्धित', 'सहायता तथा सम्पर्क पृष्ठ केवल सुपर एडमिन (Super Admin) प्रयोगकर्ताका लागि मात्र खुला गरिएको छ।');
+                return;
+              }
+              setActiveSubTab('support');
+            }}
+            disabled={!isSuperAdmin}
+            title={!isSuperAdmin ? 'यो खण्ड केवल सुपर एडमिन (Super Admin) को लागि मात्र उपलब्ध छ' : undefined}
+            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+              !isSuperAdmin
+                ? 'opacity-50 cursor-not-allowed text-gray-400 bg-gray-100 hover:bg-gray-100'
+                : activeSubTab === 'support'
+                ? 'bg-[#4B6043] text-white shadow-xs cursor-pointer'
+                : 'text-[#34472c] hover:bg-[#e4ede0] cursor-pointer'
             }`}
           >
             <PhoneCall className="w-3.5 h-3.5" />
             <span>सहायता तथा सम्पर्क</span>
+            {!isSuperAdmin && <Lock className="w-3 h-3 text-gray-400 ml-0.5" />}
           </button>
         </div>
       </div>
@@ -999,12 +1052,23 @@ export const SettingsView: React.FC = () => {
                 </p>
               </div>
 
-              {currentUser?.role === 'SUPER_ADMIN' && (
+              {isSuperAdmin ? (
                 <button
+                  type="button"
                   onClick={handleOpenAddOrg}
                   className="px-3.5 py-1.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
+                  <span>नयाँ कार्यालय / संस्था दर्ता गर्नुहोस् (Add Office)</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  title="नयाँ कार्यालय / संस्था दर्ता गर्न केवल सुपर एडमिन (Super Admin) प्रयोगकर्तालाई मात्र अधिकार छ"
+                  className="px-3.5 py-1.5 bg-gray-100 text-gray-400 font-bold rounded-xl shadow-xs flex items-center gap-1.5 cursor-not-allowed border border-gray-200 select-none opacity-60"
+                >
+                  <Lock className="w-3.5 h-3.5 text-gray-400" />
                   <span>नयाँ कार्यालय / संस्था दर्ता गर्नुहोस् (Add Office)</span>
                 </button>
               )}
@@ -1074,14 +1138,20 @@ export const SettingsView: React.FC = () => {
                 <p className="text-xs text-gray-500 max-w-md mx-auto">
                   प्रणालीमा हाल कुनै पनि कार्यालय सेटअप गरिएको छैन। तलको बटन थिचेर नयाँ कार्यालय दर्ता गर्नुहोस्।
                 </p>
-                {currentUser?.role === 'SUPER_ADMIN' && (
+                {isSuperAdmin ? (
                   <button
+                    type="button"
                     onClick={handleOpenAddOrg}
                     className="inline-flex items-center gap-2 px-4 py-2 bg-[#4B6043] hover:bg-[#394a33] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />
                     <span>नयाँ कार्यालय दर्ता गर्नुहोस्</span>
                   </button>
+                ) : (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-100 text-gray-400 text-xs font-semibold rounded-lg border border-gray-200 select-none">
+                    <Lock className="w-3.5 h-3.5 text-gray-400" />
+                    <span>नयाँ कार्यालय दर्ता गर्न केवल सुपर एडमिनलाई अधिकार छ</span>
+                  </div>
                 )}
               </div>
             ) : (
@@ -1599,6 +1669,24 @@ export const SettingsView: React.FC = () => {
 
       {/* Tab 3: Backup & Reset */}
       {activeSubTab === 'backup' && (
+        !isSuperAdmin ? (
+          <div className="bg-white p-8 rounded-2xl border border-red-200 text-center space-y-3">
+            <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <Lock className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-gray-800">पहुँच प्रतिबन्धित (Access Denied)</h3>
+            <p className="text-xs text-gray-500 max-w-md mx-auto leading-relaxed">
+              ब्याकअप तथा रिसेट (Backup & Reset) सम्बन्धी संवेदनशील सेटिङ्स केवल सुपर एडमिन (Super Admin) प्रयोगकर्ताका लागि मात्र खुला गरिएको छ।
+            </p>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('system')}
+              className="px-4 py-2 bg-[#4B6043] hover:bg-[#384c31] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              आर्थिक वर्ष तथा सेटिङ्समा फर्कनुहोस्
+            </button>
+          </div>
+        ) : (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Card 1: Backup & Restore */}
@@ -1708,10 +1796,29 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
         </div>
+        )
       )}
 
       {/* Tab: Support & Contact Setup */}
       {activeSubTab === 'support' && (
+        !isSuperAdmin ? (
+          <div className="bg-white p-8 rounded-2xl border border-red-200 text-center space-y-3">
+            <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <Lock className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-gray-800">पहुँच प्रतिबन्धित (Access Denied)</h3>
+            <p className="text-xs text-gray-500 max-w-md mx-auto leading-relaxed">
+              सहायता तथा सम्पर्क (Support & Contact) सम्बन्धी प्रणाली व्यवस्थापन केवल सुपर एडमिन (Super Admin) प्रयोगकर्ताका लागि मात्र उपलब्ध छ।
+            </p>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('system')}
+              className="px-4 py-2 bg-[#4B6043] hover:bg-[#384c31] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              आर्थिक वर्ष तथा सेटिङ्समा फर्कनुहोस्
+            </button>
+          </div>
+        ) : (
         <div className="space-y-6">
           <div className="bg-white p-5 rounded-2xl border border-[#d6e3d2] shadow-xs space-y-4 text-xs">
             <div className="border-b border-[#e9efe4] pb-3">
@@ -1869,6 +1976,7 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
         </div>
+        )
       )}
 
       {/* Tab: Security & Audit Logs */}
