@@ -309,7 +309,8 @@ interface AppContextType {
   pullDataFromGoogle: (isSilent?: boolean) => Promise<boolean>;
   loginWithGoogle: () => Promise<boolean>;
   isUnauthorizedDomainModalOpen: boolean;
-  openUnauthorizedDomainModal: () => void;
+  unauthorizedDomainModalTab: '403' | '400' | 'apps_script';
+  openUnauthorizedDomainModal: (tab?: '403' | '400' | 'apps_script') => void;
   closeUnauthorizedDomainModal: () => void;
 
   // Audit / Calculation Inspector Modal
@@ -1165,7 +1166,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const [auditEmployeeId, setAuditEmployeeId] = useState<string | null>(null);
   const [isUnauthorizedDomainModalOpen, setIsUnauthorizedDomainModalOpen] = useState(false);
-  const openUnauthorizedDomainModal = useCallback(() => setIsUnauthorizedDomainModalOpen(true), []);
+  const [unauthorizedDomainModalTab, setUnauthorizedDomainModalTab] = useState<'403' | '400' | 'apps_script'>('403');
+  const openUnauthorizedDomainModal = useCallback((tab?: '403' | '400' | 'apps_script') => {
+    if (tab) setUnauthorizedDomainModalTab(tab);
+    setIsUnauthorizedDomainModalOpen(true);
+  }, []);
   const closeUnauthorizedDomainModal = useCallback(() => setIsUnauthorizedDomainModalOpen(false), []);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [confirmationDialog, setConfirmationDialog] = useState<ConfirmationDialogState>({
@@ -3817,14 +3822,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         errMsg.includes('redirect_uri_mismatch');
 
       if (isAccessDenied403 || isUnauthorizedDomain) {
-        setIsUnauthorizedDomainModalOpen(true);
         if (isAccessDenied403) {
+          setUnauthorizedDomainModalTab('403');
+          setIsUnauthorizedDomainModalOpen(true);
           addToast(
             'error',
             'Google OAuth अनुमति (Error 403: access_denied)',
             'Google Cloud Console मा rbthapamgr09@gmail.com लाई "Test users" मा थप्नुहोस् वा Google Apps Script विधि प्रयोग गर्नुहोस्।'
           );
         } else {
+          setUnauthorizedDomainModalTab('400');
+          setIsUnauthorizedDomainModalOpen(true);
           const host = typeof window !== 'undefined' ? window.location.hostname : 'होस्ट';
           addToast(
             'error',
@@ -3934,14 +3942,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         errMsg.includes('redirect_uri_mismatch');
 
       if (isAccessDenied403 || isUnauthorizedDomain) {
-        setIsUnauthorizedDomainModalOpen(true);
         if (isAccessDenied403) {
+          setUnauthorizedDomainModalTab('403');
+          setIsUnauthorizedDomainModalOpen(true);
           addToast(
             'error',
             'Google OAuth अनुमति (Error 403: access_denied)',
             'Google Cloud Console मा rbthapamgr09@gmail.com लाई "Test users" मा थप्नुहोस् वा Google Apps Script विधि प्रयोग गर्नुहोस्।'
           );
         } else {
+          setUnauthorizedDomainModalTab('400');
+          setIsUnauthorizedDomainModalOpen(true);
           const host = typeof window !== 'undefined' ? window.location.hostname : 'होस्ट';
           addToast(
             'error',
@@ -5011,6 +5022,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         pullDataFromGoogle,
         loginWithGoogle,
         isUnauthorizedDomainModalOpen,
+        unauthorizedDomainModalTab,
         openUnauthorizedDomainModal,
         closeUnauthorizedDomainModal,
         annualTaxResults,

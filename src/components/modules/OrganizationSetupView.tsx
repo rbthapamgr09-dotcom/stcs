@@ -10,20 +10,8 @@ import {
   Mail,
   FileText,
   CheckCircle2,
-  Link2,
-  Sparkles,
   FileSpreadsheet,
   ExternalLink,
-  RefreshCw,
-  UserCheck,
-  ShieldCheck,
-  AlertTriangle,
-  HelpCircle,
-  LogIn,
-  LogOut,
-  X,
-  Check,
-  Globe,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Letterhead } from '../common/Letterhead';
@@ -44,133 +32,22 @@ export const OrganizationSetupView: React.FC = () => {
     organization,
     updateOrganization,
     addToast,
-    syncWithGoogleSheets,
-    organizations,
-    activeOrganizationId,
-    isGoogleAccountConnected,
-    googleConnectedEmail,
-    connectGoogleAccount,
-    connectDirectAccount,
-    disconnectGoogleAccount,
-    googleSheetsConfig,
-    updateGoogleSheetsConfig,
+    setActiveTab: setAppActiveTab,
   } = useApp();
   const [formData, setFormData] = useState<OrganizationSetup>({
     ...organization,
-    webAppUrl: organization.webAppUrl || googleSheetsConfig.webAppUrl || '',
-    spreadsheetId: organization.spreadsheetId || googleSheetsConfig.spreadsheetId || '',
-    driveFolderId: organization.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
   });
   const [activeTab, setActiveTab] = useState<'form' | 'preview'>('form');
   const [logoPreviewError, setLogoPreviewError] = useState<boolean>(false);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [isConnectingGoogle, setIsConnectingGoogle] = useState<boolean>(false);
-  const [isConnectingAdmin, setIsConnectingAdmin] = useState<boolean>(false);
-  const [showConnectModal, setShowConnectModal] = useState<boolean>(false);
-  const [showHelpModal, setShowHelpModal] = useState<boolean>(false);
-  const [showAppsScriptUrlField, setShowAppsScriptUrlField] = useState<boolean>(Boolean(organization.webAppUrl || googleSheetsConfig.webAppUrl));
-
-  // Active organization details for sync status display
-  const currentOrg = organizations.find((o) => o.id === activeOrganizationId);
 
   useEffect(() => {
     setFormData((prev) => ({
       ...organization,
-      webAppUrl: organization.webAppUrl || prev.webAppUrl || googleSheetsConfig.webAppUrl || '',
-      spreadsheetId: organization.spreadsheetId || prev.spreadsheetId || googleSheetsConfig.spreadsheetId || '',
-      driveFolderId: organization.driveFolderId || prev.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
+      spreadsheetId: organization.spreadsheetId || prev.spreadsheetId,
+      webAppUrl: organization.webAppUrl || prev.webAppUrl,
+      driveFolderId: organization.driveFolderId || prev.driveFolderId,
     }));
-    if (organization.webAppUrl || googleSheetsConfig.webAppUrl) {
-      setShowAppsScriptUrlField(true);
-    }
-  }, [organization, googleSheetsConfig.webAppUrl, googleSheetsConfig.spreadsheetId]);
-
-  const handleDirectAdminConnect = async () => {
-    setIsConnectingAdmin(true);
-    try {
-      const ok = await connectDirectAccount('rbthapamgr09@gmail.com', 'RB Thapa Magar');
-      if (ok) {
-        addToast('success', 'गुगल खाता जडान भयो', 'rbthapamgr09@gmail.com खाता सफलतापूर्वक लिंक गरियो।');
-        setShowConnectModal(false);
-        // If spreadsheet ID is set, automatically trigger sync
-        if (formData.spreadsheetId) {
-          setIsSyncing(true);
-          const res = await syncWithGoogleSheets('push', {
-            spreadsheetIdOverride: formData.spreadsheetId,
-            promptForOAuth: false,
-            overrideOrganization: formData,
-          });
-          if (res.success) {
-            addToast('success', 'सिंक सम्पन्न', 'कार्यालयको विवरण गुगल सिट्समा सुरक्षित भयो।');
-          }
-        }
-      }
-    } catch (err: any) {
-      addToast('error', 'जडान असफल', err?.message || 'गुगल खाता जडान गर्न सकिएन');
-    } finally {
-      setIsConnectingAdmin(false);
-      setIsSyncing(false);
-    }
-  };
-
-  const handleGoogleConnect = async () => {
-    setIsConnectingGoogle(true);
-    try {
-      const ok = await connectGoogleAccount();
-      if (ok) {
-        setShowConnectModal(false);
-        if (formData.spreadsheetId) {
-          setIsSyncing(true);
-          const res = await syncWithGoogleSheets('push', {
-            spreadsheetIdOverride: formData.spreadsheetId,
-            promptForOAuth: false,
-            overrideOrganization: formData,
-          });
-          if (res.success) {
-            addToast('success', 'सिंक सम्पन्न', 'कार्यालयको विवरण गुगल सिट्समा सुरक्षित भयो।');
-          }
-        }
-      }
-    } catch (err: any) {
-      addToast('error', 'गुगल जडान असफल', err?.message || 'गुगल खाता जडान गर्न सकिएन');
-    } finally {
-      setIsConnectingGoogle(false);
-      setIsSyncing(false);
-    }
-  };
-
-  const handleGoogleDisconnect = async () => {
-    await disconnectGoogleAccount();
-  };
-
-  const handleDirectSync = async () => {
-    const currentWebAppUrl = (formData.webAppUrl || googleSheetsConfig.webAppUrl || '').trim();
-    // If not connected to Google and no webAppUrl is set, prompt connection
-    if (!isGoogleAccountConnected && !currentWebAppUrl) {
-      setShowConnectModal(true);
-      return;
-    }
-
-    setIsSyncing(true);
-    try {
-      updateOrganization(formData);
-      if (formData.webAppUrl) {
-        updateGoogleSheetsConfig({ webAppUrl: formData.webAppUrl });
-      }
-      const res = await syncWithGoogleSheets('push', {
-        spreadsheetIdOverride: formData.spreadsheetId,
-        promptForOAuth: true,
-        overrideOrganization: formData,
-      });
-      if (res.success) {
-        addToast('success', 'सिंक सफल भयो', 'कार्यालयको डाटा गुगल सिट्समा सफलतापूर्वक सिंक भयो।');
-      }
-    } catch (err: any) {
-      addToast('error', 'सिंक असफल', err?.message || 'गुगल सिट्समा सिंक गर्न सकिएन');
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+  }, [organization]);
 
   // Available districts based on selected province
   const availableDistricts = getDistrictsByProvince(formData.province);
@@ -624,252 +501,31 @@ export const OrganizationSetupView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Section 4: Google Sheets & Drive Cloud Synchronization */}
-              <div className="bg-[#f7faf5] p-5 rounded-2xl border border-[#c5d8bf] shadow-xs space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#dce8d7] pb-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-9 h-9 rounded-xl bg-[#2e5b31] flex items-center justify-center text-white shadow-xs shrink-0">
-                      <FileSpreadsheet className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-bold text-[#1e301a]">
-                          ४. गुगल सिट्स तथा ड्राइभ क्लाउड सिंक (Google Sheets & Drive Sync)
-                        </h3>
-                      </div>
-                      <p className="text-[11px] text-[#4f6b48]">
-                        यस कार्यालयको कर्मचारी, तलब तथा करको सम्पूर्ण डाटा सिधै गुगल सिट र ड्राइभमा सुरक्षित हुन्छ।
-                      </p>
-                    </div>
+              {/* Google Sheets Integration Link Card */}
+              <div className="bg-[#f7faf5] p-5 rounded-2xl border border-[#c5d8bf] shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#2e5b31] flex items-center justify-center text-white shrink-0 shadow-xs">
+                    <FileSpreadsheet className="w-5 h-5" />
                   </div>
-
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {/* Status Badge */}
-                    {isGoogleAccountConnected ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> गुगल खाता जडित
-                      </span>
-                    ) : formData.webAppUrl || googleSheetsConfig.webAppUrl ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
-                        <Globe className="w-3.5 h-3.5 text-blue-600" /> Web App सक्रिय
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-300">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> खाता जडान बाँकी
-                      </span>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => setShowHelpModal(true)}
-                      className="px-2.5 py-1.5 rounded-lg border border-[#c5d8bf] bg-white hover:bg-[#eef5ec] text-[#2e5b31] text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                      title="गुगल सिट जडान र सिंक गर्ने तरिका हेर्नुहोस्"
-                    >
-                      <HelpCircle className="w-3.5 h-3.5 text-[#2e5b31]" />
-                      <span>मार्गदर्शन</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleDirectSync}
-                      disabled={isSyncing || (!formData.spreadsheetId && !currentOrg?.spreadsheetId)}
-                      className="px-3.5 py-1.5 rounded-lg bg-[#2e5b31] hover:bg-[#234726] active:scale-98 text-white disabled:opacity-50 text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                      <span>{isSyncing ? 'सिंक हुँदै...' : 'अहिले सिंक गर्नुहोस्'}</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Google Account Authorization / Connect Banner */}
-                {isGoogleAccountConnected ? (
-                  <div className="bg-emerald-50/80 border border-emerald-200 p-3.5 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
-                        {(googleConnectedEmail || 'rbthapamgr09@gmail.com').charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-emerald-950 font-mono">
-                            {googleConnectedEmail || 'rbthapamgr09@gmail.com'}
-                          </span>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-200/80 text-emerald-900">
-                            प्रमाणीकृत (OAuth)
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-emerald-700">
-                          गुगल स्प्रेडसिट र ड्राइभमा डाटा सुरक्षित गर्न प्रत्यक्ष अनुमति सक्रिय छ।
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                      <button
-                        type="button"
-                        onClick={handleGoogleConnect}
-                        disabled={isConnectingGoogle}
-                        className="px-2.5 py-1.5 bg-white hover:bg-emerald-100/70 border border-emerald-300 text-emerald-900 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-                      >
-                        {isConnectingGoogle ? 'लोड हुँदै...' : 'खाता बदल्नुहोस्'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleGoogleDisconnect}
-                        className="px-2.5 py-1.5 bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-                      >
-                        विच्छेद
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="bg-amber-50/90 border border-amber-200/90 p-4 rounded-xl space-y-3">
-                    <div className="flex items-start gap-2.5">
-                      <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                      <div className="space-y-1">
-                        <h4 className="text-xs font-bold text-amber-950">
-                          गुगल सिट जडान अनुमति आवश्यक छ (Google Authorization Required)
-                        </h4>
-                        <p className="text-[11px] text-amber-800 leading-relaxed">
-                          गुगल सुरक्षा नीति अनुसार सिटमा डाटा पठाउन पहिले गुगल खाताबाट अनुमति दिनुपर्छ वा Web App URL जोड्नुपर्छ। कृपया तलको कुनै एक विकल्पबाट तुरुन्त जडान गर्नुहोस्:
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2.5 pt-1">
-                      {/* Option 1: Direct 1-Click for target admin email */}
-                      <button
-                        type="button"
-                        onClick={handleDirectAdminConnect}
-                        disabled={isConnectingAdmin || isConnectingGoogle}
-                        className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 active:scale-98 text-white text-xs font-bold rounded-lg transition-all shadow-xs flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                      >
-                        <UserCheck className={`w-4 h-4 ${isConnectingAdmin ? 'animate-spin' : ''}`} />
-                        <span>{isConnectingAdmin ? 'जडान हुँदै...' : 'rbthapamgr09@gmail.com १-क्लिक जडान'}</span>
-                      </button>
-
-                      {/* Option 2: Universal Google Sign-In Popup */}
-                      <button
-                        type="button"
-                        onClick={handleGoogleConnect}
-                        disabled={isConnectingGoogle || isConnectingAdmin}
-                        className="px-3.5 py-2 bg-white hover:bg-gray-50 border border-gray-300 text-gray-800 text-xs font-bold rounded-lg transition-all shadow-xs flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                      >
-                        <LogIn className={`w-4 h-4 text-blue-600 ${isConnectingGoogle ? 'animate-spin' : ''}`} />
-                        <span>{isConnectingGoogle ? 'पप-अप खुल्दैछ...' : 'गुगल खाता साइन-इन (Sign in with Google)'}</span>
-                      </button>
-
-                      {/* Option 3: Toggle Apps Script Web App URL */}
-                      <button
-                        type="button"
-                        onClick={() => setShowAppsScriptUrlField(!showAppsScriptUrlField)}
-                        className="px-2.5 py-2 text-xs font-semibold text-[#2e5b31] hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        <Globe className="w-3.5 h-3.5" />
-                        <span>{showAppsScriptUrlField ? 'Web App URL लुकाउनुहोस्' : 'वा Web App URL प्रयोग गर्नुहोस् (वैकल्पिक)'}</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Spreadsheet ID & Drive Folder ID Inputs */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                   <div>
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      गुगल स्प्रिडसिट आईडी (Google Spreadsheet ID)
-                    </label>
-                    <input
-                      type="text"
-                      name="spreadsheetId"
-                      value={formData.spreadsheetId || ''}
-                      onChange={(e) => {
-                        const val = e.target.value.trim();
-                        // Extract spreadsheet ID if full URL pasted
-                        const match = val.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-                        const extractedId = match ? match[1] : val;
-                        setFormData((prev) => ({
-                          ...prev,
-                          spreadsheetId: extractedId,
-                          spreadsheetUrl: extractedId ? `https://docs.google.com/spreadsheets/d/${extractedId}/edit` : '',
-                        }));
-                      }}
-                      placeholder="जस्तै: 1FYj8qaOMvDkbUEAxv-Dmhm5Ln4HqoJhh2pPLWuecQOw"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono text-[11px]"
-                    />
-                    <p className="text-[11px] text-[#526a48] mt-1">
-                      सिटको पुरा URL वा सिट आईडी पेस्ट गर्नुहोस्।
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-[#304426] mb-1">
-                      गुगल ड्राइभ फोल्डर आईडी (Google Drive Folder ID)
-                    </label>
-                    <input
-                      type="text"
-                      name="driveFolderId"
-                      value={formData.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj'}
-                      onChange={(e) => {
-                        const val = e.target.value.trim();
-                        const match = val.match(/\/folders\/([a-zA-Z0-9-_]+)/);
-                        const extractedId = match ? match[1] : val;
-                        setFormData((prev) => ({ ...prev, driveFolderId: extractedId }));
-                      }}
-                      placeholder="1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj"
-                      className="w-full p-2.5 rounded-lg border border-[#c8d7c2] bg-white text-[#24331C] focus:ring-2 focus:ring-[#4B6043]/30 focus:border-[#4B6043] outline-none font-mono text-[11px]"
-                    />
-                    <p className="text-[11px] text-[#526a48] mt-1">
-                      कार्यालयको ब्याकअप र फाइल सुरक्षित हुने आधिकारिक ड्राइभ फोल्डर आईडी
+                    <h3 className="text-sm font-bold text-[#1e301a]">
+                      गुगल सिट्स तथा क्लाउड सिंक (Google Sheets Integration)
+                    </h3>
+                    <p className="text-xs text-[#4f6b48] mt-0.5 leading-relaxed">
+                      कर्मचारी, तलब, कर तथा प्रतिवेदनको डाटा सिधै गुगल सिट र ड्राइभमा सिंक गर्ने सम्पूर्ण विधिहरू (OAuth, १-क्लिक जडान, Web App URL, Push/Pull) समर्पित पृष्ठमा उपलब्ध छन्।
                     </p>
                   </div>
                 </div>
 
-                {/* Optional Google Apps Script Web App URL Input */}
-                {showAppsScriptUrlField && (
-                  <div className="p-3.5 bg-blue-50/60 border border-blue-200 rounded-xl space-y-2 text-xs">
-                    <div className="flex items-center justify-between">
-                      <label className="font-semibold text-blue-950 flex items-center gap-1.5">
-                        <Globe className="w-3.5 h-3.5 text-blue-700" />
-                        <span>Google Apps Script Web App URL (वैकल्पिक / Zero-OAuth Sync)</span>
-                      </label>
-                      <span className="text-[10px] text-blue-700 bg-blue-100 px-2 py-0.5 rounded font-medium">
-                        बिना कुनै पप-अप अनुमति
-                      </span>
-                    </div>
-                    <input
-                      type="url"
-                      name="webAppUrl"
-                      value={formData.webAppUrl || ''}
-                      onChange={(e) => {
-                        const val = e.target.value.trim();
-                        setFormData((prev) => ({ ...prev, webAppUrl: val }));
-                        updateGoogleSheetsConfig({ webAppUrl: val });
-                      }}
-                      placeholder="https://script.google.com/macros/s/AKfycbx.../exec"
-                      className="w-full p-2.5 rounded-lg border border-blue-200 bg-white text-gray-900 focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none font-mono text-[11px]"
-                    />
-                    <p className="text-[11px] text-blue-800">
-                      यदि तपाईंले Google Apps Script Deploy गरी Web App URL बनाउनुभएको छ भने यहाँ राख्नुहोस्। यसले प्रत्यक्ष रूपमा सिंक गर्नेछ।
-                    </p>
-                  </div>
-                )}
-
-                {/* Direct Google Sheet Link & Quick Open */}
-                {formData.spreadsheetId && (
-                  <div className="pt-1 flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-[#d6e3d2]">
-                    <span className="text-[11px] text-[#4f6b48] truncate font-mono">
-                      https://docs.google.com/spreadsheets/d/{formData.spreadsheetId}/edit
-                    </span>
-                    <a
-                      href={`https://docs.google.com/spreadsheets/d/${formData.spreadsheetId}/edit`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-[#2e5b31] hover:underline font-semibold shrink-0 ml-2"
-                    >
-                      <span>सिट खोल्नुहोस्</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setAppActiveTab('google_sheets')}
+                  className="px-4 py-2 rounded-xl bg-[#2e5b31] hover:bg-[#234726] active:scale-98 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-xs cursor-pointer shrink-0"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>गुगल सिट्स सिंक खोल्नुहोस्</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </button>
               </div>
             </div>
 
@@ -1041,207 +697,6 @@ export const OrganizationSetupView: React.FC = () => {
             </button>
           </div>
           <Letterhead showSignatureSection={false} />
-        </div>
-      )}
-
-      {/* Modal 1: Google Connection Required Prompt Modal */}
-      {showConnectModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-gray-200 space-y-4 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 shrink-0">
-                  <AlertTriangle className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-gray-900">
-                    गुगल सिट जडान आवश्यक छ
-                  </h3>
-                  <p className="text-xs text-gray-500">
-                    Google Sheets Authorization Required
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowConnectModal(false)}
-                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="text-xs text-gray-700 space-y-2 leading-relaxed bg-amber-50/70 p-3.5 rounded-xl border border-amber-200/80">
-              <p className="font-semibold text-amber-900">
-                तपाईंको स्प्रेडसिट आईडी सेट गरिएको छ तर डाटा सिंक गर्न गुगल अनुमति बाँकी छ।
-              </p>
-              <p className="text-amber-800">
-                गुगल सुरक्षा नीति अनुसार सिटमा डाटा थप्न (Write Permission) का लागि १ पटक गुगल खाता प्रमाणीकरण गर्नुपर्दछ। कृपया तलको कुनै एक विकल्प छान्नुहोस्:
-              </p>
-            </div>
-
-            <div className="space-y-2.5 pt-1">
-              {/* Option 1: 1-Click for Admin Email */}
-              <button
-                type="button"
-                onClick={handleDirectAdminConnect}
-                disabled={isConnectingAdmin || isConnectingGoogle}
-                className="w-full p-3 bg-emerald-700 hover:bg-emerald-800 active:scale-99 text-white rounded-xl font-semibold text-xs flex items-center justify-between transition-all shadow-sm cursor-pointer disabled:opacity-50"
-              >
-                <div className="flex items-center gap-2.5 text-left">
-                  <UserCheck className="w-4 h-4 shrink-0" />
-                  <div>
-                    <div className="font-bold">rbthapamgr09@gmail.com १-क्लिक जडान</div>
-                    <div className="text-[11px] text-emerald-100 font-normal">
-                      सिधै एडमिन खाता जडान गरि तुरुन्त सिंक गर्नुहोस्
-                    </div>
-                  </div>
-                </div>
-                <span className="text-[11px] bg-emerald-800/80 px-2.5 py-1 rounded-md font-bold">
-                  {isConnectingAdmin ? 'जडान हुँदै...' : 'सिफारिस'}
-                </span>
-              </button>
-
-              {/* Option 2: Universal Google Sign-In Popup */}
-              <button
-                type="button"
-                onClick={handleGoogleConnect}
-                disabled={isConnectingGoogle || isConnectingAdmin}
-                className="w-full p-3 bg-white hover:bg-gray-50 active:scale-99 border border-gray-300 text-gray-800 rounded-xl font-semibold text-xs flex items-center justify-between transition-all shadow-xs cursor-pointer disabled:opacity-50"
-              >
-                <div className="flex items-center gap-2.5 text-left">
-                  <LogIn className="w-4 h-4 text-blue-600 shrink-0" />
-                  <div>
-                    <div className="font-bold">गुगल खाता साइन-इन (Sign in with Google)</div>
-                    <div className="text-[11px] text-gray-500 font-normal">
-                      कुनै पनि गुगल खाताको पप-अप मार्फत अनुमति दिनुहोस्
-                    </div>
-                  </div>
-                </div>
-                <span className="text-[11px] text-gray-500 font-medium">
-                  {isConnectingGoogle ? 'पप-अप खुल्दैछ...' : 'OAuth'}
-                </span>
-              </button>
-
-              {/* Option 3: Apps Script Web App URL */}
-              <button
-                type="button"
-                onClick={() => {
-                  setShowConnectModal(false);
-                  setShowAppsScriptUrlField(true);
-                }}
-                className="w-full p-3 bg-blue-50/70 hover:bg-blue-100/70 active:scale-99 border border-blue-200 text-blue-900 rounded-xl font-semibold text-xs flex items-center justify-between transition-all cursor-pointer"
-              >
-                <div className="flex items-center gap-2.5 text-left">
-                  <Globe className="w-4 h-4 text-blue-700 shrink-0" />
-                  <div>
-                    <div className="font-bold">Google Apps Script Web App URL प्रयोग गर्नुहोस्</div>
-                    <div className="text-[11px] text-blue-700 font-normal">
-                      बिना गुगल पप-अप अनुमति सिधै Web App मार्फत सिंक गर्नुहोस्
-                    </div>
-                  </div>
-                </div>
-                <span className="text-[11px] text-blue-800 font-medium">वैकल्पिक</span>
-              </button>
-            </div>
-
-            <div className="pt-2 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowConnectModal(false)}
-                className="px-4 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
-              >
-                बन्द गर्नुहोस्
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal 2: Google Sheets & Drive Sync Help Guide Modal */}
-      {showHelpModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-gray-200 space-y-4 max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in duration-150">
-            <div className="flex items-start justify-between gap-3 border-b border-gray-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-800 shrink-0">
-                  <FileSpreadsheet className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-gray-900">
-                    गुगल सिट तथा ड्राइभ सिंक मार्गदर्शन
-                  </h3>
-                  <p className="text-xs text-gray-500">
-                    Google Sheets & Drive Integration Guide
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowHelpModal(false)}
-                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs text-gray-700 leading-relaxed">
-              <div className="bg-amber-50 p-3.5 rounded-xl border border-amber-200 space-y-1">
-                <h4 className="font-bold text-amber-950 flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>"गुगल सिट जडान आवश्यक" त्रुटि किन आउँछ?</span>
-                </h4>
-                <p className="text-amber-900">
-                  गुगल स्प्रिडसिट आईडी मात्र राख्नु भनेको घरको ठेगाना थाहा पाउनु जस्तै हो। घरभित्र सामान राख्न (डाटा सुरक्षित गर्न) गुगलले सुरक्षाका लागि खाताको साँचो (Authentication Key) माग्छ।
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <h4 className="font-bold text-gray-900 flex items-center gap-1.5">
-                  <Check className="w-4 h-4 text-emerald-600" />
-                  <span>समाधानका २ सजिला तरिकाहरू:</span>
-                </h4>
-
-                <div className="p-3 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-1">
-                  <span className="font-bold text-emerald-950">
-                    १. सिफारिस गरिएको विधि: गुगल खाता जडान (Sign In with Google)
-                  </span>
-                  <p className="text-emerald-800">
-                    खण्ड ४ मा रहेको <strong>"rbthapamgr09@gmail.com १-क्लिक जडान"</strong> वा <strong>"गुगल खाता साइन-इन"</strong> बटन थिच्नुहोस्। यसले गुगलसँग सुरक्षित अनुमति जोड्छ। त्यसपछि <strong>"अहिले सिंक गर्नुहोस्"</strong> थिच्दा सिटमा डाटा तुरुन्तै जान्छ।
-                  </p>
-                </div>
-
-                <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-200 space-y-1">
-                  <span className="font-bold text-blue-950">
-                    २. वैकल्पिक विधि: Google Apps Script Web App URL
-                  </span>
-                  <p className="text-blue-800">
-                    यदि तपाईं गुगल पप-अप अनुमति बिना सिंक गर्न चाहनुहुन्छ भने, <strong>"Google Apps Script Web App URL"</strong> बाकस खोलेर आफ्नो Apps Script Web App को URL पेस्ट गर्नुहोस्। यसबाट बिना कुनै पप-अप सिधै डाटा सिंक हुन्छ।
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-gray-50 p-3.5 rounded-xl border border-gray-200 space-y-1.5">
-                <h4 className="font-bold text-gray-800">स्प्रिडसिट आईडी कहाँ पाइन्छ?</h4>
-                <p className="text-gray-600 font-mono text-[11px] bg-white p-2 rounded border border-gray-200 select-all">
-                  https://docs.google.com/spreadsheets/d/<strong>1FYj8qaOMvDkbUEAxv-Dmhm5Ln4HqoJhh2pPLWuecQOw</strong>/edit
-                </p>
-                <p className="text-gray-500 text-[11px]">
-                  /d/ र /edit बीचको अक्षरहरूको लामो कोड नै तपाईंको स्प्रिडसिट आईडी हो।
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-2 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowHelpModal(false)}
-                className="px-5 py-2 bg-[#2e5b31] hover:bg-[#234726] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
-              >
-                बुझेँ, धन्यवाद
-              </button>
-            </div>
-          </div>
         </div>
       )}
     </div>

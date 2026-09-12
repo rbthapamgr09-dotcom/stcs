@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AlertTriangle,
   Globe,
@@ -29,19 +29,26 @@ import firebaseConfig from '../../../firebase-applet-config.json';
 export const UnauthorizedDomainModal: React.FC = () => {
   const {
     isUnauthorizedDomainModalOpen,
+    unauthorizedDomainModalTab,
     closeUnauthorizedDomainModal,
     connectGoogleAccount,
     setActiveTab,
     addToast,
   } = useApp();
 
-  const [activeErrorTab, setActiveErrorTab] = useState<'403' | '400' | 'apps_script'>('403');
+  const [activeErrorTab, setActiveErrorTab] = useState<'403' | '400' | 'apps_script'>('400');
   const [copiedOrigin, setCopiedOrigin] = useState(false);
   const [copiedDomain, setCopiedDomain] = useState(false);
   const [copiedEmail, setCopiedEmail] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [customClientId, setCustomClientId] = useState(getCustomOAuthClientId() || '');
   const [isRetrying, setIsRetrying] = useState(false);
+
+  useEffect(() => {
+    if (unauthorizedDomainModalTab) {
+      setActiveErrorTab(unauthorizedDomainModalTab);
+    }
+  }, [unauthorizedDomainModalTab]);
 
   if (!isUnauthorizedDomainModalOpen) return null;
 
@@ -149,25 +156,67 @@ export const UnauthorizedDomainModal: React.FC = () => {
     >
       <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-red-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="bg-gradient-to-r from-red-50 via-amber-50 to-orange-50 p-4 sm:p-5 border-b border-red-100 flex items-start justify-between gap-3">
+        <div
+          className={`p-4 sm:p-5 border-b flex items-start justify-between gap-3 ${
+            activeErrorTab === '400'
+              ? 'bg-gradient-to-r from-amber-50 via-orange-50 to-amber-100/60 border-amber-200'
+              : activeErrorTab === 'apps_script'
+              ? 'bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-100/60 border-emerald-200'
+              : 'bg-gradient-to-r from-red-50 via-amber-50 to-orange-50 border-red-100'
+          }`}
+        >
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0 shadow-xs">
-              <ShieldAlert className="w-5 h-5" />
+            <div
+              className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-xs ${
+                activeErrorTab === '400'
+                  ? 'bg-amber-100 text-amber-700'
+                  : activeErrorTab === 'apps_script'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-red-100 text-red-600'
+              }`}
+            >
+              {activeErrorTab === '400' ? (
+                <Globe className="w-5 h-5" />
+              ) : activeErrorTab === 'apps_script' ? (
+                <FileSpreadsheet className="w-5 h-5" />
+              ) : (
+                <ShieldAlert className="w-5 h-5" />
+              )}
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 bg-red-600 text-white rounded">
-                  Error 403: access_denied
+                <span
+                  className={`text-[10px] uppercase font-black tracking-wider px-2 py-0.5 text-white rounded ${
+                    activeErrorTab === '400'
+                      ? 'bg-amber-600'
+                      : activeErrorTab === 'apps_script'
+                      ? 'bg-emerald-600'
+                      : 'bg-red-600'
+                  }`}
+                >
+                  {activeErrorTab === '400'
+                    ? 'Error 400: origin_mismatch'
+                    : activeErrorTab === 'apps_script'
+                    ? 'Apps Script (Zero-OAuth)'
+                    : 'Error 403: access_denied'}
                 </span>
-                <span className="text-[10px] uppercase font-semibold tracking-wider px-2 py-0.5 bg-amber-100 text-amber-900 rounded font-mono">
-                  inner-volt-dxfhk.firebaseapp.com
+                <span className="text-[10px] uppercase font-semibold tracking-wider px-2 py-0.5 bg-white/80 text-gray-800 rounded font-mono border border-gray-200">
+                  {currentHostname}
                 </span>
               </div>
               <h2 className="text-base font-bold text-[#24331C] mt-1">
-                गुगल साइन-इन तथा OAuth अनुमति समाधान (Fix Access Denied)
+                {activeErrorTab === '400'
+                  ? 'होस्ट डोमेन / Origin अधिकृत गर्न आवश्यक'
+                  : activeErrorTab === 'apps_script'
+                  ? 'Google Apps Script Web App सिंक विधि'
+                  : 'गुगल साइन-इन तथा OAuth अनुमति समाधान (Fix Access Denied)'}
               </h2>
               <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">
-                Google Cloud को OAuth Consent Screen 'Testing' मोडमा हुँदा अनधिकृत इमेललाई Google ले रोक्दछ। तलका चरणहरू पूरा गर्नुहोस्:
+                {activeErrorTab === '400'
+                  ? `तपाईंको होस्ट डोमेन (${currentHostname}) वा JavaScript Origin (${currentOrigin}) गुगलको अधिकृत सूचीमा नभएकोले Google Sign-In रोकिएको हो।`
+                  : activeErrorTab === 'apps_script'
+                  ? 'कुनै पनि Google Cloud डोमेन अधिकृतीकरण बिना १००% सिधै डाटा सिंक गर्नुहोस्।'
+                  : "Google Cloud को OAuth Consent Screen 'Testing' मोडमा हुँदा अनधिकृत इमेललाई Google ले रोक्दछ। तलका चरणहरू पूरा गर्नुहोस्:"}
               </p>
             </div>
           </div>
@@ -412,26 +461,73 @@ export const UnauthorizedDomainModal: React.FC = () => {
                 </div>
               </div>
 
-              {/* Direct links */}
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <a
-                  href={`https://console.cloud.google.com/apis/credentials?project=${firebaseProjectId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-gray-100 text-gray-800 text-[11px] font-bold rounded-lg border border-gray-300 transition-colors shadow-2xs"
+              {/* Step by step guide */}
+              <div className="bg-white p-3.5 rounded-xl border border-gray-200 space-y-3">
+                <div className="font-bold text-[#24331C] text-xs flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>डोमेन अधिकृत गर्ने सजिलो २ चरण (२ मिनेट लाग्नेछ):</span>
+                </div>
+
+                <div className="space-y-2 text-[11.5px] text-gray-700">
+                  <div className="p-2.5 bg-gray-50 rounded-lg border border-gray-200 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-gray-900">
+                        चरण १: Firebase मा Host Domain थप्नुहोस्
+                      </span>
+                      <a
+                        href={firebaseAuthSettingsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] rounded transition-colors"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        <span>Firebase Settings ↗</span>
+                      </a>
+                    </div>
+                    <p className="text-gray-600 text-[11px]">
+                      <strong>"Authorized domains"</strong> सेक्सनमा गई <strong>"Add domain"</strong> थिच्नुहोस् र माथिको Host Domain (<code className="font-mono bg-white px-1 border rounded">{currentHostname}</code>) पेस्ट गरी Add गर्नुहोस्।
+                    </p>
+                  </div>
+
+                  <div className="p-2.5 bg-gray-50 rounded-lg border border-gray-200 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-gray-900">
+                        चरण २: Google Cloud Console मा Origin थप्नुहोस्
+                      </span>
+                      <a
+                        href={`https://console.cloud.google.com/apis/credentials?project=${firebaseProjectId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded transition-colors"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        <span>Cloud Credentials ↗</span>
+                      </a>
+                    </div>
+                    <p className="text-gray-600 text-[11px]">
+                      OAuth 2.0 Web Client ID मा क्लिक गर्नुहोस् र <strong>"Authorized JavaScript origins"</strong> मा <strong>"ADD URI"</strong> गरि (<code className="font-mono bg-white px-1 border rounded">{currentOrigin}</code>) थपेर Save गर्नुहोस्।
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Direct links & Quick Jump to Apps Script */}
+              <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center justify-between gap-2">
+                <div className="space-y-0.5">
+                  <div className="font-bold text-emerald-950 text-xs">
+                    कन्सोल सेटिङ नगरी तुरुन्त सिंक गर्न चाहनुहुन्छ?
+                  </div>
+                  <div className="text-emerald-800 text-[11px]">
+                    Google Apps Script Web App प्रयोग गर्नुहोस् — यसमा कुनै डोमेन अधिकृत गरिरहनु पर्दैन।
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveErrorTab('apps_script')}
+                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px] rounded-lg shrink-0 cursor-pointer shadow-xs"
                 >
-                  <ExternalLink className="w-3 h-3 text-blue-600" />
-                  <span>Google Cloud Credentials खोल्नुहोस् ↗</span>
-                </a>
-                <a
-                  href={firebaseAuthSettingsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-gray-100 text-gray-800 text-[11px] font-bold rounded-lg border border-gray-300 transition-colors shadow-2xs"
-                >
-                  <ExternalLink className="w-3 h-3 text-amber-600" />
-                  <span>Firebase Authorized Domains खोल्नुहोस् ↗</span>
-                </a>
+                  Apps Script हेर्नुहोस् ↗
+                </button>
               </div>
             </div>
           )}
