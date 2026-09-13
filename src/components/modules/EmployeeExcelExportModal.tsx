@@ -51,7 +51,7 @@ export const EmployeeExcelExportModal: React.FC<EmployeeExcelExportModalProps> =
 
   const targetEmployees = exportScope === 'filtered' ? filteredEmployees : allEmployees;
   const orgName = activeOrganization?.name || organization?.name || 'नेपाल सरकार';
-  const orgSubName = activeOrganization?.subTitle || organization?.subTitle || '';
+  const orgSubName = activeOrganization?.ministryName || activeOrganization?.departmentName || organization?.ministryName || organization?.officeName || '';
   const orgAddress = activeOrganization?.address || organization?.address || '';
 
   // Helper to format values according to numeral format preference

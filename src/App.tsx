@@ -10,6 +10,7 @@ import { CalculationAuditModal } from './components/common/CalculationAuditModal
 import { AuthModal } from './components/common/AuthModal';
 import { ScreenLockOverlay } from './components/common/ScreenLockOverlay';
 import { UnauthorizedDomainModal } from './components/common/UnauthorizedDomainModal';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { LoginPage } from './components/auth/LoginPage';
 
 // Modules
@@ -139,9 +140,11 @@ const AppContent: React.FC = () => {
 
 export function App() {
   return (
-    <AppProvider>
-      <AppContent />
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <AppContent />
+      </AppProvider>
+    </ErrorBoundary>
   );
 }
 

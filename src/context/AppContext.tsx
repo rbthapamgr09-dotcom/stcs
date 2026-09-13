@@ -1242,9 +1242,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   });
 
-  const activeOrganization = useMemo(() => {
-    if (organizations.length === 0) return DEFAULT_ORGANIZATION;
-    return organizations.find((o) => o.id === activeOrganizationId) || organizations[0] || DEFAULT_ORGANIZATION;
+  const activeOrganization = useMemo((): OrganizationItem | undefined => {
+    if (organizations.length === 0) return undefined;
+    return organizations.find((o) => o.id === activeOrganizationId) || organizations[0];
   }, [organizations, activeOrganizationId]);
 
   // Sync active scoped data to fyDatabase when local states change
@@ -3161,7 +3161,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       gradeRate: 1100,
       currentGradeCount: 1,
       gradeIncreaseCount: 0,
-      gradeIncreaseMonth: 'शत्रावण',
+      gradeIncreaseMonth: 'श्रावण',
       lifeInsuranceFund: 400,
       dearnessAllowance: 2000,
       uniformAllowance: 10000,

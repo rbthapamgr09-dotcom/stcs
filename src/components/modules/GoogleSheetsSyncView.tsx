@@ -820,7 +820,7 @@ function logSyncAudit(ss, action, status, user, details) {
       </div>
 
       {/* Multi-Organization Context & Active Office Switcher */}
-      {organizations.length === 0 || !organization.officeName ? (
+      {(!organizations || organizations.length === 0 || !organization?.officeName) ? (
         <div className="bg-[#f8faf6] p-5 rounded-2xl border border-dashed border-[#b8d4b2] text-center space-y-2">
           <div className="w-10 h-10 rounded-xl bg-[#edf5ea] text-[#4B6043] flex items-center justify-center mx-auto">
             <Building2 className="w-5 h-5" />
@@ -843,16 +843,16 @@ function logSyncAudit(ss, action, status, user, details) {
                     हाल सक्रिय कार्यालय (Active Office):
                   </span>
                   <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10.5px] font-bold rounded-md border border-emerald-300">
-                    {organization.officeName}
+                    {organization?.officeName || 'कार्यालय'}
                   </span>
                 </div>
                 <p className="text-xs font-bold text-[#24331C] mt-0.5">
-                  {organization.officeName} — गुगल सिट तथा सिंक व्यवस्थापन
+                  {organization?.officeName || 'कार्यालय'} — गुगल सिट तथा सिंक व्यवस्थापन
                 </p>
               </div>
             </div>
 
-            {organizations.length > 1 && (
+            {(organizations && organizations.length > 1) && (
               <div className="flex items-center gap-2">
                 <label htmlFor="org-switcher-select" className="text-xs font-bold text-[#2e4722] whitespace-nowrap">
                   कार्यालय बदल्नुहोस्:
@@ -879,7 +879,7 @@ function logSyncAudit(ss, action, status, user, details) {
               <span>
                 यस कार्यालयको Google Sheet:{' '}
                 <strong className="text-emerald-900 font-mono">
-                  {formData.spreadsheetName || `stcs_${organization.officeName}`}
+                  {formData?.spreadsheetName || `stcs_${organization?.officeName || 'कार्यालय'}`}
                 </strong>
               </span>
             </div>
