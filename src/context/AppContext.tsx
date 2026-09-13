@@ -1186,21 +1186,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     getCloudUsers().then((cloudUsers) => {
       if (cloudUsers && cloudUsers.length > 0 && isMounted) {
         setUsers((prev) => {
-          const validCloud = cloudUsers.filter(
-            (u) =>
-              u.username?.toLowerCase() !== 'admin_mbp' &&
-              u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
-              u.id !== 'admin_mbp'
-          );
-          const merged = prev.filter(
-            (u) =>
-              u.username?.toLowerCase() !== 'admin_mbp' &&
-              u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
-              u.id !== 'admin_mbp'
-          );
-          for (const cu of validCloud) {
+          const merged = [...prev];
+          for (const cu of cloudUsers) {
             const idx = merged.findIndex(
-              (u) => u.id === cu.id || u.username.toLowerCase() === cu.username.toLowerCase()
+              (u) => u.id === cu.id || (u.username && cu.username && u.username.toLowerCase() === cu.username.toLowerCase())
             );
             if (idx >= 0) {
               merged[idx] = { ...merged[idx], ...cu };
@@ -1934,19 +1923,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       createdAt: new Date().toLocaleDateString('ne-NP'),
     };
 
-    setUsers((prev) => {
-      const updatedUsers = [...prev.filter((u) => u.username.toLowerCase() !== cleanUsername), newUser];
-      try {
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
-      } catch {
-        // Storage error ignore
-      }
-      saveCloudUsers(updatedUsers).catch(console.warn);
-      return updatedUsers;
-    });
-
+    const updatedUsers = [...users.filter((u) => u.username.toLowerCase() !== cleanUsername), newUser];
+    setUsers(updatedUsers);
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    } catch {
+      // Storage error ignore
+    }
+    saveCloudUsers(updatedUsers).catch(console.warn);
     saveSingleUserToCloud(newUser).catch(console.warn);
-    triggerAutoSyncOnSave();
+    triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
       action: 'USER_CREATED',
@@ -3595,15 +3581,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isFirstLogin: true,
         createdAt: new Date().toLocaleDateString('ne-NP'),
       };
-      setUsers((prev) => {
-        const updatedUsers = [...prev.filter((u) => u.username.toLowerCase() !== adminUser.username.toLowerCase()), adminUser];
-        try {
-          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
-        } catch {}
-        saveCloudUsers(updatedUsers).catch((e) => console.warn('Cloud save users notice:', e));
-        return updatedUsers;
-      });
+      const updatedUsers = [...users.filter((u) => u.username.toLowerCase() !== adminUser.username.toLowerCase()), adminUser];
+      setUsers(updatedUsers);
+      try {
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+      } catch {}
+      saveCloudUsers(updatedUsers).catch((e) => console.warn('Cloud save users notice:', e));
       saveSingleUserToCloud(adminUser).catch((e) => console.warn('Cloud save admin user notice:', e));
+      triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
     }
 
     addToast(

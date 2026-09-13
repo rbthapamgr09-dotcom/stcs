@@ -403,17 +403,19 @@ export const SettingsView: React.FC = () => {
     return organizations.filter((org) => org.id === userOrgId);
   }, [organizations, currentUser]);
 
-  const handleOpenAddUser = () => {
+  const handleOpenAddUser = (targetOrgId?: string) => {
     setEditingUser(null);
+    const resolvedOrgId = targetOrgId || activeOrganizationId || (organizations[0]?.id ?? 'default_org');
+    const targetOrg = organizations.find((o) => o.id === resolvedOrgId);
     setUserFormData({
       username: '',
       password: 'user123',
       fullName: '',
       role: 'ACCOUNTANT',
-      organizationId: activeOrganizationId || (organizations[0]?.id ?? 'default_org'),
+      organizationId: resolvedOrgId,
       email: '',
-      phone: '',
-      designation: '',
+      phone: targetOrg?.phone || targetOrg?.mobile || '',
+      designation: 'लेखापाल',
       securityPin: '1234',
       securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',
       securityAnswer: 'नेपाल',
@@ -550,10 +552,16 @@ export const SettingsView: React.FC = () => {
         ...editingUser,
         ...safeUserData,
       });
-      if (ok) setShowUserModal(false);
+      if (ok) {
+        addToast('success', 'प्रयोगकर्ता अद्यावधिक भयो', `'${cleanFullName}' को विवरण सफलतापूर्वक सुरक्षित गरियो।`);
+        setShowUserModal(false);
+      }
     } else {
       const ok = addUser(safeUserData);
-      if (ok) setShowUserModal(false);
+      if (ok) {
+        addToast('success', 'प्रयोगकर्ता सिर्जना भयो', `नयाँ प्रयोगकर्ता '${cleanFullName}' (${cleanUsername}) सफलतापूर्वक दर्ता र सुरक्षित गरियो।`);
+        setShowUserModal(false);
+      }
     }
   };
 
@@ -1345,6 +1353,110 @@ export const SettingsView: React.FC = () => {
                             </span>
                           </div>
                         </div>
+
+                        {/* Office Users Section - Visibility and direct management */}
+                        <div className="p-2.5 bg-[#f5f9f3] rounded-xl border border-[#d6e5d1] space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <Users className="w-3.5 h-3.5 text-[#4B6043]" />
+                              <span className="text-[11px] font-bold text-[#24331C]">
+                                सम्बद्ध प्रयोगकर्ताहरू ({orgUsers.length})
+                              </span>
+                              {orgAdmins.length > 0 && (
+                                <span className="text-[9.5px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded border border-emerald-200">
+                                  प्रशासक: {orgAdmins.length}
+                                </span>
+                              )}
+                            </div>
+
+                            {(hasPermission('MANAGE_USERS') || hasPermission('MANAGE_GENERAL_USERS') || currentUser?.role === 'SUPER_ADMIN') && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAddUser(org.id)}
+                                className="px-2 py-1 bg-[#4B6043] hover:bg-[#384c31] text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                                title="यस कार्यालयका लागि नयाँ प्रयोगकर्ता थप्नुहोस्"
+                              >
+                                <UserPlus className="w-3 h-3" />
+                                <span>+ प्रयोगकर्ता थप्नुहोस्</span>
+                              </button>
+                            )}
+                          </div>
+
+                          {orgUsers.length === 0 ? (
+                            <div className="bg-white/80 p-2.5 rounded-lg border border-dashed border-[#c6d7c1] text-center">
+                              <p className="text-[10.5px] text-gray-500">
+                                यस कार्यालयमा कुनै प्रयोगकर्ता दर्ता भएको छैन।
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAddUser(org.id)}
+                                className="mt-1 text-[10.5px] text-[#4B6043] font-bold hover:underline cursor-pointer inline-flex items-center gap-1"
+                              >
+                                <Plus className="w-3 h-3" />
+                                <span>यस कार्यालयको लागि प्रशासक वा प्रयोगकर्ता थप्नुहोस्</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                              {orgUsers.map((u) => (
+                                <div
+                                  key={u.id}
+                                  className="bg-white p-2 rounded-lg border border-[#e2ece0] flex items-center justify-between gap-2 shadow-2xs hover:border-[#c2d7bf] transition-colors"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div className="w-6 h-6 rounded-full bg-[#4B6043] text-white flex items-center justify-center text-[10px] font-bold shrink-0">
+                                      {u.fullName.charAt(0)}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="font-bold text-[#24331C] text-[11px] truncate block">
+                                          {u.fullName}
+                                        </span>
+                                        <span className="font-mono text-[9.5px] bg-gray-100 text-gray-700 px-1 rounded border border-gray-200">
+                                          {u.username}
+                                        </span>
+                                        <span
+                                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${getRoleBadgeStyle(
+                                            u.role
+                                          )}`}
+                                        >
+                                          {u.role}
+                                        </span>
+                                        {!u.isActive && (
+                                          <span className="text-[9px] bg-red-100 text-red-700 font-bold px-1 rounded">
+                                            निष्क्रिय
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-[10px] text-gray-500 truncate">
+                                        {u.designation || 'कर्मचारी'} {u.phone ? `• 📞 ${u.phone}` : ''}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenResetPassword(u)}
+                                      className="p-1 text-amber-700 hover:bg-amber-50 rounded transition-colors cursor-pointer"
+                                      title="पासवर्ड परिवर्तन गर्नुहोस्"
+                                    >
+                                      <KeyRound className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenEditUser(u)}
+                                      className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors cursor-pointer"
+                                      title="प्रयोगकर्ता विवरण सम्पादन गर्नुहोस्"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {/* Action Bar with Toggle and Switch */}
@@ -1433,7 +1545,7 @@ export const SettingsView: React.FC = () => {
 
             {(hasPermission('MANAGE_USERS') || hasPermission('MANAGE_GENERAL_USERS')) && (
               <button
-                onClick={handleOpenAddUser}
+                onClick={() => handleOpenAddUser()}
                 className="px-3.5 py-1.5 bg-[#4B6043] hover:bg-[#384c31] text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
               >
                 <UserPlus className="w-4 h-4 shrink-0" />
@@ -2298,14 +2410,13 @@ export const SettingsView: React.FC = () => {
 
                   <div className="space-y-1">
                     <label className="font-bold text-gray-700">
-                      सुरक्षा उत्तर (Security Answer): <span className="text-red-500 font-bold">*</span>
+                      सुरक्षा उत्तर (Security Answer):
                     </label>
                     <input
                       type="text"
-                      required
                       value={userFormData.securityAnswer}
                       onChange={(e) => setUserFormData({ ...userFormData, securityAnswer: e.target.value })}
-                      placeholder="जस्तै: काठमाडौं वा नेपाल"
+                      placeholder="जस्तै: काठमाडौं वा नेपाल (पूर्वनिर्धारित: नेपाल)"
                       className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-semibold outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
@@ -2373,28 +2484,26 @@ export const SettingsView: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="font-bold text-gray-700">
-                    पद / पदनाम (Designation): <span className="text-red-500 font-bold">*</span>
+                    पद / पदनाम (Designation):
                   </label>
                   <input
                     type="text"
-                    required
                     value={userFormData.designation}
                     onChange={(e) => setUserFormData({ ...userFormData, designation: e.target.value })}
-                    placeholder="जस्तै: लेखा अधिकृत"
+                    placeholder="जस्तै: लेखा अधिकृत / कर्मचारी"
                     className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-semibold outline-none focus:ring-2 focus:ring-[#4B6043]"
                   />
                 </div>
 
                 <div className="space-y-1">
                   <label className="font-bold text-gray-700">
-                    इमेल (Email): <span className="text-red-500 font-bold">*</span>
+                    इमेल (Email):
                   </label>
                   <input
-                    type="email"
-                    required
+                    type="text"
                     value={userFormData.email}
                     onChange={(e) => setUserFormData({ ...userFormData, email: e.target.value })}
-                    placeholder="account@gov.np"
+                    placeholder="जस्तै: ram@gov.np (खाली छोड्दा स्वतः बन्नेछ)"
                     className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-semibold outline-none focus:ring-2 focus:ring-[#4B6043]"
                   />
                 </div>
@@ -2403,14 +2512,13 @@ export const SettingsView: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="font-bold text-gray-700">
-                    सम्पर्क फोन (Phone): <span className="text-red-500 font-bold">*</span>
+                    सम्पर्क फोन / मोबाइल (Phone):
                   </label>
                   <input
                     type="text"
-                    required
                     value={userFormData.phone}
                     onChange={(e) => setUserFormData({ ...userFormData, phone: e.target.value })}
-                    placeholder="9851000000"
+                    placeholder="९८५१०००००० (ऐच्छिक)"
                     className="w-full p-2 rounded-xl border border-[#c8d7c2] bg-white font-semibold outline-none focus:ring-2 focus:ring-[#4B6043]"
                   />
                 </div>
