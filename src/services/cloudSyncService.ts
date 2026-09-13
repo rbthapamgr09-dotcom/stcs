@@ -582,6 +582,24 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
   return true;
 }
 
+export function normalizeUserData(u: User): User {
+  let fullName = u.fullName;
+  if (
+    u.username?.toLowerCase() === 'admin_mbp' &&
+    (!fullName || fullName.trim() === 'Mahakali Bridge Project' || fullName.trim() === 'admin_mbp')
+  ) {
+    fullName = 'महाकाली पुल योजना, कंचनपुर';
+  }
+  return {
+    ...u,
+    fullName,
+    organizationName:
+      u.username?.toLowerCase() === 'admin_mbp' && (!u.organizationName || u.organizationName === 'default_org')
+        ? 'महाकाली पुल योजना'
+        : u.organizationName,
+  };
+}
+
 /**
  * Authenticate directly against Cloud SQL backend API with Firestore fallback
  */
@@ -603,10 +621,11 @@ export async function cloudLogin(
     });
     const json = await res.json();
     if (json.success && json.user) {
-      // Ensure isActive is boolean
+      // Ensure isActive is boolean and user data is normalized
+      const normalized = normalizeUserData(json.user);
       const userObj: User = {
-        ...json.user,
-        isActive: json.user.isActive !== false,
+        ...normalized,
+        isActive: normalized.isActive !== false,
       };
       return { success: true, user: userObj };
     }
@@ -624,7 +643,7 @@ export async function cloudLogin(
     if (snap.exists()) {
       const data = snap.data();
       if (Array.isArray(data?.users)) {
-        const foundUser = data.users.find(
+        const foundUserRaw = data.users.find(
           (u: User) =>
             (u.username && u.username.toLowerCase() === cleanInput) ||
             (u.email && u.email.toLowerCase() === cleanInput) ||
@@ -632,7 +651,8 @@ export async function cloudLogin(
             (u.id && u.id === username.trim())
         );
 
-        if (foundUser) {
+        if (foundUserRaw) {
+          const foundUser = normalizeUserData(foundUserRaw);
           if (foundUser.isActive === false) {
             return {
               success: false,
@@ -651,7 +671,7 @@ export async function cloudLogin(
 
           const safeFoundUser: User = {
             ...foundUser,
-            isActive: foundUser.isActive !== false,
+            isActive: Boolean(foundUser.isActive ?? true),
           };
 
           if (password === undefined || password === '') {
@@ -765,28 +785,15 @@ export async function getCloudUsers(): Promise<User[] | null> {
             }
           }
         }
-        const filterOutDeleted = (list: User[]) =>
-          list.filter(
-            (u) =>
-              u.username?.toLowerCase() !== 'admin_mbp' &&
-              u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
-              u.id !== 'admin_mbp'
-          );
-        return filterOutDeleted(Array.from(mergedMap.values()));
+        const normalizedList = Array.from(mergedMap.values()).map(normalizeUserData);
+        return normalizedList;
       }
     }
   } catch (err) {
     console.warn('Could not fetch users from Cloud Firestore:', err);
   }
 
-  return sqlUsers.length > 0
-    ? sqlUsers.filter(
-        (u) =>
-          u.username?.toLowerCase() !== 'admin_mbp' &&
-          u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
-          u.id !== 'admin_mbp'
-      )
-    : null;
+  return sqlUsers.length > 0 ? sqlUsers.map(normalizeUserData) : null;
 }
 
 /**

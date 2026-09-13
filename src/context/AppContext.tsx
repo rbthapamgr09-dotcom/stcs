@@ -74,6 +74,7 @@ import {
   saveOrgSheetsConfig,
   getOrgSheetsConfig,
   cloudLogin,
+  normalizeUserData,
   db,
 } from '../services/cloudSyncService';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -607,12 +608,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const saved = localStorage.getItem(STORAGE_KEYS.USERS);
       if (saved) {
         const parsed: User[] = JSON.parse(saved);
-        const resultUsers = (Array.isArray(parsed) ? [...parsed] : []).filter(
-          (u) =>
-            u.username?.toLowerCase() !== 'admin_mbp' &&
-            u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
-            u.id !== 'admin_mbp'
-        );
+        const resultUsers = (Array.isArray(parsed) ? [...parsed] : []).map(normalizeUserData);
         DEFAULT_USERS.forEach((defUser) => {
           const exists = resultUsers.some(
             (u) =>
@@ -626,7 +622,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
 
         // Ensure default passwords/pins and valid fallback values exist for all loaded users
-        const finalUsers = resultUsers.map((u) => ({
+        const finalUsers = resultUsers.map(normalizeUserData).map((u) => ({
           ...u,
           password:
             u.password ||
@@ -926,7 +922,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const parsed = JSON.parse(saved);
         if (
           parsed.officeName === 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' ||
-          parsed.officeName === 'महाकाली पुल योजना' ||
           !parsed.officeName
         ) {
           try { localStorage.removeItem(STORAGE_KEYS.ORG); } catch {}
@@ -1115,18 +1110,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const d = snap.data();
           if (d && Array.isArray(d.users) && d.users.length > 0) {
             setUsers((prev) => {
-              const validCloudUsers = (d.users as User[]).filter(
-                (u) =>
-                  u.username?.toLowerCase() !== 'admin_mbp' &&
-                  u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
-                  u.id !== 'admin_mbp'
-              );
-              const merged = prev.filter(
-                (u) =>
-                  u.username?.toLowerCase() !== 'admin_mbp' &&
-                  u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
-                  u.id !== 'admin_mbp'
-              );
+              const validCloudUsers = (d.users as User[]).map(normalizeUserData);
+              const merged = [...prev];
               for (const cu of validCloudUsers) {
                 const idx = merged.findIndex(
                   (u) => u.id === cu.id || (u.username && cu.username && u.username.toLowerCase() === cu.username.toLowerCase())
@@ -1149,10 +1134,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('Real-time users listener setup notice:', listenerErr);
     }
 
-    // Explicitly delete admin_mbp user from cloud databases
-    deleteCloudUser('admin_mbp').catch(() => {});
-    deleteCloudUser('user_admin_mbp').catch(() => {});
-
     // 2. Multi-Organization Cloud Sync across Devices
     getCloudOrganizations().then((cloudOrgs) => {
       if (isMounted) {
@@ -1161,7 +1142,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             (co) =>
               co.id !== 'org_default' &&
               co.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' &&
-              co.officeName !== 'महाकाली पुल योजना' &&
               Boolean(co.officeName)
           );
           setOrganizations((prev) => {
@@ -1231,8 +1211,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (cloudConn.organization) {
           if (
             cloudConn.organization.officeName &&
-            cloudConn.organization.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' &&
-            cloudConn.organization.officeName !== 'महाकाली पुल योजना'
+            cloudConn.organization.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय'
           ) {
             setOrganization((prev) => ({
               ...prev,
@@ -1284,7 +1263,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             (o) =>
               o.id !== 'org_default' &&
               o.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' &&
-              o.officeName !== 'महाकाली पुल योजना' &&
               Boolean(o.officeName)
           );
           return filtered;
@@ -1553,6 +1531,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           (u.email && u.email.toLowerCase() === trimmedInput)) &&
         u.isActive
     );
+    if (found) {
+      found = normalizeUserData(found);
+    }
 
     // Fast-path: Check local password if user was found locally
     let isLocalPasswordValid = false;

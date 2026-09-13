@@ -136,11 +136,18 @@ async function startServer() {
         id: user.uid || String(user.id),
         uid: user.uid,
         username: user.username,
-        fullName: user.fullName,
+        fullName:
+          user.username?.toLowerCase() === 'admin_mbp' &&
+          (!user.fullName || user.fullName === 'Mahakali Bridge Project' || user.fullName === 'admin_mbp')
+            ? 'महाकाली पुल योजना, कंचनपुर'
+            : user.fullName,
         email: user.email,
         role: user.role,
         organizationId: user.organizationId || 'org_default',
-        organizationName: user.organizationName || meta.organizationName,
+        organizationName:
+          user.organizationName ||
+          meta.organizationName ||
+          (user.username?.toLowerCase() === 'admin_mbp' ? 'महाकाली पुल योजना' : undefined),
         designation: user.designation || meta.designation,
         phone: user.phone || meta.phone,
         password: storedPassword,

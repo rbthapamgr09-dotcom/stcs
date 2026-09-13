@@ -124,7 +124,15 @@ export const LoginPage: React.FC = () => {
 
       if (result.mustChangePassword && result.user) {
         // User must change password on first login
-        setPendingUser(result.user);
+        const safeUser = {
+          ...result.user,
+          fullName:
+            result.user.username?.toLowerCase() === 'admin_mbp' &&
+            (!result.user.fullName || result.user.fullName === 'Mahakali Bridge Project' || result.user.fullName === 'admin_mbp')
+              ? 'महाकाली पुल योजना, कंचनपुर'
+              : result.user.fullName,
+        };
+        setPendingUser(safeUser);
         setFirstTimePin(result.user.securityPin || '1234');
         setFirstTimeQuestion(result.user.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?');
         setFirstTimeAnswer(result.user.securityAnswer || '');
@@ -505,7 +513,7 @@ export const LoginPage: React.FC = () => {
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-1 text-xs">
                 <div className="flex items-center gap-1.5 text-amber-900 font-bold">
                   <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>प्रयोगकर्ता: {pendingUser.fullName}</span>
+                  <span>प्रयोगकर्ता: {pendingUser.fullName === 'Mahakali Bridge Project' ? 'महाकाली पुल योजना, कंचनपुर' : pendingUser.fullName}</span>
                 </div>
                 <div className="flex gap-2 text-[10px]">
                   <span className={`px-2 py-0.5 rounded border font-bold ${getRoleBadge(pendingUser.role)}`}>
