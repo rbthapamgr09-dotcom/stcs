@@ -52,17 +52,51 @@ export const UnauthorizedDomainModal: React.FC = () => {
 
   if (!isUnauthorizedDomainModalOpen) return null;
 
-  const currentHostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const currentHostname = typeof window !== 'undefined' ? window.location.hostname : 'stcs.rbthapamgr09.workers.dev';
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://stcs.rbthapamgr09.workers.dev';
+  const productionDomain = 'stcs.rbthapamgr09.workers.dev';
+  const productionOrigin = 'https://stcs.rbthapamgr09.workers.dev';
   const firebaseProjectId = firebaseConfig.projectId || 'inner-volt-dxfhk';
+  const authDomainHandler = `https://${firebaseConfig.authDomain || 'inner-volt-dxfhk.firebaseapp.com'}/__/auth/handler`;
   const targetEmail = 'rbthapamgr09@gmail.com';
+
+  const [copiedProdOrigin, setCopiedProdOrigin] = useState(false);
+  const [copiedProdDomain, setCopiedProdDomain] = useState(false);
+  const [copiedHandler, setCopiedHandler] = useState(false);
 
   // Direct Console URLs
   const gcpConsentUrl = `https://console.cloud.google.com/apis/credentials/consent?project=${firebaseProjectId}`;
   const firebaseProvidersUrl = `https://console.firebase.google.com/project/${firebaseProjectId}/authentication/providers`;
   const firebaseAuthSettingsUrl = `https://console.firebase.google.com/project/${firebaseProjectId}/authentication/settings`;
+  const gcpCredentialsUrl = `https://console.cloud.google.com/apis/credentials?project=${firebaseProjectId}`;
   const gcpSheetsApiUrl = `https://console.cloud.google.com/apis/library/sheets.googleapis.com?project=${firebaseProjectId}`;
   const gcpDriveApiUrl = `https://console.cloud.google.com/apis/library/drive.googleapis.com?project=${firebaseProjectId}`;
+
+  const handleCopyText = (text: string, type: 'prodOrigin' | 'prodDomain' | 'handler') => {
+    try {
+      navigator.clipboard.writeText(text);
+    } catch {
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+    if (type === 'prodOrigin') {
+      setCopiedProdOrigin(true);
+      addToast('info', 'Origin कपी भयो', `${text} क्लिपबोर्डमा कपी गरियो।`);
+      setTimeout(() => setCopiedProdOrigin(false), 2500);
+    } else if (type === 'prodDomain') {
+      setCopiedProdDomain(true);
+      addToast('info', 'डोमेन कपी भयो', `${text} क्लिपबोर्डमा कपी गरियो।`);
+      setTimeout(() => setCopiedProdDomain(false), 2500);
+    } else {
+      setCopiedHandler(true);
+      addToast('info', 'Redirect URI कपी भयो', `${text} क्लिपबोर्डमा कपी गरियो।`);
+      setTimeout(() => setCopiedHandler(false), 2500);
+    }
+  };
 
   const handleCopyEmail = () => {
     try {
@@ -422,40 +456,70 @@ export const UnauthorizedDomainModal: React.FC = () => {
                 </p>
               </div>
 
-              {/* Current JavaScript Origin & Domain display */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {/* Origin (for Google Cloud Console) */}
-                <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-1.5">
-                  <span className="text-[11px] font-bold text-gray-700 block">
-                    १. JavaScript Origin (Google Cloud का लागि):
+              {/* Production Domain and Origin display */}
+              <div className="bg-emerald-50/70 border border-emerald-300 rounded-xl p-3.5 space-y-2.5">
+                <div className="font-bold text-emerald-950 text-xs flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Globe className="w-4 h-4 text-emerald-700" />
+                    <span>तपाईंको उत्पादन डोमेन तथा Origins (Production Configuration)</span>
                   </span>
-                  <div className="flex items-center justify-between gap-1 bg-gray-50 px-2.5 py-1.5 rounded border border-gray-200 font-mono text-[11px] text-emerald-900">
-                    <span className="truncate">{currentOrigin}</span>
-                    <button
-                      type="button"
-                      onClick={handleCopyOrigin}
-                      className="px-2 py-1 bg-[#4B6043] hover:bg-[#384a32] text-white text-[10px] font-bold rounded transition-colors shrink-0 flex items-center gap-1 cursor-pointer"
-                    >
-                      {copiedOrigin ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
-                      <span>{copiedOrigin ? 'कपी भयो' : 'कपी'}</span>
-                    </button>
+                  <span className="text-[10px] px-2 py-0.5 bg-emerald-200 text-emerald-900 rounded font-bold">
+                    Production
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {/* Production Origin */}
+                  <div className="bg-white p-2.5 rounded-lg border border-emerald-200 space-y-1">
+                    <span className="text-[10.5px] font-bold text-gray-700 block">
+                      १. Authorized JavaScript Origin:
+                    </span>
+                    <div className="flex items-center justify-between gap-1 bg-gray-50 px-2 py-1 rounded border border-gray-200 font-mono text-[11px] text-emerald-900">
+                      <span className="truncate">{productionOrigin}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyText(productionOrigin, 'prodOrigin')}
+                        className="px-2 py-1 bg-[#4B6043] hover:bg-[#384a32] text-white text-[10px] font-bold rounded transition-colors shrink-0 flex items-center gap-1 cursor-pointer"
+                      >
+                        {copiedProdOrigin ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedProdOrigin ? 'कपी भयो' : 'कपी'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Production Domain */}
+                  <div className="bg-white p-2.5 rounded-lg border border-emerald-200 space-y-1">
+                    <span className="text-[10.5px] font-bold text-gray-700 block">
+                      २. Firebase Authorized Domain:
+                    </span>
+                    <div className="flex items-center justify-between gap-1 bg-gray-50 px-2 py-1 rounded border border-gray-200 font-mono text-[11px] text-emerald-900">
+                      <span className="truncate">{productionDomain}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyText(productionDomain, 'prodDomain')}
+                        className="px-2 py-1 bg-[#4B6043] hover:bg-[#384a32] text-white text-[10px] font-bold rounded transition-colors shrink-0 flex items-center gap-1 cursor-pointer"
+                      >
+                        {copiedProdDomain ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedProdDomain ? 'कपी भयो' : 'कपी'}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                {/* Hostname (for Firebase Console) */}
-                <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-1.5">
-                  <span className="text-[11px] font-bold text-gray-700 block">
-                    २. Host Domain (Firebase का लागि):
+                {/* Redirect URI */}
+                <div className="bg-white p-2.5 rounded-lg border border-emerald-200 space-y-1">
+                  <span className="text-[10.5px] font-bold text-gray-700 block">
+                    ३. Authorized Redirect URI (OAuth 2.0 Web Client ID मा):
                   </span>
-                  <div className="flex items-center justify-between gap-1 bg-gray-50 px-2.5 py-1.5 rounded border border-gray-200 font-mono text-[11px] text-emerald-900">
-                    <span className="truncate">{currentHostname}</span>
+                  <div className="flex items-center justify-between gap-1 bg-gray-50 px-2 py-1 rounded border border-gray-200 font-mono text-[11px] text-emerald-900">
+                    <span className="truncate">{authDomainHandler}</span>
                     <button
                       type="button"
-                      onClick={handleCopyDomain}
+                      onClick={() => handleCopyText(authDomainHandler, 'handler')}
                       className="px-2 py-1 bg-[#4B6043] hover:bg-[#384a32] text-white text-[10px] font-bold rounded transition-colors shrink-0 flex items-center gap-1 cursor-pointer"
                     >
-                      {copiedDomain ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
-                      <span>{copiedDomain ? 'कपी भयो' : 'कपी'}</span>
+                      {copiedHandler ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedHandler ? 'कपी भयो' : 'कपी'}</span>
                     </button>
                   </div>
                 </div>
@@ -465,47 +529,47 @@ export const UnauthorizedDomainModal: React.FC = () => {
               <div className="bg-white p-3.5 rounded-xl border border-gray-200 space-y-3">
                 <div className="font-bold text-[#24331C] text-xs flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>डोमेन अधिकृत गर्ने सजिलो २ चरण (२ मिनेट लाग्नेछ):</span>
+                  <span>डोमेन तथा Origin अधिकृत गर्ने २ सजिलो चरण:</span>
                 </div>
 
                 <div className="space-y-2 text-[11.5px] text-gray-700">
                   <div className="p-2.5 bg-gray-50 rounded-lg border border-gray-200 space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-gray-900">
-                        चरण १: Firebase मा Host Domain थप्नुहोस्
+                        चरण १: Firebase Console मा Authorized Domain थप्नुहोस्
                       </span>
                       <a
                         href={firebaseAuthSettingsUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] rounded transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] rounded transition-colors"
                       >
                         <ExternalLink className="w-3 h-3" />
                         <span>Firebase Settings ↗</span>
                       </a>
                     </div>
                     <p className="text-gray-600 text-[11px]">
-                      <strong>"Authorized domains"</strong> सेक्सनमा गई <strong>"Add domain"</strong> थिच्नुहोस् र माथिको Host Domain (<code className="font-mono bg-white px-1 border rounded">{currentHostname}</code>) पेस्ट गरी Add गर्नुहोस्।
+                      <strong>Authentication &gt; Settings &gt; Authorized domains</strong> मा जानुहोस्, <strong>"Add domain"</strong> थिच्नुहोस् र <code className="font-mono bg-white px-1 border rounded">{productionDomain}</code> पेस्ट गरी Add गर्नुहोस्।
                     </p>
                   </div>
 
                   <div className="p-2.5 bg-gray-50 rounded-lg border border-gray-200 space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-gray-900">
-                        चरण २: Google Cloud Console मा Origin थप्नुहोस्
+                        चरण २: Google Cloud Console मा JavaScript Origin थप्नुहोस्
                       </span>
                       <a
-                        href={`https://console.cloud.google.com/apis/credentials?project=${firebaseProjectId}`}
+                        href={gcpCredentialsUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded transition-colors"
                       >
                         <ExternalLink className="w-3 h-3" />
                         <span>Cloud Credentials ↗</span>
                       </a>
                     </div>
                     <p className="text-gray-600 text-[11px]">
-                      OAuth 2.0 Web Client ID मा क्लिक गर्नुहोस् र <strong>"Authorized JavaScript origins"</strong> मा <strong>"ADD URI"</strong> गरि (<code className="font-mono bg-white px-1 border rounded">{currentOrigin}</code>) थपेर Save गर्नुहोस्।
+                      <strong>APIs &amp; Services &gt; Credentials</strong> मा गई OAuth 2.0 Web Client ID खोल्नुहोस्। <strong>"Authorized JavaScript origins"</strong> मा <strong>"ADD URI"</strong> गरि <code className="font-mono bg-white px-1 border rounded">{productionOrigin}</code> थप्नुहोस् र <strong>SAVE</strong> गर्नुहोस्।
                     </p>
                   </div>
                 </div>

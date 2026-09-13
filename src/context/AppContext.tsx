@@ -45,6 +45,7 @@ import {
   getCurrentGoogleUser,
   isGoogleConnected,
   directConnectAdminAccount,
+  getNepaliAuthErrorMessage,
 } from '../services/googleAuthService';
 import {
   createAppSpreadsheet,
@@ -3860,7 +3861,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return false;
       }
 
-      const msg = err?.message || 'गुगल खाता जडान हुन सकेन।';
+      const msg = getNepaliAuthErrorMessage(err);
       addToast('error', 'गुगल जडान असफल', msg);
       return false;
     }
@@ -3980,7 +3981,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return false;
       }
 
-      addToast('error', 'गुगल लगइन असफल', err?.message || 'गुगल खाता मार्फत लगइन हुन सकेन।');
+      const msg = getNepaliAuthErrorMessage(err);
+      addToast('error', 'गुगल लगइन असफल', msg);
       return false;
     }
   };

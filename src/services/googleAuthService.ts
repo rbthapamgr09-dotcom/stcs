@@ -2,12 +2,18 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
   signOut,
   User as FirebaseUser,
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
+
+// Production domain reference
+export const PRODUCTION_DOMAIN = 'stcs.rbthapamgr09.workers.dev';
+export const PRODUCTION_ORIGIN = 'https://stcs.rbthapamgr09.workers.dev';
 
 // OAuth Scopes strictly matching required Google Workspace permissions
 export const SCOPES = [
@@ -113,6 +119,62 @@ let currentGoogleUser: GoogleAuthUser | null = null;
 let gisScriptPromise: Promise<void> | null = null;
 
 /**
+ * Format and translate Firebase / Google Auth errors to user-friendly Nepali messages
+ */
+export const getNepaliAuthErrorMessage = (error: any): string => {
+  const errorCode = error?.code || '';
+  const errorMsg = String(error?.message || '');
+
+  if (
+    errorCode === 'auth/unauthorized-domain' ||
+    errorMsg.includes('auth/unauthorized-domain') ||
+    errorMsg.includes('unauthorized-domain')
+  ) {
+    const host = typeof window !== 'undefined' ? window.location.hostname : PRODUCTION_DOMAIN;
+    return `डोमेन अधिकृत छैन (auth/unauthorized-domain): तपाईंको डोमेन '${host}' लाई Firebase Console > Authentication > Settings > Authorized domains मा थप्न आवश्यक छ।`;
+  }
+
+  if (
+    errorCode === 'origin_mismatch' ||
+    errorMsg.includes('origin_mismatch') ||
+    errorMsg.includes('redirect_uri_mismatch')
+  ) {
+    const origin = typeof window !== 'undefined' ? window.location.origin : PRODUCTION_ORIGIN;
+    return `Origin अधिकृत छैन (Error 400: origin_mismatch): गुगल क्लाउड कन्सोल (Google Cloud Console > Credentials > OAuth 2.0 Web Client ID) मा '${origin}' लाई 'Authorized JavaScript origins' मा थप्न आवश्यक छ।`;
+  }
+
+  if (errorCode === 'auth/popup-blocked') {
+    return 'ब्राउजरले लगइन पप-अप (Popup Window) रोकेको छ। कृपया ब्राउजर सेटिङमा गई यस साइटको लागि Pop-up अनब्लक (Allow) गर्नुहोस्।';
+  }
+
+  if (errorCode === 'auth/popup-closed-by-user') {
+    return 'लगइन पप-अप विन्डो प्रक्रिया पूरा नगरी बन्द गरियो। कृपया पुनः प्रयास गर्नुहोस्।';
+  }
+
+  if (errorCode === 'auth/cancelled-popup-request') {
+    return 'लगइन प्रक्रिया पहिले नै चालु छ। कृपया प्रतीक्षा गर्नुहोस् वा पुनः प्रयास गर्नुहोस्।';
+  }
+
+  if (errorCode === 'auth/network-request-failed') {
+    return 'इन्टरनेट कनेक्सनमा समस्या आयो। कृपया आफ्नो इन्टरनेट जाँच गरी पुनः प्रयास गर्नुहोस्।';
+  }
+
+  if (errorCode === 'auth/operation-not-allowed') {
+    return 'Firebase Console मा Google Authentication प्रदायक (Provider) सक्रिय (Enable) गरिएको छैन।';
+  }
+
+  if (errorCode === 'auth/user-disabled') {
+    return 'यो गुगल प्रयोगकर्ता खाता प्रशासकद्वारा निष्क्रिय (Disabled) गरिएको छ।';
+  }
+
+  if (errorMsg.includes('403') || errorMsg.includes('access_denied')) {
+    return 'गुगल OAuth अनुमति अस्वीकृत (Error 403: access_denied): Google Cloud Console को OAuth Consent Screen मा आफ्नो इमेललाई Test users मा थप्नुहोस् वा Apps Script विधि प्रयोग गर्नुहोस्।';
+  }
+
+  return errorMsg || 'गुगल प्रमाणीकरण प्रक्रियामा अज्ञात त्रुटि देखा पर्यो।';
+};
+
+/**
  * Dynamically loads the Google Identity Services (GSI) script
  */
 export const loadGoogleIdentityScript = (): Promise<void> => {
@@ -212,12 +274,35 @@ export const signInWithGoogleIdentityServices = async (
 };
 
 /**
- * Initialize auth state listener. Call this on app load.
+ * Initialize auth state listener and check for redirect results.
  */
 export const initAuth = (
   onAuthSuccess?: (user: GoogleAuthUser, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // Check redirect result on app initialization
+  getRedirectResult(auth)
+    .then((result) => {
+      if (result) {
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        const token = credential?.accessToken || '';
+        if (token) cachedAccessToken = token;
+
+        const mappedUser: GoogleAuthUser = {
+          uid: result.user.uid,
+          email: result.user.email,
+          displayName: result.user.displayName || result.user.email || 'गुगल प्रयोगकर्ता',
+          photoURL: result.user.photoURL,
+        };
+        currentGoogleUser = mappedUser;
+        saveConnectedUserLocal(mappedUser);
+        if (onAuthSuccess) onAuthSuccess(mappedUser, token);
+      }
+    })
+    .catch((err) => {
+      console.warn('getRedirectResult notice:', err);
+    });
+
   return onAuthStateChanged(auth, async (user: FirebaseUser | null) => {
     if (user) {
       const mappedUser: GoogleAuthUser = {
@@ -265,9 +350,8 @@ export const directConnectAdminAccount = (
 };
 
 /**
- * Must be called from a button click or user interaction
- * By default uses standardProvider (zero 403 / access_denied restrictions, works for 100% of Google accounts)
- * Supports rbthapamgr09@gmail.com and all other Google accounts seamlessly
+ * Standard Firebase Google Sign-In with popup
+ * Supports production domain (stcs.rbthapamgr09.workers.dev), local development, and preview origins
  */
 export const googleSignIn = async (
   requireSensitiveScopes = false
@@ -298,7 +382,7 @@ export const googleSignIn = async (
     const errorCode = error?.code || '';
     const errorMsg = String(error?.message || '');
 
-    // Check if error is unauthorized-domain (e.g. Cloudflare Pages or custom domain)
+    // Check if error is unauthorized-domain (e.g. Cloudflare Pages or custom production domain)
     const isUnauthorizedDomain =
       errorCode === 'auth/unauthorized-domain' ||
       errorMsg.includes('auth/unauthorized-domain') ||
@@ -319,8 +403,8 @@ export const googleSignIn = async (
         }
       }
 
-      const currentHostname = typeof window !== 'undefined' ? window.location.hostname : 'Host Domain';
-      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+      const currentHostname = typeof window !== 'undefined' ? window.location.hostname : PRODUCTION_DOMAIN;
+      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : PRODUCTION_ORIGIN;
       const customErr = new Error(
         `तपाईंको होस्ट डोमेन (${currentHostname}) वा JavaScript Origin (${currentOrigin}) गुगल अधिकृत सूचीमा नभएकोले Error 400 देखा परेको हो।`
       );
@@ -335,6 +419,14 @@ export const googleSignIn = async (
   } finally {
     isSigningIn = false;
   }
+};
+
+/**
+ * Sign In using Redirect (Useful if popup is blocked by browser policies)
+ */
+export const googleSignInRedirect = async (requireSensitiveScopes = false): Promise<void> => {
+  const providerToUse = requireSensitiveScopes ? sensitiveProvider : standardProvider;
+  await signInWithRedirect(auth, providerToUse);
 };
 
 /**
@@ -390,3 +482,4 @@ export const getCurrentGoogleUser = (): GoogleAuthUser | null => {
   if (currentGoogleUser) return currentGoogleUser;
   return getSavedConnectedUser();
 };
+
