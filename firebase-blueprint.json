@@ -1,0 +1,58 @@
+{
+  "entities": {
+    "Organization": {
+      "title": "Organization",
+      "description": "Government Office or Organization Entity",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "officeName": { "type": "string" },
+        "officeCode": { "type": "string" },
+        "province": { "type": "string" },
+        "district": { "type": "string" },
+        "address": { "type": "string" },
+        "email": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "officeName"]
+    },
+    "User": {
+      "title": "User",
+      "description": "System User Profile & Authentication Data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "role": { "type": "string" },
+        "fullName": { "type": "string" },
+        "organizationId": { "type": "string" }
+      },
+      "required": ["id", "username", "role", "fullName"]
+    },
+    "Connection": {
+      "title": "Connection",
+      "description": "Google Sheets & System Configs",
+      "type": "object",
+      "properties": {
+        "updatedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/system_organizations/{orgId}": {
+      "schema": "Organization",
+      "description": "Registered offices and organizations"
+    },
+    "/system_users/{userId}": {
+      "schema": "User",
+      "description": "Registered users and authentication profiles"
+    },
+    "/system_connections/{configId}": {
+      "schema": "Connection",
+      "description": "System connections and sync configurations"
+    }
+  }
+}

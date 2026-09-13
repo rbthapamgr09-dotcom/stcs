@@ -1072,6 +1072,67 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('Real-time listener setup notice:', listenerErr);
     }
 
+    // Real-time Firestore Listener for Registered Organizations
+    let unsubscribeOrgs: (() => void) | undefined;
+    try {
+      const orgsDocRef = doc(db, 'system_organizations', 'registered_offices');
+      unsubscribeOrgs = onSnapshot(orgsDocRef, (snap) => {
+        if (snap.exists() && isMounted) {
+          const d = snap.data();
+          if (d && Array.isArray(d.organizations) && d.organizations.length > 0) {
+            setOrganizations((prev) => {
+              const mergedMap = new Map<string, OrganizationItem>();
+              prev.forEach((o) => {
+                if (o.officeName) mergedMap.set(o.id, o);
+              });
+              (d.organizations as OrganizationItem[]).forEach((co) => {
+                if (co.officeName) mergedMap.set(co.id, co);
+              });
+              const merged = Array.from(mergedMap.values());
+              try {
+                localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
+          }
+        }
+      }, (err) => console.warn('Organizations onSnapshot notice:', err));
+    } catch (listenerErr) {
+      console.warn('Real-time org listener setup notice:', listenerErr);
+    }
+
+    // Real-time Firestore Listener for Registered Users
+    let unsubscribeUsers: (() => void) | undefined;
+    try {
+      const usersDocRef = doc(db, 'system_users', 'registered_accounts');
+      unsubscribeUsers = onSnapshot(usersDocRef, (snap) => {
+        if (snap.exists() && isMounted) {
+          const d = snap.data();
+          if (d && Array.isArray(d.users) && d.users.length > 0) {
+            setUsers((prev) => {
+              const merged = [...prev];
+              for (const cu of d.users as User[]) {
+                const idx = merged.findIndex(
+                  (u) => u.id === cu.id || (u.username && cu.username && u.username.toLowerCase() === cu.username.toLowerCase())
+                );
+                if (idx >= 0) {
+                  merged[idx] = { ...merged[idx], ...cu };
+                } else {
+                  merged.push(cu);
+                }
+              }
+              try {
+                localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
+          }
+        }
+      }, (err) => console.warn('Users onSnapshot notice:', err));
+    } catch (listenerErr) {
+      console.warn('Real-time users listener setup notice:', listenerErr);
+    }
+
     // 2. Multi-Organization Cloud Sync across Devices
     getCloudOrganizations().then((cloudOrgs) => {
       if (isMounted) {
@@ -1083,15 +1144,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               co.officeName !== 'महाकाली पुल योजना' &&
               Boolean(co.officeName)
           );
-          setOrganizations(filtered);
-          try {
-            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(filtered));
-          } catch {}
-        } else {
-          setOrganizations([]);
-          try {
-            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify([]));
-          } catch {}
+          setOrganizations((prev) => {
+            const mergedMap = new Map<string, OrganizationItem>();
+            prev.forEach((o) => {
+              if (o.officeName) mergedMap.set(o.id, o);
+            });
+            filtered.forEach((co) => {
+              if (co.officeName) mergedMap.set(co.id, co);
+            });
+            const merged = Array.from(mergedMap.values());
+            try {
+              localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
         }
       }
     }).catch((e) => console.warn('Cloud organizations sync notice:', e));
@@ -1161,6 +1227,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       isMounted = false;
       if (unsubscribeSupport) {
         unsubscribeSupport();
+      }
+      if (unsubscribeOrgs) {
+        unsubscribeOrgs();
+      }
+      if (unsubscribeUsers) {
+        unsubscribeUsers();
       }
     };
   }, [currentUser]);

@@ -4,6 +4,8 @@ import {
   doc,
   getDoc,
   setDoc,
+  collection,
+  getDocs,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { GoogleSheetsConfig, OrganizationSetup, OrganizationItem, User, SystemSupportContact } from '../types';
@@ -93,6 +95,21 @@ export async function saveCloudOrganization(org: OrganizationItem): Promise<bool
   try {
     const orgDocRef = doc(db, ORGANIZATIONS_COLLECTION, org.id);
     await setDoc(orgDocRef, { ...payload, updatedAt: new Date().toISOString() }, { merge: true });
+
+    // Also ensure master list doc is kept updated
+    const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
+    const snap = await getDoc(listDocRef);
+    let currentOrgs: OrganizationItem[] = [];
+    if (snap.exists() && Array.isArray(snap.data()?.organizations)) {
+      currentOrgs = snap.data().organizations;
+    }
+    const filtered = currentOrgs.filter((item) => item.id !== org.id);
+    filtered.push(org);
+    await setDoc(listDocRef, {
+      organizations: filtered,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+
     return true;
   } catch (err) {
     console.warn('Could not save organization to Cloud Firestore:', err);
@@ -115,7 +132,7 @@ export async function saveCloudOrganizations(orgs: OrganizationItem[]): Promise<
     await setDoc(listDocRef, {
       organizations: orgs,
       updatedAt: new Date().toISOString(),
-    });
+    }, { merge: true });
     return true;
   } catch (err) {
     console.warn('Could not save organizations list to Cloud Firestore:', err);
@@ -186,6 +203,21 @@ export async function getCloudOrganizations(): Promise<OrganizationItem[] | null
       if (Array.isArray(data.organizations) && data.organizations.length > 0) {
         return data.organizations as OrganizationItem[];
       }
+    }
+
+    // Secondary fallback: query all documents in collection
+    const colSnap = await getDocs(collection(db, ORGANIZATIONS_COLLECTION));
+    const orgsFromDocs: OrganizationItem[] = [];
+    colSnap.forEach((d) => {
+      if (d.id !== MAIN_ORGS_DOC) {
+        const item = d.data() as OrganizationItem;
+        if (item && item.officeName) {
+          orgsFromDocs.push(item);
+        }
+      }
+    });
+    if (orgsFromDocs.length > 0) {
+      return orgsFromDocs;
     }
     return null;
   } catch (err) {
