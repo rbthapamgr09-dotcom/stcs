@@ -607,7 +607,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const saved = localStorage.getItem(STORAGE_KEYS.USERS);
       if (saved) {
         const parsed: User[] = JSON.parse(saved);
-        const resultUsers = Array.isArray(parsed) ? [...parsed] : [];
+        const resultUsers = (Array.isArray(parsed) ? [...parsed] : []).filter(
+          (u) =>
+            u.username?.toLowerCase() !== 'admin_mbp' &&
+            u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
+            u.id !== 'admin_mbp'
+        );
         DEFAULT_USERS.forEach((defUser) => {
           const exists = resultUsers.some(
             (u) =>
@@ -1110,8 +1115,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const d = snap.data();
           if (d && Array.isArray(d.users) && d.users.length > 0) {
             setUsers((prev) => {
-              const merged = [...prev];
-              for (const cu of d.users as User[]) {
+              const validCloudUsers = (d.users as User[]).filter(
+                (u) =>
+                  u.username?.toLowerCase() !== 'admin_mbp' &&
+                  u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
+                  u.id !== 'admin_mbp'
+              );
+              const merged = prev.filter(
+                (u) =>
+                  u.username?.toLowerCase() !== 'admin_mbp' &&
+                  u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
+                  u.id !== 'admin_mbp'
+              );
+              for (const cu of validCloudUsers) {
                 const idx = merged.findIndex(
                   (u) => u.id === cu.id || (u.username && cu.username && u.username.toLowerCase() === cu.username.toLowerCase())
                 );
@@ -1132,6 +1148,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch (listenerErr) {
       console.warn('Real-time users listener setup notice:', listenerErr);
     }
+
+    // Explicitly delete admin_mbp user from cloud databases
+    deleteCloudUser('admin_mbp').catch(() => {});
+    deleteCloudUser('user_admin_mbp').catch(() => {});
 
     // 2. Multi-Organization Cloud Sync across Devices
     getCloudOrganizations().then((cloudOrgs) => {
@@ -1166,8 +1186,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     getCloudUsers().then((cloudUsers) => {
       if (cloudUsers && cloudUsers.length > 0 && isMounted) {
         setUsers((prev) => {
-          const merged = [...prev];
-          for (const cu of cloudUsers) {
+          const validCloud = cloudUsers.filter(
+            (u) =>
+              u.username?.toLowerCase() !== 'admin_mbp' &&
+              u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
+              u.id !== 'admin_mbp'
+          );
+          const merged = prev.filter(
+            (u) =>
+              u.username?.toLowerCase() !== 'admin_mbp' &&
+              u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
+              u.id !== 'admin_mbp'
+          );
+          for (const cu of validCloud) {
             const idx = merged.findIndex(
               (u) => u.id === cu.id || u.username.toLowerCase() === cu.username.toLowerCase()
             );
@@ -1341,14 +1372,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [fyDatabase]);
 
-  // Persist users and current user
+  // Persist users and current user locally
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
-      // Persist to Cloud Firestore for cross-device availability
-      if (users && users.length > 0) {
-        saveCloudUsers(users).catch(() => {});
-      }
     } catch {}
   }, [users]);
 
@@ -1415,17 +1442,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.GSHEETS, JSON.stringify(googleSheetsConfig));
-      // Save configuration to Cloud Firestore so other devices can discover and auto-load it
-      if (googleSheetsConfig.webAppUrl || googleSheetsConfig.spreadsheetId) {
-        saveCloudAppConnection(
-          googleSheetsConfig,
-          organization,
-          activeOrganizationId,
-          currentUser?.username
-        ).catch(() => {});
-      }
     } catch {}
-  }, [googleSheetsConfig, organization, activeOrganizationId, currentUser]);
+  }, [googleSheetsConfig]);
 
   // Toast Helpers
   const addToast = (type: ToastMessage['type'], title: string, message: string) => {

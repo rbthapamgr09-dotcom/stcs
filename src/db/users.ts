@@ -183,7 +183,16 @@ export async function getUserByUsernameOrEmailOrUid(identifier: string) {
 export async function deleteUserByUid(uid: string) {
   try {
     const result = await withDbRetry(() =>
-      db.delete(users).where(eq(users.uid, uid)).returning()
+      db
+        .delete(users)
+        .where(
+          or(
+            eq(users.uid, uid),
+            eq(users.username, uid),
+            eq(users.email, uid)
+          )
+        )
+        .returning()
     );
     return result[0] || null;
   } catch (error) {

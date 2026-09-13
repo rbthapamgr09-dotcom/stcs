@@ -17,6 +17,38 @@ export const db = (firebaseConfig as any).firestoreDatabaseId
   ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
   : getFirestore(app);
 
+// Firestore Quota Circuit Breaker & Safety Guard
+let isFirestoreQuotaExhausted = false;
+let quotaExhaustedTimestamp = 0;
+const QUOTA_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes cooldown before attempting retry
+
+function canWriteFirestore(): boolean {
+  if (isFirestoreQuotaExhausted) {
+    if (Date.now() - quotaExhaustedTimestamp > QUOTA_COOLDOWN_MS) {
+      isFirestoreQuotaExhausted = false;
+      return true;
+    }
+    return false;
+  }
+  return true;
+}
+
+function handleFirestoreWriteError(err: any, context: string) {
+  const msg = String(err?.message || err);
+  if (
+    msg.includes('resource-exhausted') ||
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('Write stream exhausted') ||
+    msg.includes('quota')
+  ) {
+    isFirestoreQuotaExhausted = true;
+    quotaExhaustedTimestamp = Date.now();
+    console.warn(`Firestore quota limit reached during [${context}]. Gracefully using local/SQL cache.`);
+  } else {
+    console.warn(`Firestore [${context}] note:`, err);
+  }
+}
+
 export interface CloudAppConnectionData {
   webAppUrl?: string;
   spreadsheetId?: string;
@@ -92,29 +124,32 @@ export async function saveCloudOrganization(org: OrganizationItem): Promise<bool
   }
 
   // 2. Sync to Firestore
-  try {
-    const orgDocRef = doc(db, ORGANIZATIONS_COLLECTION, org.id);
-    await setDoc(orgDocRef, { ...payload, updatedAt: new Date().toISOString() }, { merge: true });
+  if (canWriteFirestore()) {
+    try {
+      const orgDocRef = doc(db, ORGANIZATIONS_COLLECTION, org.id);
+      await setDoc(orgDocRef, { ...payload, updatedAt: new Date().toISOString() }, { merge: true });
 
-    // Also ensure master list doc is kept updated
-    const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
-    const snap = await getDoc(listDocRef);
-    let currentOrgs: OrganizationItem[] = [];
-    if (snap.exists() && Array.isArray(snap.data()?.organizations)) {
-      currentOrgs = snap.data().organizations;
+      // Also ensure master list doc is kept updated
+      const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
+      const snap = await getDoc(listDocRef);
+      let currentOrgs: OrganizationItem[] = [];
+      if (snap.exists() && Array.isArray(snap.data()?.organizations)) {
+        currentOrgs = snap.data().organizations;
+      }
+      const filtered = currentOrgs.filter((item) => item.id !== org.id);
+      filtered.push(org);
+      await setDoc(listDocRef, {
+        organizations: filtered,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+
+      return true;
+    } catch (err) {
+      handleFirestoreWriteError(err, 'saveCloudOrganization');
+      return true;
     }
-    const filtered = currentOrgs.filter((item) => item.id !== org.id);
-    filtered.push(org);
-    await setDoc(listDocRef, {
-      organizations: filtered,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-
-    return true;
-  } catch (err) {
-    console.warn('Could not save organization to Cloud Firestore:', err);
-    return true;
   }
+  return true;
 }
 
 /**
@@ -123,21 +158,30 @@ export async function saveCloudOrganization(org: OrganizationItem): Promise<bool
 export async function saveCloudOrganizations(orgs: OrganizationItem[]): Promise<boolean> {
   // 1. Save individually to Cloud SQL
   for (const org of orgs) {
-    saveCloudOrganization(org).catch((e) => console.warn('Sync org warning:', e));
+    try {
+      await fetch('/api/organization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(org),
+      });
+    } catch {}
   }
 
   // 2. Save full array to Firestore
-  try {
-    const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
-    await setDoc(listDocRef, {
-      organizations: orgs,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-    return true;
-  } catch (err) {
-    console.warn('Could not save organizations list to Cloud Firestore:', err);
-    return true;
+  if (canWriteFirestore()) {
+    try {
+      const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
+      await setDoc(listDocRef, {
+        organizations: orgs,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      return true;
+    } catch (err) {
+      handleFirestoreWriteError(err, 'saveCloudOrganizations');
+      return true;
+    }
   }
+  return true;
 }
 
 /**
@@ -256,14 +300,17 @@ export async function saveOrgSheetsConfig(orgId: string, config: GoogleSheetsCon
     console.warn('Could not save org sheets config to Cloud SQL:', err);
   }
 
-  try {
-    const docRef = doc(db, CONNECTIONS_COLLECTION, key);
-    await setDoc(docRef, { ...config, updatedAt: new Date().toISOString() }, { merge: true });
-    return true;
-  } catch (err) {
-    console.warn('Could not save org sheets config to Firestore:', err);
-    return true;
+  if (canWriteFirestore()) {
+    try {
+      const docRef = doc(db, CONNECTIONS_COLLECTION, key);
+      await setDoc(docRef, { ...config, updatedAt: new Date().toISOString() }, { merge: true });
+      return true;
+    } catch (err) {
+      handleFirestoreWriteError(err, 'saveOrgSheetsConfig');
+      return true;
+    }
   }
+  return true;
 }
 
 /**
@@ -340,19 +387,22 @@ export async function saveCloudAppConnection(
   }
 
   // 2. Sync to Firestore for multi-device fallback
-  try {
-    const configDocRef = doc(db, CONNECTIONS_COLLECTION, MAIN_CONFIG_DOC);
-    await setDoc(configDocRef, data, { merge: true });
+  if (canWriteFirestore()) {
+    try {
+      const configDocRef = doc(db, CONNECTIONS_COLLECTION, MAIN_CONFIG_DOC);
+      await setDoc(configDocRef, data, { merge: true });
 
-    if (updatedBy) {
-      const userDocRef = doc(db, CONNECTIONS_COLLECTION, `user_${updatedBy.toLowerCase()}`);
-      await setDoc(userDocRef, data, { merge: true });
+      if (updatedBy) {
+        const userDocRef = doc(db, CONNECTIONS_COLLECTION, `user_${updatedBy.toLowerCase()}`);
+        await setDoc(userDocRef, data, { merge: true });
+      }
+      return true;
+    } catch (err) {
+      handleFirestoreWriteError(err, 'saveCloudAppConnection');
+      return true; // Cloud SQL may have already succeeded
     }
-    return true;
-  } catch (err) {
-    console.warn('Could not save connection to Cloud Firestore:', err);
-    return true; // Cloud SQL may have already succeeded
   }
+  return true;
 }
 
 /**
@@ -513,17 +563,20 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
   }
 
   // 2. Sync to Firestore
-  try {
-    const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
-    await setDoc(docRef, {
-      users: usersList,
-      updatedAt: new Date().toISOString(),
-    });
-    return true;
-  } catch (err) {
-    console.warn('Could not save users to Cloud Firestore:', err);
-    return true;
+  if (canWriteFirestore()) {
+    try {
+      const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
+      await setDoc(docRef, {
+        users: usersList,
+        updatedAt: new Date().toISOString(),
+      });
+      return true;
+    } catch (err) {
+      handleFirestoreWriteError(err, 'saveCloudUsers');
+      return true;
+    }
   }
+  return true;
 }
 
 /**
@@ -709,14 +762,28 @@ export async function getCloudUsers(): Promise<User[] | null> {
             }
           }
         }
-        return Array.from(mergedMap.values());
+        const filterOutDeleted = (list: User[]) =>
+          list.filter(
+            (u) =>
+              u.username?.toLowerCase() !== 'admin_mbp' &&
+              u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
+              u.id !== 'admin_mbp'
+          );
+        return filterOutDeleted(Array.from(mergedMap.values()));
       }
     }
   } catch (err) {
     console.warn('Could not fetch users from Cloud Firestore:', err);
   }
 
-  return sqlUsers.length > 0 ? sqlUsers : null;
+  return sqlUsers.length > 0
+    ? sqlUsers.filter(
+        (u) =>
+          u.username?.toLowerCase() !== 'admin_mbp' &&
+          u.email?.toLowerCase() !== 'mbp.dor@gmail.com' &&
+          u.id !== 'admin_mbp'
+      )
+    : null;
 }
 
 /**
@@ -828,26 +895,29 @@ export async function saveCloudSupportContact(
   }
 
   // 2. Sync to Firestore
-  try {
-    const contactDocRef = doc(db, CONNECTIONS_COLLECTION, 'system_support_contact');
-    await setDoc(
-      contactDocRef,
-      { ...cleanContact, updatedAt: new Date().toISOString(), lastUpdatedBy: updatedBy || 'system' },
-      { merge: true }
-    );
+  if (canWriteFirestore()) {
+    try {
+      const contactDocRef = doc(db, CONNECTIONS_COLLECTION, 'system_support_contact');
+      await setDoc(
+        contactDocRef,
+        { ...cleanContact, updatedAt: new Date().toISOString(), lastUpdatedBy: updatedBy || 'system' },
+        { merge: true }
+      );
 
-    // Also update main config doc
-    const mainDocRef = doc(db, CONNECTIONS_COLLECTION, MAIN_CONFIG_DOC);
-    await setDoc(
-      mainDocRef,
-      { supportContact: cleanContact, updatedAt: new Date().toISOString() },
-      { merge: true }
-    );
-    return true;
-  } catch (err) {
-    console.warn('Could not save support contact to Cloud Firestore:', err);
-    return true;
+      // Also update main config doc
+      const mainDocRef = doc(db, CONNECTIONS_COLLECTION, MAIN_CONFIG_DOC);
+      await setDoc(
+        mainDocRef,
+        { supportContact: cleanContact, updatedAt: new Date().toISOString() },
+        { merge: true }
+      );
+      return true;
+    } catch (err) {
+      handleFirestoreWriteError(err, 'saveCloudSupportContact');
+      return true;
+    }
   }
+  return true;
 }
 
 /**
