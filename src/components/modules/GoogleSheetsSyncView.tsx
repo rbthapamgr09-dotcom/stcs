@@ -27,6 +27,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import { GoogleSheetsConfig } from '../../types';
 import { TARGET_GOOGLE_DRIVE_FOLDER_ID, TARGET_GOOGLE_DRIVE_FOLDER_URL, TARGET_ADMIN_ACCOUNT_EMAIL } from '../../services/googleSheetsService';
+import { getCustomOAuthClientId, saveCustomOAuthClientId } from '../../services/googleAuthService';
 
 export const GoogleSheetsSyncView: React.FC = () => {
   const {
@@ -61,6 +62,8 @@ export const GoogleSheetsSyncView: React.FC = () => {
   const [showCreateSheetModal, setShowCreateSheetModal] = useState(false);
   const [newSheetInput, setNewSheetInput] = useState('');
   const [isLinkingAndSyncing, setIsLinkingAndSyncing] = useState(false);
+  const [customClientId, setCustomClientId] = useState<string>(getCustomOAuthClientId() || '');
+  const [showCustomClientIdBox, setShowCustomClientIdBox] = useState<boolean>(Boolean(getCustomOAuthClientId()));
 
   // Keep local form data in sync with app context changes
   useEffect(() => {
@@ -114,6 +117,16 @@ export const GoogleSheetsSyncView: React.FC = () => {
       await connectGoogleAccount();
     } finally {
       setIsConnectingGoogle(false);
+    }
+  };
+
+  const handleSaveCustomClientId = () => {
+    const trimmed = customClientId.trim();
+    saveCustomOAuthClientId(trimmed || null);
+    if (trimmed) {
+      addToast('success', 'Custom Client ID सुरक्षित भयो', 'तपाईंको आफ्नै Google OAuth Client ID सुरक्षित गरियो। अब गुगल पप-अप मार्फत साइन-इन प्रयास गर्न सक्नुहुन्छ।');
+    } else {
+      addToast('info', 'Client ID हटाइयो', 'पूर्वनिर्धारित Client ID पुनः सक्रिय गरियो।');
     }
   };
 
@@ -1048,6 +1061,54 @@ function logSyncAudit(ss, action, status, user, details) {
                     <LogIn className={`w-3.5 h-3.5 ${isConnectingGoogle ? 'animate-spin' : ''}`} />
                     <span>{isConnectingGoogle ? 'गुगलमा खुल्दैछ...' : 'गुगल पप-अप मार्फत साइन-इन'}</span>
                   </button>
+                </div>
+
+                {/* Advanced: Custom Google OAuth Client ID toggle & box */}
+                <div className="border border-dashed border-[#b8d4b2] bg-[#f9faf7] rounded-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomClientIdBox(!showCustomClientIdBox)}
+                      className="text-xs font-bold text-[#2e4722] hover:text-emerald-800 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Shield className="w-3.5 h-3.5 text-[#4B6043]" />
+                      <span>उन्नत विकल्प: आफ्नै Google Cloud Client ID राख्नुहोस् (Custom Client ID)</span>
+                      <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded font-normal">
+                        {showCustomClientIdBox ? 'बन्द गर्नुहोस् ▲' : 'खोल्नुहोस् ▼'}
+                      </span>
+                    </button>
+                    {customClientId && (
+                      <span className="text-[10.5px] text-emerald-700 font-semibold flex items-center gap-1">
+                        <Check className="w-3 h-3" />
+                        <span>सक्रिय छ</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {showCustomClientIdBox && (
+                    <div className="space-y-2 pt-1 border-t border-gray-200">
+                      <p className="text-[11px] text-gray-600 leading-relaxed">
+                        यदि तपाईंसँग आफ्नै <strong>Google Cloud Console (console.cloud.google.com)</strong> को OAuth 2.0 Web Client ID छ (जसमा <code className="bg-white px-1 py-0.5 rounded border border-gray-300 font-mono text-[10.5px]">https://stcs.rbthapamgr09.workers.dev</code> Origin अधिकृत गरिएको छ) भने यहाँ राख्नुहोस्:
+                      </p>
+                      <div className="flex flex-col sm:flex-row items-center gap-2">
+                        <input
+                          type="text"
+                          value={customClientId}
+                          onChange={(e) => setCustomClientId(e.target.value)}
+                          placeholder="उदा: 1234567890-abcdefghijk.apps.googleusercontent.com"
+                          className="w-full px-3 py-2 text-xs font-mono bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4B6043] focus:border-transparent outline-hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveCustomClientId}
+                          className="w-full sm:w-auto px-4 py-2 bg-[#4B6043] hover:bg-[#384a32] active:scale-98 text-white text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 shrink-0 shadow-xs cursor-pointer"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>सुरक्षित गर्नुहोस्</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
