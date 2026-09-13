@@ -1894,7 +1894,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return false;
     }
 
-    const cleanUsername = sanitizeInput(userData.username || '').trim().toLowerCase();
+    const cleanUsername = sanitizeInput(userData.username || '').trim().toLowerCase().replace(/\s+/g, '');
+    if (!cleanUsername) {
+      addToast('error', 'त्रुटि', 'कृपया मान्य प्रयोगकर्ता नाम (User ID) प्रविष्ट गर्नुहोस्।');
+      return false;
+    }
+
     const exists = users.some((u) => u.username.toLowerCase() === cleanUsername);
     if (exists) {
       addToast('error', 'प्रयोगकर्ता नाम उपलब्ध छैन', 'यो प्रयोगकर्ता नाम (Username) पहिले नै दर्ता भइसकेको छ।');
@@ -1904,31 +1909,44 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const rawPassword = userData.password || 'user123';
     const hashed = hashPasswordSync(rawPassword);
 
+    const targetOrgId = userData.organizationId || activeOrganizationId || organizations[0]?.id || 'org_default';
+    const targetOrg = organizations.find((o) => o.id === targetOrgId);
+    const orgName = userData.organizationName || targetOrg?.officeName || targetOrg?.name || 'कार्यालय';
+
     const newUser: User = {
       ...userData,
-      fullName: sanitizeInput(userData.fullName),
+      fullName: sanitizeInput(userData.fullName || cleanUsername),
       username: cleanUsername,
-      email: userData.email ? sanitizeInput(userData.email).toLowerCase() : undefined,
+      role: userData.role || 'GENERAL_USER',
+      organizationId: targetOrgId,
+      organizationName: orgName,
+      designation: userData.designation || (userData.role === 'ACCOUNTANT' ? 'लेखापाल' : userData.role === 'ADMIN' ? 'कार्यालय प्रशासक' : 'कर्मचारी'),
+      email: userData.email ? sanitizeInput(userData.email).toLowerCase() : `${cleanUsername}@system.local`,
+      phone: userData.phone || targetOrg?.phone || targetOrg?.mobile || '',
       password: hashed.encoded,
       securityPin: userData.securityPin || '1234',
       securityQuestion: userData.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
       securityAnswer: userData.securityAnswer || 'नेपाल',
       mustChangePassword: userData.mustChangePassword ?? true,
       isFirstLogin: true,
+      isActive: userData.isActive !== undefined ? Boolean(userData.isActive) : true,
       id: `user_${Date.now()}`,
       createdAt: new Date().toLocaleDateString('ne-NP'),
     };
-    const updatedUsers = [...users, newUser];
-    setUsers(updatedUsers);
-    try {
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
-    } catch {
-      // Storage error ignore
-    }
 
-    saveCloudUsers(updatedUsers).catch(console.warn);
+    setUsers((prev) => {
+      const updatedUsers = [...prev.filter((u) => u.username.toLowerCase() !== cleanUsername), newUser];
+      try {
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+      } catch {
+        // Storage error ignore
+      }
+      saveCloudUsers(updatedUsers).catch(console.warn);
+      return updatedUsers;
+    });
+
     saveSingleUserToCloud(newUser).catch(console.warn);
-    triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
+    triggerAutoSyncOnSave();
 
     logSecurityEvent({
       action: 'USER_CREATED',
@@ -1942,7 +1960,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     addToast(
       'success',
       'प्रयोगकर्ता दर्ता भयो',
-      `${newUser.fullName} लाई ${newUser.role} भूमिका सहित दर्ता गरियो। गुगल सिटमा रेकर्ड सुरक्षित भयो।`
+      `${newUser.fullName} लाई ${newUser.role} भूमिका सहित दर्ता गरियो।`
     );
     return true;
   };
@@ -3555,18 +3573,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     })();
 
-    if (initialAdmin && initialAdmin.username.trim()) {
+    if (initialAdmin && (initialAdmin.username?.trim() || initialAdmin.fullName?.trim())) {
+      const cleanAdminUsername = (initialAdmin.username?.trim() || `admin_${Date.now().toString().slice(-4)}`).toLowerCase().replace(/\s+/g, '');
       const hashedAdminPass = hashPasswordSync(initialAdmin.password || 'admin123').encoded;
       const adminUser: User = {
         id: `user_${Date.now() + 1}`,
-        username: initialAdmin.username.trim().toLowerCase(),
+        username: cleanAdminUsername,
         password: hashedAdminPass,
         fullName: initialAdmin.fullName || `${newOrg.officeName} प्रशासक`,
         role: 'ADMIN',
         organizationId: orgId,
         organizationName: newOrg.officeName,
-        email: initialAdmin.email || newOrg.email,
-        phone: initialAdmin.phone || newOrg.phone || newOrg.mobile,
+        email: initialAdmin.email || newOrg.email || `${cleanAdminUsername}@system.local`,
+        phone: initialAdmin.phone || newOrg.phone || newOrg.mobile || '',
         designation: initialAdmin.designation || 'कार्यालय प्रशासक / लेखा अधिकृत',
         securityPin: initialAdmin.securityPin || '1234',
         securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',

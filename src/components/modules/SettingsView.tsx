@@ -276,15 +276,17 @@ export const SettingsView: React.FC = () => {
       setShowOrgModal(false);
     } else {
       let initialAdmin = undefined;
-      if (orgFormData.createAdminUser && orgFormData.adminUsername.trim()) {
+      if (orgFormData.createAdminUser) {
+        const fallbackUsername = `admin_${Date.now().toString().slice(-4)}`;
+        const resolvedUsername = (orgFormData.adminUsername?.trim() || fallbackUsername).toLowerCase().replace(/\s+/g, '');
         initialAdmin = {
-          username: orgFormData.adminUsername.trim(),
-          password: orgFormData.adminPassword || 'admin123',
-          fullName: orgFormData.adminFullName || `${orgFormData.officeName} प्रशासक`,
-          email: orgFormData.adminEmail || orgFormData.email,
-          phone: orgFormData.adminPhone || orgFormData.phone || orgFormData.mobile,
-          designation: orgFormData.adminDesignation,
-          securityPin: orgFormData.adminSecurityPin || '1234',
+          username: resolvedUsername,
+          password: orgFormData.adminPassword?.trim() || 'admin123',
+          fullName: orgFormData.adminFullName?.trim() || `${orgFormData.officeName} प्रशासक`,
+          email: orgFormData.adminEmail?.trim() || orgFormData.email?.trim() || `${resolvedUsername}@system.local`,
+          phone: orgFormData.adminPhone?.trim() || orgFormData.phone?.trim() || orgFormData.mobile?.trim() || '',
+          designation: orgFormData.adminDesignation?.trim() || 'कार्यालय प्रशासक / लेखा अधिकृत',
+          securityPin: orgFormData.adminSecurityPin?.trim() || '1234',
         };
       }
 
@@ -480,27 +482,22 @@ export const SettingsView: React.FC = () => {
 
   const handleSaveUser = (e: React.FormEvent) => {
     e.preventDefault();
-    if (
-      !userFormData.fullName.trim() ||
-      !userFormData.username.trim() ||
-      !userFormData.password.trim() ||
-      !userFormData.securityPin.trim() ||
-      !userFormData.securityQuestion.trim() ||
-      !userFormData.securityAnswer.trim() ||
-      !userFormData.role ||
-      !userFormData.designation.trim() ||
-      !userFormData.email.trim() ||
-      !userFormData.phone.trim()
-    ) {
+    const cleanUsername = userFormData.username.trim().toLowerCase().replace(/\s+/g, '');
+    const cleanFullName = userFormData.fullName.trim();
+
+    if (!cleanFullName || !cleanUsername) {
       addToast(
         'error',
         'फाराम अधुरो (Incomplete Form)',
-        'कृपया फारामका सम्पूर्ण अनिवार्य विवरणहरू (*) पूरा भर्नुहोस्।'
+        'कृपया पूरा नाम र प्रयोगकर्ता आइडी (User ID) अनिवार्य प्रविष्ट गर्नुहोस्।'
       );
       return;
     }
 
-    if (userFormData.securityPin.trim().length < 4) {
+    const cleanPassword = userFormData.password?.trim() || 'user123';
+    const cleanPin = userFormData.securityPin?.trim() || '1234';
+
+    if (cleanPin.length < 4) {
       addToast('error', 'पिन त्रुटि', 'सुरक्षा पिन कम्तिमा ४ अंकको हुनुपर्दछ।');
       return;
     }
@@ -508,7 +505,7 @@ export const SettingsView: React.FC = () => {
     if (
       !editingUser &&
       users.some(
-        (u) => u.username.toLowerCase() === userFormData.username.trim().toLowerCase()
+        (u) => u.username.toLowerCase() === cleanUsername
       )
     ) {
       addToast(
@@ -531,14 +528,31 @@ export const SettingsView: React.FC = () => {
       return;
     }
 
+    const targetOrg = organizations.find((o) => o.id === userFormData.organizationId);
+    const orgName = targetOrg?.officeName || targetOrg?.name || 'कार्यालय';
+
+    const safeUserData = {
+      ...userFormData,
+      username: cleanUsername,
+      fullName: cleanFullName,
+      password: cleanPassword,
+      organizationName: orgName,
+      email: userFormData.email?.trim() || `${cleanUsername}@system.local`,
+      phone: userFormData.phone?.trim() || targetOrg?.phone || targetOrg?.mobile || '',
+      designation: userFormData.designation?.trim() || (userFormData.role === 'ACCOUNTANT' ? 'लेखापाल' : userFormData.role === 'ADMIN' ? 'कार्यालय प्रशासक' : 'कर्मचारी'),
+      securityPin: cleanPin,
+      securityQuestion: userFormData.securityQuestion?.trim() || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+      securityAnswer: userFormData.securityAnswer?.trim() || 'नेपाल',
+    };
+
     if (editingUser) {
       const ok = updateUser({
         ...editingUser,
-        ...userFormData,
+        ...safeUserData,
       });
       if (ok) setShowUserModal(false);
     } else {
-      const ok = addUser(userFormData);
+      const ok = addUser(safeUserData);
       if (ok) setShowUserModal(false);
     }
   };
@@ -2619,7 +2633,14 @@ export const SettingsView: React.FC = () => {
                         type="text"
                         required
                         value={orgFormData.officeName}
-                        onChange={(e) => setOrgFormData({ ...orgFormData, officeName: e.target.value })}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setOrgFormData((prev) => ({
+                            ...prev,
+                            officeName: val,
+                            adminFullName: prev.adminFullName || (val ? `${val} प्रशासक` : ''),
+                          }));
+                        }}
                         placeholder="जस्तै: जलस्रोत तथा सिँचाइ विकास डिभिजन कार्यालय"
                         className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-bold text-[#24331C] text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                       />

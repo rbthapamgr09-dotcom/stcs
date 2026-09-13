@@ -490,23 +490,26 @@ export async function saveSingleUserToCloud(u: User): Promise<boolean> {
   }
 
   // Sync to Firestore for multi-device reliability
-  try {
-    const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
-    const snap = await getDoc(docRef);
-    let currentUsers: User[] = [];
-    if (snap.exists() && Array.isArray(snap.data()?.users)) {
-      currentUsers = snap.data().users;
+  if (canWriteFirestore()) {
+    try {
+      const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
+      const snap = await getDoc(docRef);
+      let currentUsers: User[] = [];
+      if (snap.exists() && Array.isArray(snap.data()?.users)) {
+        currentUsers = snap.data().users;
+      }
+      const filtered = currentUsers.filter(
+        (item) => item.id !== u.id && item.username.toLowerCase() !== u.username.toLowerCase()
+      );
+      filtered.push(u);
+      await setDoc(docRef, {
+        users: filtered,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (fsErr) {
+      handleFirestoreWriteError(fsErr, 'saveSingleUserToCloud');
+      console.warn('Could not sync single user to Firestore:', fsErr);
     }
-    const filtered = currentUsers.filter(
-      (item) => item.id !== u.id && item.username.toLowerCase() !== u.username.toLowerCase()
-    );
-    filtered.push(u);
-    await setDoc(docRef, {
-      users: filtered,
-      updatedAt: new Date().toISOString(),
-    });
-  } catch (fsErr) {
-    console.warn('Could not sync single user to Firestore:', fsErr);
   }
 
   return sqlOk;
