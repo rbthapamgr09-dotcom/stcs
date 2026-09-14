@@ -79,6 +79,10 @@ import {
   getCloudFiscalYearConfig,
   saveCloudFyDatabase,
   getCloudFyDatabase,
+  saveCloudOrgStore,
+  getCloudOrgStore,
+  saveCloudOrgUser,
+  getCloudOrgUsers,
   db,
 } from '../services/cloudSyncService';
 import { subscribeToOffices, subscribeToUsers, getOfficeByIdFromFirestore } from '../services/firestoreService';
@@ -2023,6 +2027,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     saveCloudUsers(updatedUsers).catch(console.warn);
     saveSingleUserToCloud(newUser).catch(console.warn);
+    saveCloudOrgUser(targetOrgId, newUser).catch(console.warn);
+
+    setOrgDatabases((prev) => {
+      const orgStore = prev[targetOrgId];
+      if (!orgStore) return prev;
+      const orgUserList = [...(orgStore.users || []).filter((u) => u.id !== newUser.id), newUser];
+      return {
+        ...prev,
+        [targetOrgId]: {
+          ...orgStore,
+          users: orgUserList,
+        },
+      };
+    });
     triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
@@ -2110,6 +2128,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     saveCloudUsers(updatedUsers).catch(console.warn);
     saveSingleUserToCloud(updatedUser).catch(console.warn);
+    if (updatedUser.organizationId) {
+      saveCloudOrgUser(updatedUser.organizationId, updatedUser).catch(console.warn);
+      setOrgDatabases((prev) => {
+        const orgStore = prev[updatedUser.organizationId!];
+        if (!orgStore) return prev;
+        const orgUserList = (orgStore.users || []).map((u) => (u.id === updatedUser.id ? updatedUser : u));
+        return {
+          ...prev,
+          [updatedUser.organizationId!]: {
+            ...orgStore,
+            users: orgUserList,
+          },
+        };
+      });
+    }
     triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
@@ -2441,13 +2474,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setTaxReferences(targetData.taxReferences || DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: newFy })));
     setActiveFiscalYearState(newFy);
 
-    // 5. Persist to local storage and cloud database
+    // 5. Persist to local storage and cloud database (partitioned per organization)
     try {
       localStorage.setItem(STORAGE_KEYS.ACTIVE_FY, newFy);
       localStorage.setItem(STORAGE_KEYS.FY_DATABASE, JSON.stringify(updatedDb));
     } catch {}
-    saveCloudFyDatabase(updatedDb).catch(() => {});
+    saveCloudFyDatabase(updatedDb, activeOrganizationId).catch(() => {});
     saveCloudFiscalYearConfig({ activeFiscalYear: newFy, fiscalYears }).catch(() => {});
+
+    setOrgDatabases((prev) => {
+      const cur = prev[activeOrganizationId] || {
+        organization,
+        fiscalYears,
+        activeFiscalYear: newFy,
+        fyDatabase: updatedDb,
+      };
+      return {
+        ...prev,
+        [activeOrganizationId]: {
+          ...cur,
+          activeFiscalYear: newFy,
+          fyDatabase: updatedDb,
+        },
+      };
+    });
 
     addToast('info', 'आर्थिक वर्ष परिवर्तन', `सक्रिय आर्थिक वर्ष ${newFy} चयन गरियो।`);
   };
@@ -3472,39 +3522,53 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const setActiveOrganizationId = (orgId: string) => {
-    if (orgId === activeOrganizationId) return;
+    if (!orgId || orgId === activeOrganizationId) return;
 
-    // 1. Sync current active data into orgDatabases
-    setOrgDatabases((prev) => ({
-      ...prev,
-      [activeOrganizationId]: {
-        organization,
-        fiscalYears,
-        activeFiscalYear,
-        fyDatabase: {
-          ...fyDatabase,
-          [activeFiscalYear]: {
-            employees,
-            salarySetups,
-            deductionSetups,
-            taxReferences,
-          },
+    // 1. Snapshot and sync outgoing active organization's data
+    const outgoingOrgUsers = users.filter((u) => u.organizationId === activeOrganizationId || (!u.organizationId && activeOrganizationId === 'org_default'));
+    const outgoingStore: OrganizationDataStore = {
+      organization,
+      fiscalYears,
+      activeFiscalYear,
+      fyDatabase: {
+        ...fyDatabase,
+        [activeFiscalYear]: {
+          employees,
+          salarySetups,
+          deductionSetups,
+          taxReferences,
         },
-        googleSheetsConfig,
       },
-    }));
+      googleSheetsConfig,
+      users: outgoingOrgUsers,
+    };
+
+    setOrgDatabases((prev) => {
+      const updated = {
+        ...prev,
+        [activeOrganizationId]: outgoingStore,
+      };
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    // Cloud persist outgoing organization store and FY database
+    saveCloudOrgStore(activeOrganizationId, outgoingStore).catch(() => {});
+    saveCloudFyDatabase(outgoingStore.fyDatabase, activeOrganizationId).catch(() => {});
 
     // 2. Load target organization's data
     const targetStore = orgDatabases[orgId];
     const orgObj = organizations.find((o) => o.id === orgId);
 
-    if (targetStore) {
+    if (targetStore && targetStore.fyDatabase && Object.keys(targetStore.fyDatabase).length > 0) {
       const targetOrg = targetStore.organization || (orgObj ? { ...orgObj } : DEFAULT_ORGANIZATION);
       const targetFys =
         targetStore.fiscalYears && targetStore.fiscalYears.length > 0
           ? targetStore.fiscalYears
           : DEFAULT_FY_LIST;
-      const targetActiveFy = targetStore.activeFiscalYear || targetFys[0] || '२०८१/८२';
+      const targetActiveFy = targetStore.activeFiscalYear || targetFys[0] || '2083/084';
       const targetFyDb = targetStore.fyDatabase || {};
       const targetFyData = targetFyDb[targetActiveFy] || {
         employees: [],
@@ -3513,6 +3577,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         taxReferences: DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: targetActiveFy })),
       };
 
+      loadedFiscalYearRef.current = targetActiveFy;
       setOrganization(targetOrg);
       setFiscalYears(sortFiscalYearsDescending(targetFys));
       setActiveFiscalYearState(targetActiveFy);
@@ -3521,6 +3586,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setSalarySetups(targetFyData.salarySetups || {});
       setDeductionSetups(targetFyData.deductionSetups || {});
       setTaxReferences(targetFyData.taxReferences || DEFAULT_TAX_REFERENCES);
+
+      if (targetStore.users && targetStore.users.length > 0) {
+        setUsers((prev) => {
+          const merged = [...prev];
+          for (const tu of targetStore.users!) {
+            const idx = merged.findIndex((u) => u.id === tu.id || u.username?.toLowerCase() === tu.username?.toLowerCase());
+            if (idx >= 0) merged[idx] = { ...merged[idx], ...tu };
+            else merged.push(tu);
+          }
+          return merged;
+        });
+      }
 
       // Cleanly load organization specific sheets config (no cross-pollution)
       const targetConfig: GoogleSheetsConfig = targetStore.googleSheetsConfig || {
@@ -3533,19 +3610,92 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         syncMode: 'auto',
       };
       setGoogleSheetsConfig(targetConfig);
-    } else if (orgObj) {
-      setOrganization({ ...orgObj });
+    } else {
+      // Clean isolated blank state for the target office so NO data leaks from previous office
+      const targetOrg = orgObj ? { ...orgObj } : DEFAULT_ORGANIZATION;
+      const targetFys = DEFAULT_FY_LIST;
+      const targetActiveFy = '2083/084';
+      loadedFiscalYearRef.current = targetActiveFy;
+      setOrganization(targetOrg);
+      setFiscalYears(targetFys);
+      setActiveFiscalYearState(targetActiveFy);
+      setFyDatabase({});
+      setEmployees([]);
+      setSalarySetups({});
+      setDeductionSetups({});
+      setTaxReferences(DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: targetActiveFy })));
+
       const targetConfig: GoogleSheetsConfig = {
         ...DEFAULT_GOOGLE_SHEETS_CONFIG,
-        webAppUrl: orgObj.webAppUrl || '',
-        spreadsheetId: orgObj.spreadsheetId || '',
-        spreadsheetUrl: orgObj.spreadsheetUrl || '',
-        spreadsheetName: `stcs_${orgObj.officeName || 'कार्यालय'}`,
+        webAppUrl: orgObj?.webAppUrl || '',
+        spreadsheetId: orgObj?.spreadsheetId || '',
+        spreadsheetUrl: orgObj?.spreadsheetUrl || '',
+        spreadsheetName: `stcs_${orgObj?.officeName || 'कार्यालय'}`,
         autoSync: true,
         syncMode: 'auto',
       };
       setGoogleSheetsConfig(targetConfig);
+
+      // Asynchronously fetch this organization's database from Cloud SQL / Firestore
+      getCloudOrgStore(orgId)
+        .then((cloudStore) => {
+          if (cloudStore && cloudStore.fyDatabase && Object.keys(cloudStore.fyDatabase).length > 0) {
+            const cFyDb = cloudStore.fyDatabase;
+            const cActiveFy = cloudStore.activeFiscalYear || targetActiveFy;
+            const cFyData = cFyDb[cActiveFy] || {
+              employees: [],
+              salarySetups: {},
+              deductionSetups: {},
+              taxReferences: DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: cActiveFy })),
+            };
+            setFyDatabase(cFyDb);
+            setActiveFiscalYearState(cActiveFy);
+            loadedFiscalYearRef.current = cActiveFy;
+            setEmployees(cFyData.employees || []);
+            setSalarySetups(cFyData.salarySetups || {});
+            setDeductionSetups(cFyData.deductionSetups || {});
+            setTaxReferences(cFyData.taxReferences || DEFAULT_TAX_REFERENCES);
+            if (cloudStore.fiscalYears) setFiscalYears(sortFiscalYearsDescending(cloudStore.fiscalYears));
+            if (cloudStore.organization) setOrganization(cloudStore.organization);
+            if (cloudStore.googleSheetsConfig) setGoogleSheetsConfig(cloudStore.googleSheetsConfig);
+
+            setOrgDatabases((prev) => ({
+              ...prev,
+              [orgId]: cloudStore,
+            }));
+          } else {
+            getCloudFyDatabase(orgId).then((cloudFyDb) => {
+              if (cloudFyDb && Object.keys(cloudFyDb).length > 0) {
+                setFyDatabase(cloudFyDb);
+                const fyData = cloudFyDb[targetActiveFy];
+                if (fyData) {
+                  if (fyData.employees) setEmployees(fyData.employees);
+                  if (fyData.salarySetups) setSalarySetups(fyData.salarySetups);
+                  if (fyData.deductionSetups) setDeductionSetups(fyData.deductionSetups);
+                  if (fyData.taxReferences) setTaxReferences(fyData.taxReferences);
+                }
+              }
+            }).catch(() => {});
+          }
+        })
+        .catch(() => {});
     }
+
+    // Load user profile data for this specific organization from cloud
+    getCloudOrgUsers(orgId).then((cloudUsers) => {
+      if (cloudUsers && Array.isArray(cloudUsers) && cloudUsers.length > 0) {
+        setUsers((prev) => {
+          const merged = [...prev];
+          for (const cu of cloudUsers) {
+            const norm = normalizeUserData(cu);
+            const idx = merged.findIndex((u) => u.id === norm.id || u.username?.toLowerCase() === norm.username?.toLowerCase());
+            if (idx >= 0) merged[idx] = { ...merged[idx], ...norm };
+            else merged.push(norm);
+          }
+          return merged;
+        });
+      }
+    }).catch(() => {});
 
     // Check Cloud SQL / Firestore for any cross-device updated sheets config
     getOrgSheetsConfig(orgId)

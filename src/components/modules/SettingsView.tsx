@@ -384,21 +384,29 @@ export const SettingsView: React.FC = () => {
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [resetMustChangePassword, setResetMustChangePassword] = useState(true);
   const [showPasswordText, setShowPasswordText] = useState(false);
+  const [selectedUserOrgFilter, setSelectedUserOrgFilter] = useState<string>('ALL');
 
   // Filter users based on currentUser role:
   // Non-SUPER_ADMIN (e.g. Office Admin) can ONLY view and manage users belonging to their own organization/office
+  // Super Admin can filter by office or view all offices
   const visibleUsers = useMemo(() => {
     if (isSuperAdmin) {
-      return users;
+      if (selectedUserOrgFilter === 'ALL') {
+        return users;
+      }
+      return users.filter((u) => {
+        const uOrgId = u.organizationId || 'org_default';
+        return uOrgId === selectedUserOrgFilter;
+      });
     }
     const myOrgId = currentUser?.organizationId || activeOrganizationId;
     return users.filter((u) => {
       if (u.role === 'SUPER_ADMIN') return false; // Hide Super Admin profiles from office admins
-      const uOrgId = u.organizationId || 'default_org';
-      const userMyOrg = myOrgId || 'default_org';
+      const uOrgId = u.organizationId || 'org_default';
+      const userMyOrg = myOrgId || 'org_default';
       return uOrgId === userMyOrg;
     });
-  }, [users, isSuperAdmin, currentUser?.organizationId, activeOrganizationId]);
+  }, [users, isSuperAdmin, selectedUserOrgFilter, currentUser?.organizationId, activeOrganizationId]);
 
   // Filter organizations based on currentUser role: only show owned office for non-superadmin
   const visibleOrganizations = useMemo(() => {
@@ -1631,24 +1639,68 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
           ) : (
-            /* Super Admin: User Management Table */
-            <div className="overflow-x-auto border border-[#d6e3d2] rounded-xl">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-[#edf4ea] text-[#24331C] font-bold border-b border-[#d6e3d2]">
-                    <th className="p-3">क्र.सं.</th>
-                    <th className="p-3">पूरा नाम (Full Name)</th>
-                    <th className="p-3">प्रयोगकर्ता आइडी (User ID)</th>
-                    <th className="p-3">सम्बद्ध कार्यालय (Office)</th>
-                    <th className="p-3">पद (Designation)</th>
-                    <th className="p-3">भूमिका (Role)</th>
-                    <th className="p-3">पासवर्ड तथा सुरक्षा अवस्था</th>
-                    <th className="p-3">सम्पर्क / इमेल</th>
-                    <th className="p-3 text-center">स्थिति</th>
-                    <th className="p-3 text-center">कार्य (Actions)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
+            /* Super Admin / Admin: User Management Table */
+            <div className="space-y-3">
+              {isSuperAdmin ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-[#f8faf6] rounded-xl border border-[#d6e3d2]">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-[#4B6043]" />
+                    <span className="font-bold text-[#24331C] text-xs">कार्यालय अनुसार प्रयोगकर्ता प्रोफाइल फिल्टर (Filter by Office):</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedUserOrgFilter}
+                      onChange={(e) => setSelectedUserOrgFilter(e.target.value)}
+                      className="px-3 py-1.5 bg-white border border-[#c5d8c1] rounded-lg text-xs font-semibold text-[#24331C] outline-none focus:ring-2 focus:ring-[#4B6043] cursor-pointer"
+                    >
+                      <option value="ALL">सबै कार्यालयका प्रयोगकर्ताहरू (All Offices - {users.length})</option>
+                      {organizations.map((org) => {
+                        const count = users.filter((u) => u.organizationId === org.id).length;
+                        return (
+                          <option key={org.id} value={org.id}>
+                            {org.officeName || org.name} ({count})
+                          </option>
+                        );
+                      })}
+                    </select>
+                    {selectedUserOrgFilter !== 'ALL' && (
+                      <button
+                        onClick={() => setSelectedUserOrgFilter('ALL')}
+                        className="text-[11px] text-[#4B6043] underline font-medium cursor-pointer"
+                      >
+                        सबै देखाउनुहोस्
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between p-3 bg-[#edf4ea] rounded-xl border border-[#c5d8c1] text-xs">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-[#4B6043]" />
+                    <span className="font-bold text-[#24331C]">सम्बद्ध कार्यालय:</span>
+                    <span className="font-bold text-[#4B6043]">{organization.officeName || 'हालको कार्यालय'}</span>
+                  </div>
+                  <span className="text-gray-600 text-[11px]">यस कार्यालय अन्तर्गत कुल {visibleUsers.length} प्रयोगकर्ता प्रोफाइल दर्ता छन्।</span>
+                </div>
+              )}
+
+              <div className="overflow-x-auto border border-[#d6e3d2] rounded-xl">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-[#edf4ea] text-[#24331C] font-bold border-b border-[#d6e3d2]">
+                      <th className="p-3">क्र.सं.</th>
+                      <th className="p-3">पूरा नाम (Full Name)</th>
+                      <th className="p-3">प्रयोगकर्ता आइडी (User ID)</th>
+                      <th className="p-3">सम्बद्ध कार्यालय (Office)</th>
+                      <th className="p-3">पद (Designation)</th>
+                      <th className="p-3">भूमिका (Role)</th>
+                      <th className="p-3">पासवर्ड तथा सुरक्षा अवस्था</th>
+                      <th className="p-3">सम्पर्क / इमेल</th>
+                      <th className="p-3 text-center">स्थिति</th>
+                      <th className="p-3 text-center">कार्य (Actions)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
                   {visibleUsers.map((u, idx) => {
                     const userOrg = organizations.find((o) => o.id === u.organizationId);
                     return (
@@ -1785,6 +1837,7 @@ export const SettingsView: React.FC = () => {
                   })}
                 </tbody>
                 </table>
+              </div>
             </div>
           )}
 

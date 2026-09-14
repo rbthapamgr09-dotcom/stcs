@@ -201,3 +201,26 @@ export async function deleteUserByUid(uid: string) {
   }
 }
 
+export async function getUsersByOrganization(orgId: string) {
+  try {
+    const targetOrgId = orgId || 'org_default';
+    return await withDbRetry(() =>
+      db
+        .select()
+        .from(users)
+        .where(
+          or(
+            eq(users.organizationId, targetOrgId),
+            // Include global superadmins if querying
+            targetOrgId === 'org_default' ? sql`${users.organizationId} IS NULL` : sql`false`
+          )
+        )
+        .orderBy(desc(users.updatedAt))
+    );
+  } catch (error) {
+    console.error(`Database query failed in getUsersByOrganization for ${orgId}:`, error);
+    return [];
+  }
+}
+
+

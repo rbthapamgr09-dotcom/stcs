@@ -220,6 +220,7 @@ export interface OrganizationDataStore {
   activeFiscalYear: string;
   fyDatabase: Record<string, FiscalYearData>;
   googleSheetsConfig?: GoogleSheetsConfig;
+  users?: User[]; // कार्यालय अन्तर्गतका प्रयोगकर्ताहरूको प्रोफाइल डाटा (User Profiles)
 }
 
 export interface Calculation33Item {

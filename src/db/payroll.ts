@@ -264,3 +264,48 @@ export async function upsertEmployee(emp: any, orgId: string = 'org_default') {
     throw new Error('Failed to upsert employee.', { cause: error });
   }
 }
+
+// Organization-scoped Fiscal Year Database (Isolated per office and per FY)
+export async function getOrgFyDatabase(orgId: string = 'org_default') {
+  try {
+    const key = `fy_database_${orgId}`;
+    const result = await getSystemSetting(key);
+    return result;
+  } catch (error) {
+    console.error(`Error fetching FY database for org ${orgId}:`, error);
+    return null;
+  }
+}
+
+export async function setOrgFyDatabase(orgId: string = 'org_default', data: any, updatedBy?: string) {
+  try {
+    const key = `fy_database_${orgId}`;
+    return await setSystemSetting(key, data, updatedBy);
+  } catch (error) {
+    console.error(`Error saving FY database for org ${orgId}:`, error);
+    throw error;
+  }
+}
+
+// Full Organization Isolated Data Store (org, fiscalYears, activeFy, fyDatabase, users, sheetsConfig)
+export async function getOrgDataStore(orgId: string = 'org_default') {
+  try {
+    const key = `org_store_${orgId}`;
+    const result = await getSystemSetting(key);
+    return result;
+  } catch (error) {
+    console.error(`Error fetching org data store for ${orgId}:`, error);
+    return null;
+  }
+}
+
+export async function setOrgDataStore(orgId: string = 'org_default', data: any, updatedBy?: string) {
+  try {
+    const key = `org_store_${orgId}`;
+    return await setSystemSetting(key, data, updatedBy);
+  } catch (error) {
+    console.error(`Error saving org data store for ${orgId}:`, error);
+    throw error;
+  }
+}
+

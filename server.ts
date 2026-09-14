@@ -11,6 +11,7 @@ import {
   deleteUserByUid,
   getUserByUsernameOrEmailOrUid,
   upsertUsersBatch,
+  getUsersByOrganization,
 } from './src/db/users.ts';
 import { verifyPasswordSync } from './src/utils/securityUtils.ts';
 import {
@@ -22,6 +23,10 @@ import {
   setSystemSetting,
   getEmployees,
   upsertEmployee,
+  getOrgFyDatabase,
+  setOrgFyDatabase,
+  getOrgDataStore,
+  setOrgDataStore,
 } from './src/db/payroll.ts';
 
 function freePortSync(port: number) {
@@ -385,6 +390,103 @@ async function startServer() {
     } catch (error: any) {
       console.error('Failed to delete organization:', error);
       res.status(500).json({ error: error.message || 'Failed to delete organization' });
+    }
+  });
+
+  // Organization-scoped Fiscal Year Database (Isolated per office and per FY)
+  app.get('/api/organizations/:orgId/fy-database', optionalAuth, async (req, res) => {
+    try {
+      const orgId = req.params.orgId || 'org_default';
+      const data = await getOrgFyDatabase(orgId);
+      res.json({ success: true, orgId, data });
+    } catch (error: any) {
+      console.error(`Failed to get FY database for org ${req.params.orgId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to fetch organization FY database' });
+    }
+  });
+
+  app.post('/api/organizations/:orgId/fy-database', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const orgId = req.params.orgId || 'org_default';
+      const updatedBy = req.user?.email || req.body.updatedBy || 'system';
+      const fyData = req.body.data || req.body;
+      const saved = await setOrgFyDatabase(orgId, fyData, updatedBy);
+      res.json({ success: true, orgId, setting: saved });
+    } catch (error: any) {
+      console.error(`Failed to save FY database for org ${req.params.orgId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to save organization FY database' });
+    }
+  });
+
+  // Organization-scoped Data Store (Complete tenant bundle: details, FY list, active FY, fyDatabase, users)
+  app.get('/api/organizations/:orgId/store', optionalAuth, async (req, res) => {
+    try {
+      const orgId = req.params.orgId || 'org_default';
+      const store = await getOrgDataStore(orgId);
+      res.json({ success: true, orgId, store });
+    } catch (error: any) {
+      console.error(`Failed to get store for org ${req.params.orgId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to fetch organization store' });
+    }
+  });
+
+  app.post('/api/organizations/:orgId/store', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const orgId = req.params.orgId || 'org_default';
+      const updatedBy = req.user?.email || req.body.updatedBy || 'system';
+      const storeData = req.body.data || req.body;
+      const saved = await setOrgDataStore(orgId, storeData, updatedBy);
+      res.json({ success: true, orgId, setting: saved });
+    } catch (error: any) {
+      console.error(`Failed to save store for org ${req.params.orgId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to save organization store' });
+    }
+  });
+
+  // Organization-scoped Users (User Profile Data bound to organization)
+  app.get('/api/organizations/:orgId/users', optionalAuth, async (req, res) => {
+    try {
+      const orgId = req.params.orgId;
+      if (!orgId || orgId === 'all') {
+        const allUsers = await getUsers();
+        return res.json({ success: true, users: allUsers });
+      }
+      const orgUsers = await getUsersByOrganization(orgId);
+      res.json({ success: true, orgId, users: orgUsers });
+    } catch (error: any) {
+      console.error(`Failed to get users for org ${req.params.orgId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to fetch organization users' });
+    }
+  });
+
+  app.post('/api/organizations/:orgId/users', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const orgId = req.params.orgId || 'org_default';
+      const { uid, email, username, fullName, role, designation, phone, metadata, password } = req.body;
+      const targetUid = uid || username || `user_${Date.now()}`;
+      const targetEmail = email || `${(username || targetUid).toLowerCase()}@system.local`;
+
+      const meta = {
+        ...(metadata || {}),
+        password: password || metadata?.password || 'user123',
+        designation: designation || metadata?.designation || '',
+        phone: phone || metadata?.phone || '',
+        organizationId: orgId,
+      };
+
+      const user = await getOrCreateUser(
+        targetUid,
+        targetEmail,
+        username,
+        fullName,
+        role,
+        orgId,
+        meta
+      );
+      res.json({ success: true, orgId, user });
+    } catch (error: any) {
+      console.error(`Failed to save user for org ${req.params.orgId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to save user for organization' });
     }
   });
 
