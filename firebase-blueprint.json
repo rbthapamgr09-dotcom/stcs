@@ -1,8 +1,8 @@
 {
   "entities": {
-    "Organization": {
-      "title": "Organization",
-      "description": "Government Office or Organization Entity",
+    "Office": {
+      "title": "Office",
+      "description": "Multi-tenant Government Office or Organization Entity",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -12,47 +12,102 @@
         "province": { "type": "string" },
         "district": { "type": "string" },
         "address": { "type": "string" },
+        "panNumber": { "type": "string" },
         "email": { "type": "string" },
+        "phone": { "type": "string" },
         "isActive": { "type": "boolean" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "name", "officeName"]
     },
+    "FiscalYearData": {
+      "title": "FiscalYearData",
+      "description": "Office-scoped fiscal year payroll and tax calculation bundle",
+      "type": "object",
+      "properties": {
+        "officeId": { "type": "string" },
+        "fiscalYear": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["officeId", "fiscalYear"]
+    },
     "User": {
       "title": "User",
-      "description": "System User Profile & Authentication Data",
+      "description": "System User Profile & Authorization Details",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "uid": { "type": "string" },
         "username": { "type": "string" },
         "role": { "type": "string" },
         "fullName": { "type": "string" },
-        "organizationId": { "type": "string" }
+        "email": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "organizationName": { "type": "string" },
+        "designation": { "type": "string" },
+        "phone": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
-      "required": ["id", "username", "role", "fullName"]
+      "required": ["id", "username", "role", "fullName", "organizationId"]
     },
-    "Connection": {
-      "title": "Connection",
-      "description": "Google Sheets & System Configs",
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Office-scoped action audit trail",
       "type": "object",
       "properties": {
+        "id": { "type": "string" },
+        "officeId": { "type": "string" },
+        "actorUid": { "type": "string" },
+        "actorRole": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "officeId", "action", "timestamp"]
+    },
+    "SystemSetting": {
+      "title": "SystemSetting",
+      "description": "Public and system-wide configurations",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string" },
         "updatedAt": { "type": "string" }
-      }
+      },
+      "required": ["key"]
     }
   },
   "firestore": {
+    "/offices/{officeId}": {
+      "schema": "Office",
+      "description": "Independent tenant office and organization details"
+    },
+    "/offices/{officeId}/fiscal_years/{fiscalYear}": {
+      "schema": "FiscalYearData",
+      "description": "Office-specific fiscal year records for employees, salary, deductions and tax calculations"
+    },
+    "/offices/{officeId}/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Office-specific security and transaction audit logs"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Registered users with role and tenant mapping"
+    },
+    "/system_settings/{settingKey}": {
+      "schema": "SystemSetting",
+      "description": "System-wide settings such as support contact"
+    },
     "/system_organizations/{orgId}": {
-      "schema": "Organization",
-      "description": "Registered offices and organizations"
+      "schema": "Office",
+      "description": "Legacy organization records cache"
     },
     "/system_users/{userId}": {
       "schema": "User",
-      "description": "Registered users and authentication profiles"
-    },
-    "/system_connections/{configId}": {
-      "schema": "Connection",
-      "description": "System connections and sync configurations"
+      "description": "Legacy user records cache"
     }
   }
 }

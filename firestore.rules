@@ -1,20 +1,149 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /system_organizations/{document=**} {
-      allow read, write: if true;
-    }
-    match /system_users/{document=**} {
-      allow read, write: if true;
-    }
-    match /system_connections/{document=**} {
-      allow read, write: if true;
-    }
-    match /system_payroll_data/{document=**} {
-      allow read, write: if true;
-    }
+
+    // Default-deny safety net
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function getUserDoc() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasUserDoc() {
+      return exists(getUserDoc());
+    }
+
+    function getUserData() {
+      return get(getUserDoc()).data;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        (hasUserDoc() && getUserData().role == 'SUPER_ADMIN') ||
+        (exists(/databases/$(database)/documents/system_users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/system_users/$(request.auth.uid)).data.role == 'SUPER_ADMIN')
+      );
+    }
+
+    function isOfficeAdmin(officeId) {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        (hasUserDoc() &&
+         getUserData().role in ['SUPER_ADMIN', 'ADMIN'] &&
+         (getUserData().organizationId == officeId || getUserData().organizationId == 'all'))
+      );
+    }
+
+    function isOfficeMember(officeId) {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        (hasUserDoc() &&
+         (getUserData().organizationId == officeId || getUserData().organizationId == 'all'))
+      );
+    }
+
+    // Multi-tenant Offices
+    match /offices/{officeId} {
+      allow get: if isSignedIn() && isValidId(officeId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isSuperAdmin() && isValidId(officeId);
+      allow update: if isSignedIn() && isValidId(officeId) && (isSuperAdmin() || isOfficeAdmin(officeId));
+      allow delete: if isSignedIn() && isSuperAdmin() && isValidId(officeId);
+
+      // Office-scoped subcollections: Fiscal Years (Employees, Salaries, Deductions, Taxes)
+      match /fiscal_years/{fiscalYear} {
+        allow read: if isSignedIn() && isOfficeMember(officeId);
+        allow write: if isSignedIn() && (isOfficeAdmin(officeId) || isOfficeMember(officeId));
+      }
+
+      // Office-scoped subcollections: Audit Logs (immutable write-once)
+      match /audit_logs/{logId} {
+        allow read: if isSignedIn() && isOfficeAdmin(officeId);
+        allow create: if isSignedIn() && isOfficeMember(officeId) && isValidId(logId);
+        allow update, delete: if false;
+      }
+
+      // Any other office-scoped nested data
+      match /{subcollection=**} {
+        allow read: if isSignedIn() && isOfficeMember(officeId);
+        allow write: if isSignedIn() && (isOfficeAdmin(officeId) || isOfficeMember(officeId));
+      }
+    }
+
+    // System Users collection
+    match /users/{userId} {
+      allow get: if isSignedIn() && (
+        isSuperAdmin() ||
+        request.auth.uid == userId ||
+        (resource.data.organizationId != null && isOfficeAdmin(resource.data.organizationId))
+      );
+
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn() && (
+        isSuperAdmin() ||
+        (
+          request.resource.data.organizationId != null &&
+          isOfficeAdmin(request.resource.data.organizationId) &&
+          request.resource.data.role != 'SUPER_ADMIN'
+        )
+      );
+
+      allow update: if isSignedIn() && (
+        isSuperAdmin() ||
+        (
+          request.auth.uid == userId &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'organizationId'])
+        ) ||
+        (
+          resource.data.organizationId != null &&
+          isOfficeAdmin(resource.data.organizationId) &&
+          request.resource.data.role != 'SUPER_ADMIN' &&
+          request.resource.data.organizationId == resource.data.organizationId
+        )
+      );
+
+      allow delete: if isSignedIn() && (
+        isSuperAdmin() ||
+        (
+          resource.data.organizationId != null &&
+          isOfficeAdmin(resource.data.organizationId) &&
+          resource.data.role != 'SUPER_ADMIN'
+        )
+      );
+    }
+
+    // System Settings (Support contact, app configs)
+    match /system_settings/{settingKey} {
+      allow read: if true;
+      allow write: if isSignedIn() && isSuperAdmin();
+    }
+
+    // Legacy sync collections (maintained for seamless zero-downtime transition)
+    match /system_organizations/{document=**} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isSuperAdmin();
+    }
+
+    match /system_users/{document=**} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isSuperAdmin();
+    }
+
+    match /system_connections/{document=**} {
+      allow read: if true;
+      allow write: if isSignedIn() && isSuperAdmin();
     }
   }
 }

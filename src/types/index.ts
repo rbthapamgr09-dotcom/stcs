@@ -206,6 +206,7 @@ export interface OrganizationItem extends OrganizationSetup {
   id: string; // Unique Organization ID (e.g. org_default, org_gorkha, etc.)
   code?: string; // कार्यालय कोड
   createdAt: string;
+  updatedAt?: string;
   isActive: boolean;
   webAppUrl?: string;
   spreadsheetId?: string;
