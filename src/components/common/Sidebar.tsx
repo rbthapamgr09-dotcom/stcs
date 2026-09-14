@@ -177,13 +177,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Calculator,
     },
     {
-      id: 'google_sheets',
-      nepali: 'गुगल सिट्स सिंक',
-      english: '(Data Sync)',
-      sub: 'Apps Script API इन्टिग्रेसन',
-      icon: CloudUpload,
-    },
-    {
       id: 'settings',
       nepali: 'सेटिङ्स',
       english: '(Settings)',
@@ -192,12 +185,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   ];
 
-  const visibleMenuItems = menuItems.filter((item) => {
-    if (item.id === 'google_sheets') {
-      return currentUser?.role === 'SUPER_ADMIN';
-    }
-    return true;
-  });
+  const visibleMenuItems = menuItems;
 
   const handleSelectTab = (id: string) => {
     setActiveTab(id);

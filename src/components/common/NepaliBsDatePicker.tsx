@@ -91,11 +91,10 @@ export const NepaliBsDatePicker: React.FC<NepaliBsDatePickerProps> = ({
     };
   }, [isOpen]);
 
-  // Handle direct keyboard entry with automatic Nepali Unicode conversion
+  // Handle direct keyboard entry with automatic English digit conversion
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawVal = e.target.value;
-    // Convert any English digits to Nepali digits automatically
-    const converted = toNepaliDigits(rawVal);
+    const converted = toEnglishDigits(rawVal);
     onChange(converted);
   };
 
@@ -111,7 +110,7 @@ export const NepaliBsDatePicker: React.FC<NepaliBsDatePickerProps> = ({
 
   // Select a day
   const handleSelectDay = (day: number) => {
-    const formatted = `${toNepaliDigits(viewYear)}/${toNepaliDigits(String(viewMonth).padStart(2, '0'))}/${toNepaliDigits(String(day).padStart(2, '0'))}`;
+    const formatted = `${viewYear}/${String(viewMonth).padStart(2, '0')}/${String(day).padStart(2, '0')}`;
     onChange(formatted);
     setIsOpen(false);
   };

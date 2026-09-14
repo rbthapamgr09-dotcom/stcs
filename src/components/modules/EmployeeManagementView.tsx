@@ -385,13 +385,13 @@ export const EmployeeManagementView: React.FC = () => {
 
     setEmployeeFormData({
       ...emp,
-      code: toNepaliDigits(emp.code || ''),
-      panNumber: toNepaliDigits(emp.panNumber || ''),
-      bankAccount: toNepaliDigits(emp.bankAccount || ''),
+      code: toEnglishDigits(emp.code || ''),
+      panNumber: toEnglishDigits(emp.panNumber || ''),
+      bankAccount: toEnglishDigits(emp.bankAccount || ''),
       serviceGroup: emp.serviceGroup || 'ने.ई./सिभिल/हाईवे',
       currentPostDateBS: emp.currentPostDateBS || '',
       currentPostDateAD: emp.currentPostDateAD || '',
-      phone: toNepaliDigits(emp.phone || ''),
+      phone: toEnglishDigits(emp.phone || ''),
       email: emp.email || '',
       remarks: emp.remarks || '',
     });
@@ -446,8 +446,8 @@ export const EmployeeManagementView: React.FC = () => {
   ) => {
     const { name, value } = e.target;
     if (name === 'code' || name === 'panNumber' || name === 'bankAccount' || name === 'phone') {
-      const nepaliVal = toNepaliDigits(value);
-      setEmployeeFormData((prev) => ({ ...prev, [name]: nepaliVal }));
+      const engVal = toEnglishDigits(value);
+      setEmployeeFormData((prev) => ({ ...prev, [name]: engVal }));
     } else {
       setEmployeeFormData((prev) => ({ ...prev, [name]: value }));
     }

@@ -251,20 +251,13 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
             <span>{useDevanagariNumerals ? '# नेपाली अंक' : '# 123 अंक'}</span>
           </button>
 
-          {/* Google Sheets Sync Pill */}
+          {/* Cloud Firestore Live Status Pill */}
           <div
-            className={`hidden xl:flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] border ${
-              googleSheetsConfig.webAppUrl
-                ? googleSheetsConfig.syncStatus === 'success'
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                  : 'bg-blue-50 text-blue-800 border-blue-200'
-                : 'bg-gray-100 text-gray-600 border-gray-200'
-            }`}
+            title="Google Cloud Firestore प्रत्यक्ष डाटाबेस जडान"
+            className="hidden xl:flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold border bg-emerald-50 text-emerald-800 border-emerald-200 shadow-xs"
           >
-            <Cloud className="w-3 h-3" />
-            <span className="font-medium">
-              {googleSheetsConfig.webAppUrl ? 'गुगल सिट्स' : 'लोकल मोड'}
-            </span>
+            <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Firestore क्लाउड</span>
           </div>
 
           {/* Print Button */}

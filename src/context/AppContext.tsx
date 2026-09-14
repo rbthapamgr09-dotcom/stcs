@@ -1702,15 +1702,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setActiveOrganizationId(found.organizationId);
     }
 
-    // Automated Google Sheets setup & sync upon successful login
-    setTimeout(() => {
-      if (postLoginSheetsAutomationRef.current) {
-        postLoginSheetsAutomationRef.current(found!).catch((err) => {
-          console.warn('Post login sheets automation notice:', err);
-        });
-      }
-    }, 150);
-
     return { success: true, user: updatedUser, message: 'लगइन सफल भयो।' };
   };
 
@@ -1792,15 +1783,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (updatedUser.organizationId && updatedUser.organizationId !== 'all' && updatedUser.organizationId !== activeOrganizationId) {
       setActiveOrganizationId(updatedUser.organizationId);
     }
-
-    // Automated Google Sheets setup & sync upon first-time password setup completion
-    setTimeout(() => {
-      if (postLoginSheetsAutomationRef.current) {
-        postLoginSheetsAutomationRef.current(updatedUser).catch((err) => {
-          console.warn('Post first-time password setup automation notice:', err);
-        });
-      }
-    }, 150);
 
     logSecurityEvent({
       action: 'PASSWORD_CHANGED',
@@ -3494,51 +3476,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
     saveCloudOrganization(newOrg).catch((e) => console.warn('Cloud save org notice:', e));
     saveOrgSheetsConfig(orgId, initialSheetsConfig).catch(() => {});
-
-    // Background auto-create Google Sheet if token is available
-    (async () => {
-      try {
-        const token = await getAccessToken();
-        if (token && !newOrg.spreadsheetId) {
-          const newSheet = await createAppSpreadsheet(
-            token,
-            newOrg.officeName || newOrg.name,
-            '२०८१/८२'
-          );
-          if (newSheet && newSheet.id) {
-            const updatedConfig: GoogleSheetsConfig = {
-              ...initialSheetsConfig,
-              spreadsheetId: newSheet.id,
-              spreadsheetUrl: newSheet.url,
-              spreadsheetName: newSheet.title,
-            };
-            setOrganizations((prev) => {
-              const u = prev.map((o) => (o.id === orgId ? { ...o, spreadsheetId: newSheet.id, spreadsheetUrl: newSheet.url } : o));
-              try { localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(u)); } catch {}
-              saveCloudOrganizations(u).catch(() => {});
-              return u;
-            });
-            setOrgDatabases((prev) => {
-              if (!prev[orgId]) return prev;
-              const u = {
-                ...prev,
-                [orgId]: {
-                  ...prev[orgId],
-                  googleSheetsConfig: updatedConfig,
-                },
-              };
-              try { localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(u)); } catch {}
-              return u;
-            });
-            saveOrgSheetsConfig(orgId, updatedConfig).catch(() => {});
-            saveCloudOrganization({ ...newOrg, spreadsheetId: newSheet.id, spreadsheetUrl: newSheet.url }).catch(() => {});
-            addToast('success', 'गुगल सिट स्वतः तयार भयो', `'${newSheet.title}' गुगल ड्राइभ फोल्डरमा तयार भयो र यस कार्यालयसँग लिंक गरियो।`);
-          }
-        }
-      } catch (sheetErr) {
-        console.warn('Auto create spreadsheet for new organization notice:', sheetErr);
-      }
-    })();
 
     if (initialAdmin && (initialAdmin.username?.trim() || initialAdmin.fullName?.trim())) {
       const cleanAdminUsername = (initialAdmin.username?.trim() || `admin_${Date.now().toString().slice(-4)}`).toLowerCase().replace(/\s+/g, '');

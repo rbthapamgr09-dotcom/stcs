@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Lock,
   User as UserIcon,
@@ -52,6 +52,13 @@ export const LoginPage: React.FC = () => {
     setActiveFiscalYear,
     addToast,
   } = useApp();
+
+  // Sync selected fiscal year with activeFiscalYear set by Super Admin
+  useEffect(() => {
+    if (activeFiscalYear) {
+      setSelectedFy(activeFiscalYear);
+    }
+  }, [activeFiscalYear]);
 
   // Mode: 'login' | 'first_time_password' | 'reset_password'
   const [mode, setMode] = useState<'login' | 'first_time_password' | 'reset_password'>('login');
@@ -441,30 +448,23 @@ export const LoginPage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* 3. Fiscal Year Selection Field */}
+                {/* 3. Fiscal Year Field (Active Fiscal Year set by Super Admin) */}
                 <div className="space-y-1">
                   <label className="block text-xs font-semibold text-[#24331C]">
-                    आर्थिक वर्ष (Fiscal Year):
+                    सक्रिय आर्थिक वर्ष (Active Fiscal Year):
                   </label>
-                  <div className="relative">
-                    <select
-                      value={selectedFy}
-                      onChange={(e) => {
-                        setSelectedFy(e.target.value);
-                        setActiveFiscalYear(e.target.value);
-                      }}
-                      className="w-full px-3 py-2 pr-8 rounded-lg border border-[#c8d7c2] text-[#24331C] text-xs font-mono font-bold outline-none focus:ring-2 focus:ring-[#4B6043] focus:border-[#4B6043] transition-all bg-white appearance-none cursor-pointer"
-                    >
-                      {fiscalYears.map((fy) => (
-                        <option key={fy} value={fy} className="font-mono">
-                          {fy}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-gray-500 text-xs">
-                      ▼
-                    </div>
+                  <div className="w-full px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50/80 text-[#24331C] text-xs font-mono font-bold flex items-center justify-between shadow-2xs">
+                    <span className="flex items-center gap-1.5 text-emerald-900">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>आ.व. {activeFiscalYear || selectedFy || '२०८१/८२'}</span>
+                    </span>
+                    <span className="text-[10px] bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded-md font-bold">
+                      सक्रिय (Active)
+                    </span>
                   </div>
+                  <p className="text-[10px] text-gray-500">
+                    * सुपर एडमिनद्वारा सक्रिय गरिएको चालु आर्थिक वर्ष
+                  </p>
                 </div>
 
                 {/* 4. Forgot Password Action Link */}

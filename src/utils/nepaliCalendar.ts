@@ -55,6 +55,21 @@ const MONTH_KEYS = [
   'Chaitra',
 ] as const;
 
+let globalIsPrinting = false;
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeprint', () => {
+    globalIsPrinting = true;
+  });
+  window.addEventListener('afterprint', () => {
+    globalIsPrinting = false;
+  });
+}
+
+export function isCurrentlyPrinting(): boolean {
+  if (typeof window === 'undefined') return false;
+  return globalIsPrinting || window.matchMedia('print').matches;
+}
+
 export function toNepaliDigits(input: number | string | null | undefined): string {
   if (input === null || input === undefined) return '';
   return input
@@ -90,7 +105,8 @@ export function toDisplayDigits(
 ): string {
   if (input === null || input === undefined) return '';
   const str = input.toString();
-  return useDevanagari ? toNepaliDigits(str) : toEnglishDigits(str);
+  const shouldUseDevanagari = useDevanagari || isCurrentlyPrinting();
+  return shouldUseDevanagari ? toNepaliDigits(str) : toEnglishDigits(str);
 }
 
 /**
@@ -106,8 +122,9 @@ export function formatNepaliNumber(
   } = {}
 ): string {
   const { useDevanagari = true, decimals = 2, showThousandsSeparator = true } = options;
+  const shouldUseDevanagari = useDevanagari || isCurrentlyPrinting();
   if (isNaN(amount) || amount === null || amount === undefined) {
-    return useDevanagari ? '०.००' : '0.00';
+    return shouldUseDevanagari ? '०.००' : '0.00';
   }
 
   const isNegative = amount < 0;
@@ -131,7 +148,7 @@ export function formatNepaliNumber(
 
   const resultEnglish = `${isNegative ? '-' : ''}${formattedInteger}${decimals > 0 ? decimalPart : ''}`;
 
-  if (useDevanagari) {
+  if (shouldUseDevanagari) {
     return toNepaliDigits(resultEnglish);
   }
   return resultEnglish;
@@ -150,8 +167,9 @@ export function formatNepaliCurrency(
   } = {}
 ): string {
   const { useDevanagari = true, showSymbol = true, decimals = 2 } = options;
+  const shouldUseDevanagari = useDevanagari || isCurrentlyPrinting();
   if (isNaN(amount) || amount === null || amount === undefined) {
-    return (showSymbol ? 'रु. ' : '') + (useDevanagari ? '०.००' : '0.00');
+    return (showSymbol ? (shouldUseDevanagari ? 'रु. ' : 'Rs. ') : '') + (shouldUseDevanagari ? '०.००' : '0.00');
   }
 
   const isNegative = amount < 0;
@@ -176,9 +194,9 @@ export function formatNepaliCurrency(
   }
 
   const resultEnglish = `${isNegative ? '-' : ''}${formattedInteger}${decimals > 0 ? decimalPart : ''}`;
-  const symbol = showSymbol ? (useDevanagari ? 'रु. ' : 'Rs. ') : '';
+  const symbol = showSymbol ? (shouldUseDevanagari ? 'रु. ' : 'Rs. ') : '';
 
-  if (useDevanagari) {
+  if (shouldUseDevanagari) {
     return symbol + toNepaliDigits(resultEnglish);
   }
   return symbol + resultEnglish;

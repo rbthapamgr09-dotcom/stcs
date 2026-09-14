@@ -1,4 +1,5 @@
 import React, { forwardRef } from 'react';
+import { toEnglishDigits } from '../../utils/nepaliCalendar';
 
 export interface NepaliTextInputProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
@@ -38,6 +39,23 @@ export const NepaliTextInput = forwardRef<HTMLInputElement, NepaliTextInputProps
   ) => {
     const stringVal = value === null || value === undefined ? '' : String(value);
 
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      let val = e.target.value;
+      if (
+        convertDigits ||
+        type === 'number' ||
+        name === 'code' ||
+        name === 'panNumber' ||
+        name === 'bankAccount' ||
+        name === 'phone' ||
+        name === 'officeCode' ||
+        name === 'pan'
+      ) {
+        val = toEnglishDigits(val);
+      }
+      onChange(val);
+    };
+
     return (
       <div className={`relative flex items-center w-full ${containerClassName}`}>
         <input
@@ -47,7 +65,7 @@ export const NepaliTextInput = forwardRef<HTMLInputElement, NepaliTextInputProps
           name={name}
           type={type}
           value={stringVal}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={handleChange}
           disabled={disabled}
           required={required}
           placeholder={placeholder}

@@ -271,18 +271,26 @@ export async function getCloudOrganizations(): Promise<OrganizationItem[] | null
 }
 
 /**
- * Removes an organization from Cloud SQL
+ * Removes an organization from Cloud SQL and Cloud Firestore
  */
 export async function deleteCloudOrganization(orgId: string): Promise<boolean> {
   try {
     await fetch(`/api/organization/${encodeURIComponent(orgId)}`, {
       method: 'DELETE',
     });
-    return true;
   } catch (err) {
     console.warn('Could not delete organization from Cloud SQL API:', err);
-    return false;
   }
+
+  if (canWriteFirestore()) {
+    try {
+      const { deleteOfficeFromFirestore } = await import('./firestoreService');
+      await deleteOfficeFromFirestore(orgId);
+    } catch (fsErr) {
+      handleFirestoreWriteError(fsErr, 'deleteCloudOrganization');
+    }
+  }
+  return true;
 }
 
 /**

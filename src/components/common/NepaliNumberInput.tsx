@@ -49,7 +49,7 @@ export const NepaliNumberInput: React.FC<NepaliNumberInputProps> = ({
     // fallback if used outside provider
   }
 
-  const isDevanagari = useDevanagariProp !== undefined ? useDevanagariProp : appDevanagari;
+  const isDevanagari = useDevanagariProp !== undefined ? useDevanagariProp : false;
 
   const [isFocused, setIsFocused] = useState(false);
   const [rawText, setRawText] = useState('');

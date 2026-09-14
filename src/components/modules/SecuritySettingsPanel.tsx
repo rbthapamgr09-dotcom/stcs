@@ -365,45 +365,6 @@ export const SecuritySettingsPanel: React.FC = () => {
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
 
-            {/* Google Sheet Direct View Button */}
-            {(googleSheetsConfig.spreadsheetId || googleSheetsConfig.spreadsheetUrl) && (
-              <button
-                onClick={openGoogleSheet}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f4f8f1] hover:bg-[#e6efe1] border border-[#cadac4] text-[#24331C] rounded-xl text-xs font-semibold transition-all shadow-xs cursor-pointer"
-                title="गुगल सिटमा सुरक्षा लग हेर्नुहोस् (Open Google Sheet)"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-[#4B6043]" />
-                <span>गुगल सिटमा हेर्नुहोस्</span>
-                <ExternalLink className="w-3 h-3 text-gray-400" />
-              </button>
-            )}
-
-            {/* Sync to Google Sheets */}
-            {(googleSheetsConfig.spreadsheetId || googleSheetsConfig.webAppUrl) && (
-              <button
-                onClick={handleSyncToSheets}
-                disabled={isSyncingWithSheets}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f4f8f1] hover:bg-[#e6efe1] border border-[#cadac4] text-[#24331C] rounded-xl text-xs font-semibold transition-all shadow-xs cursor-pointer disabled:opacity-50"
-                title="गुगल सिटमा सुरक्षा लग सुरक्षित गर्नुहोस्"
-              >
-                <CloudUpload className={`w-3.5 h-3.5 text-[#4B6043] ${isSyncingWithSheets ? 'animate-bounce' : ''}`} />
-                <span>{isSyncingWithSheets ? 'सिंक हुँदै...' : 'सिटमा पठाउनुहोस्'}</span>
-              </button>
-            )}
-
-            {/* Pull from Google Sheets */}
-            {(googleSheetsConfig.spreadsheetId || googleSheetsConfig.webAppUrl) && (
-              <button
-                onClick={handlePullFromSheets}
-                disabled={isSyncingWithSheets}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f4f8f1] hover:bg-[#e6efe1] border border-[#cadac4] text-[#24331C] rounded-xl text-xs font-semibold transition-all shadow-xs cursor-pointer disabled:opacity-50"
-                title="गुगल सिटबाट सुरक्षा लग तान्नुहोस्"
-              >
-                <CloudDownload className="w-3.5 h-3.5 text-[#4B6043]" />
-                <span>सिटबाट तान्नुहोस्</span>
-              </button>
-            )}
-
             {/* Download CSV / Excel */}
             <button
               onClick={handleDownloadCsv}

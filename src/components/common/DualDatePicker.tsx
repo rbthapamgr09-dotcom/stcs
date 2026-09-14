@@ -28,7 +28,7 @@ export const DualDatePicker: React.FC<DualDatePickerProps> = ({
   const [adInput, setAdInput] = useState<string>(adValue || '');
 
   useEffect(() => {
-    if (bsValue !== undefined) setBsInput(toNepaliDigits(bsValue));
+    if (bsValue !== undefined) setBsInput(toEnglishDigits(bsValue));
   }, [bsValue]);
 
   useEffect(() => {
@@ -37,19 +37,19 @@ export const DualDatePicker: React.FC<DualDatePickerProps> = ({
 
   // When BS Date is changed (typed or picked) -> Auto convert to AD Date
   const handleBsDateChange = (newBsDate: string) => {
-    const unicodeBs = toNepaliDigits(newBsDate);
-    setBsInput(unicodeBs);
-    const eng = toEnglishDigits(unicodeBs).trim();
+    const engBs = toEnglishDigits(newBsDate);
+    setBsInput(engBs);
+    const eng = engBs.trim();
     const parts = eng.split(/[-/.]/).filter(Boolean);
     if (parts.length === 3 && parts[0].length === 4 && parts[1].length >= 1 && parts[2].length >= 1) {
-      const converted = bsToAd(unicodeBs);
+      const converted = bsToAd(engBs);
       if (converted.formattedAD && !isNaN(converted.adYear)) {
         setAdInput(converted.formattedAD);
-        onChange({ bs: unicodeBs, ad: converted.formattedAD });
+        onChange({ bs: engBs, ad: converted.formattedAD });
         return;
       }
     }
-    onChange({ bs: unicodeBs, ad: adInput });
+    onChange({ bs: engBs, ad: adInput });
   };
 
   // When AD Date is changed (typed or selected) -> Auto convert to BS Date

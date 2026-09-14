@@ -579,7 +579,7 @@ export const OrganizationSetupView: React.FC = () => {
 
                   <div className="w-full mt-1 p-2 bg-emerald-50 rounded-lg border border-emerald-200 text-left flex items-start gap-1.5 text-[11px] text-emerald-800">
                     <span className="font-bold">✓ सिङ्क्रोनाइजेसन:</span>
-                    <span>यो लोगो गुगल सिटको <strong>कार्यालय_विवरण</strong> पानामा सुरक्षित हुन्छ र लगइन गर्दा स्वतः लेटरप्याडमा देखिनेछ।</span>
+                    <span>यो लोगो क्लाउड डाटाबेसमा सुरक्षित हुन्छ र लेटरप्याडमा देखिनेछ।</span>
                   </div>
                 </div>
               </div>

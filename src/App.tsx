@@ -22,11 +22,10 @@ import { TaxReferenceSetupView } from './components/modules/TaxReferenceSetupVie
 import { MonthlySalarySheetView } from './components/modules/MonthlySalarySheetView';
 import { AnnualTaxCalculationView } from './components/modules/AnnualTaxCalculationView';
 import { SalaryReportView } from './components/modules/SalaryReportView';
-import { GoogleSheetsSyncView } from './components/modules/GoogleSheetsSyncView';
 import { SettingsView } from './components/modules/SettingsView';
 
 const MainLayout: React.FC = () => {
-  const { activeTab, setActiveTab, currentUser } = useApp();
+  const { activeTab, setActiveTab } = useApp();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isDesktopCollapsed, setIsDesktopCollapsed] = useState(false);
 
@@ -58,31 +57,6 @@ const MainLayout: React.FC = () => {
         return <AnnualTaxCalculationView />;
       case 'salary_reports':
         return <SalaryReportView />;
-      case 'google_sheets':
-        if (currentUser?.role !== 'SUPER_ADMIN') {
-          return (
-            <div className="bg-white p-8 rounded-2xl border border-red-200 shadow-sm text-center max-w-xl mx-auto my-12 space-y-4">
-              <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto">
-                <ShieldAlert className="w-8 h-8" />
-              </div>
-              <h3 className="text-lg font-bold text-gray-900">
-                पहुँच अस्वीकृत (Access Denied)
-              </h3>
-              <p className="text-sm text-gray-600 leading-relaxed">
-                गुगल सिट्स डाटा सिंक (Google Sheets Integration) पृष्ठको पहुँच केवल <strong>सुपर एडमिन (Super Admin)</strong> प्रयोगकर्ताका लागि मात्र अधिकार छ।
-              </p>
-              <div className="pt-2">
-                <button
-                  onClick={() => setActiveTab('dashboard')}
-                  className="px-4 py-2 bg-[#4B6043] hover:bg-[#384c31] text-white text-xs font-bold rounded-xl shadow transition-all cursor-pointer"
-                >
-                  गृहपृष्ठ (Dashboard) मा फर्कनुहोस्
-                </button>
-              </div>
-            </div>
-          );
-        }
-        return <GoogleSheetsSyncView />;
       case 'settings':
         return <SettingsView />;
       default:
