@@ -60,11 +60,24 @@ export const LoginPage: React.FC = () => {
     }
   }, [activeFiscalYear]);
 
+  // Load cloud active fiscal year directly on mount as priority
+  useEffect(() => {
+    fetch('/api/system-settings/active_fiscal_year')
+      .then((res) => res.json())
+      .then((json) => {
+        const d = json.data?.data || json.data;
+        if (d?.activeFiscalYear) {
+          setSelectedFy(d.activeFiscalYear);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Mode: 'login' | 'first_time_password' | 'reset_password'
   const [mode, setMode] = useState<'login' | 'first_time_password' | 'reset_password'>('login');
 
   // Selected fiscal year for login
-  const [selectedFy, setSelectedFy] = useState<string>(activeFiscalYear || fiscalYears[0] || '२०८१/८२');
+  const [selectedFy, setSelectedFy] = useState<string>(activeFiscalYear || '2083/084');
 
   // Login form state
   const [loginUsername, setLoginUsername] = useState('');
@@ -117,11 +130,6 @@ export const LoginPage: React.FC = () => {
     if (!loginPassword) {
       setLoginError('कृपया पासवर्ड प्रविष्ट गर्नुहोस्।');
       return;
-    }
-
-    // Set the selected fiscal year as active
-    if (selectedFy) {
-      setActiveFiscalYear(selectedFy);
     }
 
     setLoginLoading(true);
@@ -456,14 +464,14 @@ export const LoginPage: React.FC = () => {
                   <div className="w-full px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50/80 text-[#24331C] text-xs font-mono font-bold flex items-center justify-between shadow-2xs">
                     <span className="flex items-center gap-1.5 text-emerald-900">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>आ.व. {activeFiscalYear || selectedFy || '२०८१/८२'}</span>
+                      <span>आ.व. {activeFiscalYear || selectedFy || '2083/084'}</span>
                     </span>
                     <span className="text-[10px] bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded-md font-bold">
                       सक्रिय (Active)
                     </span>
                   </div>
                   <p className="text-[10px] text-gray-500">
-                    * सुपर एडमिनद्वारा सक्रिय गरिएको चालु आर्थिक वर्ष
+                    * प्रणालीमा सक्रिय चालु आर्थिक वर्ष। लगइन पश्चात् माथिल्लो मेनु (Header) बाट जुनसुकै आर्थिक वर्ष चयन गरी सोही वर्षको विवरण प्रविष्टि/पहुँच गर्न सकिन्छ।
                   </p>
                 </div>
 

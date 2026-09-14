@@ -77,6 +77,8 @@ import {
   normalizeUserData,
   saveCloudFiscalYearConfig,
   getCloudFiscalYearConfig,
+  saveCloudFyDatabase,
+  getCloudFyDatabase,
   db,
 } from '../services/cloudSyncService';
 import { subscribeToOffices, subscribeToUsers, getOfficeByIdFromFirestore } from '../services/firestoreService';
@@ -594,7 +596,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   });
 
   const [activeFiscalYear, setActiveFiscalYearState] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEYS.ACTIVE_FY) || '२०८१/८२';
+    return localStorage.getItem(STORAGE_KEYS.ACTIVE_FY) || '2083/084';
   });
 
   const [activeMonth, setActiveMonth] = useState<NepaliMonth>(() => {
@@ -890,8 +892,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (saved) {
         return JSON.parse(saved);
       }
-      // Initialize with demo data for default FY
+      // Initialize with demo data for active FY 2083/084 and fallback
       return {
+        '2083/084': {
+          employees: DEMO_EMPLOYEES,
+          salarySetups: DEMO_SALARY_SETUPS,
+          deductionSetups: DEMO_DEDUCTION_SETUPS,
+          taxReferences: DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: '2083/084' })),
+        },
         '२०८१/८२': {
           employees: DEMO_EMPLOYEES,
           salarySetups: DEMO_SALARY_SETUPS,
@@ -901,6 +909,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     } catch {
       return {
+        '2083/084': {
+          employees: DEMO_EMPLOYEES,
+          salarySetups: DEMO_SALARY_SETUPS,
+          deductionSetups: DEMO_DEDUCTION_SETUPS,
+          taxReferences: DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: '2083/084' })),
+        },
         '२०८१/८२': {
           employees: DEMO_EMPLOYEES,
           salarySetups: DEMO_SALARY_SETUPS,
@@ -910,6 +924,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     }
   });
+
+  // Track the currently loaded fiscal year to avoid state clobbering during switches
+  const loadedFiscalYearRef = useRef<string>(activeFiscalYear);
 
   // Active Scoped Data States
   const currentFyData = fyDatabase[activeFiscalYear] || {
@@ -1146,12 +1163,37 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // 0. Active Fiscal Year Cloud Sync & Real-time Listener
     getCloudFiscalYearConfig().then((cfg) => {
       if (cfg && isMounted) {
-        if (cfg.activeFiscalYear) setActiveFiscalYearState(cfg.activeFiscalYear);
+        if (cfg.activeFiscalYear) {
+          setActiveFiscalYearState(cfg.activeFiscalYear);
+          loadedFiscalYearRef.current = cfg.activeFiscalYear;
+          try {
+            localStorage.setItem(STORAGE_KEYS.ACTIVE_FY, cfg.activeFiscalYear);
+          } catch {}
+        }
         if (cfg.fiscalYears && Array.isArray(cfg.fiscalYears)) {
           setFiscalYears(sortFiscalYearsDescending(cfg.fiscalYears));
         }
       }
     }).catch((e) => console.warn('Fiscal year cloud sync notice:', e));
+
+    getCloudFyDatabase().then((cloudDb) => {
+      if (cloudDb && isMounted && typeof cloudDb === 'object' && Object.keys(cloudDb).length > 0) {
+        setFyDatabase((prev) => {
+          const merged = { ...prev, ...cloudDb };
+          try {
+            localStorage.setItem(STORAGE_KEYS.FY_DATABASE, JSON.stringify(merged));
+          } catch {}
+          const activeData = merged[loadedFiscalYearRef.current];
+          if (activeData) {
+            if (activeData.employees) setEmployees(activeData.employees);
+            if (activeData.salarySetups) setSalarySetups(activeData.salarySetups);
+            if (activeData.deductionSetups) setDeductionSetups(activeData.deductionSetups);
+            if (activeData.taxReferences) setTaxReferences(activeData.taxReferences);
+          }
+          return merged;
+        });
+      }
+    }).catch((e) => console.warn('Fiscal year database cloud sync notice:', e));
 
     let unsubscribeMainConfig: (() => void) | undefined;
     try {
@@ -1380,6 +1422,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Sync active scoped data to fyDatabase when local states change
   useEffect(() => {
+    if (loadedFiscalYearRef.current !== activeFiscalYear) return;
+
     setFyDatabase((prev) => ({
       ...prev,
       [activeFiscalYear]: {
@@ -1391,13 +1435,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
   }, [employees, salarySetups, deductionSetups, taxReferences, activeFiscalYear]);
 
-  // Persist fyDatabase to localStorage
+  // Persist fyDatabase to localStorage and Cloud
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.FY_DATABASE, JSON.stringify(fyDatabase));
     } catch (e) {
       console.error('Failed to save FY database', e);
     }
+    const timer = setTimeout(() => {
+      saveCloudFyDatabase(fyDatabase).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(timer);
   }, [fyDatabase]);
 
   // Persist users and current user locally
@@ -2358,35 +2406,49 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Fiscal Year Switching & Isolation
   const setActiveFiscalYear = (newFy: string) => {
-    if (newFy === activeFiscalYear) return;
+    if (!newFy || newFy === activeFiscalYear) return;
 
-    // Load data from FY database or fallback
-    const targetData = fyDatabase[newFy];
-    if (targetData) {
-      setEmployees(targetData.employees || []);
-      setSalarySetups(targetData.salarySetups || {});
-      setDeductionSetups(targetData.deductionSetups || {});
-      setTaxReferences(targetData.taxReferences || DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: newFy })));
-    } else {
-      // Initialize new empty FY entry with default tax slabs
-      const newTaxRefs = DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: newFy }));
-      setEmployees([]);
-      setSalarySetups({});
-      setDeductionSetups({});
-      setTaxReferences(newTaxRefs);
-      setFyDatabase((prev) => ({
-        ...prev,
-        [newFy]: {
-          employees: [],
-          salarySetups: {},
-          deductionSetups: {},
-          taxReferences: newTaxRefs,
-        },
-      }));
-    }
+    // 1. Snapshot and commit current active fiscal year's data
+    const currentSnapshot: FiscalYearData = {
+      employees,
+      salarySetups,
+      deductionSetups,
+      taxReferences,
+    };
 
+    const updatedDb = {
+      ...fyDatabase,
+      [activeFiscalYear]: currentSnapshot,
+    };
+
+    // 2. Prepare target data
+    const targetData = updatedDb[newFy] || {
+      employees: [],
+      salarySetups: {},
+      deductionSetups: {},
+      taxReferences: DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: newFy })),
+    };
+    updatedDb[newFy] = targetData;
+
+    // 3. Update loaded ref so useEffect does not clobber target data
+    loadedFiscalYearRef.current = newFy;
+
+    // 4. Update scoped states atomically
+    setFyDatabase(updatedDb);
+    setEmployees(targetData.employees || []);
+    setSalarySetups(targetData.salarySetups || {});
+    setDeductionSetups(targetData.deductionSetups || {});
+    setTaxReferences(targetData.taxReferences || DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: newFy })));
     setActiveFiscalYearState(newFy);
+
+    // 5. Persist to local storage and cloud database
+    try {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_FY, newFy);
+      localStorage.setItem(STORAGE_KEYS.FY_DATABASE, JSON.stringify(updatedDb));
+    } catch {}
+    saveCloudFyDatabase(updatedDb).catch(() => {});
     saveCloudFiscalYearConfig({ activeFiscalYear: newFy, fiscalYears }).catch(() => {});
+
     addToast('info', 'आर्थिक वर्ष परिवर्तन', `सक्रिय आर्थिक वर्ष ${newFy} चयन गरियो।`);
   };
 
@@ -3560,8 +3622,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const newOrgStore: OrganizationDataStore = {
       organization: { ...newOrg },
       fiscalYears: DEFAULT_FY_LIST,
-      activeFiscalYear: '२०८१/८२',
+      activeFiscalYear: '2083/084',
       fyDatabase: {
+        '2083/084': {
+          employees: [],
+          salarySetups: {},
+          deductionSetups: {},
+          taxReferences: DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: '2083/084' })),
+        },
         '२०८१/८२': {
           employees: [],
           salarySetups: {},
@@ -3618,7 +3686,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
       } catch {}
       saveCloudUsers(updatedUsers).catch((e) => console.warn('Cloud save users notice:', e));
-      saveSingleUserToCloud(adminUser).catch((e) => console.warn('Cloud save admin user notice:', e));
+      saveSingleUserToCloud({ ...adminUser, password: initialAdmin.password || 'admin123' }).catch((e) =>
+        console.warn('Cloud save admin user notice:', e)
+      );
       triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
     }
 

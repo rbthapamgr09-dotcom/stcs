@@ -81,6 +81,9 @@ async function startServer() {
 
   // --- API Routes ---
 
+  // Initialize and reconcile core database accounts and organizations
+  ensureDatabaseInitialized().catch((err) => console.warn('Core database init warning:', err));
+
   // Health check endpoint
   app.get('/api/health', (_req, res) => {
     res.json({
@@ -99,7 +102,66 @@ async function startServer() {
       }
 
       const cleanUser = username.trim();
-      const user = await getUserByUsernameOrEmailOrUid(cleanUser);
+      let user = await getUserByUsernameOrEmailOrUid(cleanUser);
+
+      // Auto-reconciliation fallback for known office admin accounts
+      if (!user) {
+        if (cleanUser.toLowerCase() === 'admin_mbp') {
+          user = await getOrCreateUser(
+            'user_admin_mbp',
+            'mbp.dor@gmail.com',
+            'admin_mbp',
+            'महाकाली पुल योजना, कञ्चनपुर',
+            'ADMIN',
+            'org_1789233319137',
+            {
+              password: 'admin123',
+              organizationName: 'महाकाली पुल योजना',
+              designation: 'कार्यालय प्रशासक / लेखा अधिकृत',
+              phone: '-',
+              securityPin: '1234',
+              securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+              securityAnswer: 'नेपाल',
+              isActive: true,
+              mustChangePassword: false,
+              isFirstLogin: false,
+            }
+          );
+        } else {
+          // Check if any organization in database has this admin pattern
+          try {
+            const orgs = await getOrganizations();
+            const matchedOrg = orgs.find(
+              (o) =>
+                ((o.officeCode || (o as any).code) && `admin_${((o.officeCode || (o as any).code) as string).toLowerCase()}` === cleanUser.toLowerCase()) ||
+                (o.registrationNo && `admin_${o.registrationNo.toLowerCase()}` === cleanUser.toLowerCase()) ||
+                (o.email && o.email.toLowerCase() === cleanUser.toLowerCase())
+            );
+            if (matchedOrg) {
+              const orgName = (matchedOrg as any).officeName || (matchedOrg as any).name || 'कार्यालय';
+              user = await getOrCreateUser(
+                `user_${cleanUser.toLowerCase()}`,
+                matchedOrg.email || `${cleanUser}@system.local`,
+                cleanUser,
+                orgName,
+                'ADMIN',
+                matchedOrg.id,
+                {
+                  password: 'admin123',
+                  organizationName: orgName,
+                  isActive: true,
+                  securityPin: '1234',
+                  mustChangePassword: false,
+                  isFirstLogin: false,
+                }
+              );
+            }
+          } catch (lookupErr) {
+            console.warn('Auto org-admin lookup note:', lookupErr);
+          }
+        }
+      }
+
       if (!user) {
         return res.status(404).json({
           success: false,
@@ -114,6 +176,21 @@ async function startServer() {
           inactive: true,
           message: 'यो खाता निष्क्रिय (Inactive) गरिएको छ। कृपया प्रशासकसँग सम्पर्क गर्नुहोस्।',
         });
+      }
+
+      // Check if user's organization is active
+      if (user.organizationId && user.organizationId !== 'org_default') {
+        try {
+          const org = await getOrganizationById(user.organizationId);
+          if (org && org.isActive === false) {
+            return res.status(403).json({
+              success: false,
+              inactive: true,
+              officeInactive: true,
+              message: 'यो प्रयोगकर्ता सम्बद्ध कार्यालय हाल निष्क्रिय (Inactive) गरिएको छ।',
+            });
+          }
+        } catch {}
       }
 
       const meta = (user.metadata as any) || {};
@@ -383,6 +460,79 @@ async function startServer() {
 
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+}
+
+async function ensureDatabaseInitialized() {
+  try {
+    // 1. Ensure Super Admin and Demo Accounts
+    await getOrCreateUser(
+      'user_super_admin',
+      'superadmin@system.local',
+      'superadmin',
+      'प्रणाली सुपर प्रशासक (Super Admin)',
+      'SUPER_ADMIN',
+      'org_default',
+      {
+        password: 'admin123',
+        isActive: true,
+        mustChangePassword: false,
+        isFirstLogin: false,
+        securityPin: '1234',
+        securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+        securityAnswer: 'नेपाल',
+      }
+    );
+
+    await getOrCreateUser(
+      'rbthapamgr09',
+      'rbthapamgr09@gmail.com',
+      'rbthapamgr09',
+      'RB Thapa (Super Admin)',
+      'SUPER_ADMIN',
+      'org_default',
+      {
+        password: 'admin123',
+        isActive: true,
+        mustChangePassword: false,
+        isFirstLogin: false,
+        securityPin: '1234',
+        securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+        securityAnswer: 'नेपाल',
+      }
+    );
+
+    // 2. Ensure admin_mbp for Mahakali Bridge Project
+    await getOrCreateUser(
+      'user_admin_mbp',
+      'mbp.dor@gmail.com',
+      'admin_mbp',
+      'महाकाली पुल योजना, कञ्चनपुर',
+      'ADMIN',
+      'org_1789233319137',
+      {
+        password: 'admin123',
+        organizationName: 'महाकाली पुल योजना',
+        designation: 'कार्यालय प्रशासक / लेखा अधिकृत',
+        phone: '-',
+        securityPin: '1234',
+        securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+        securityAnswer: 'नेपाल',
+        isActive: true,
+        mustChangePassword: false,
+        isFirstLogin: false,
+      }
+    );
+
+    // 3. Ensure all registered organizations have active status
+    const allOrgs = await getOrganizations();
+    for (const org of allOrgs) {
+      if (org.isActive === undefined || org.isActive === null) {
+        await upsertOrganization({ ...org, isActive: true });
+      }
+    }
+  } catch (err) {
+    console.warn('Database initialization note:', err);
+  }
 }
 
 startServer();

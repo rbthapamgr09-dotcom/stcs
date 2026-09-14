@@ -57,6 +57,60 @@ export async function saveCloudFiscalYearConfig(data: {
 }
 
 /**
+ * Persists full Fiscal Year isolated database to Cloud SQL & Firestore
+ */
+export async function saveCloudFyDatabase(fyDb: Record<string, any>): Promise<boolean> {
+  try {
+    await fetch('/api/system-settings/fy_database', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: fyDb }),
+    });
+  } catch (sqlErr) {
+    console.warn('Could not save FY Database to Cloud SQL:', sqlErr);
+  }
+
+  if (canWriteFirestore()) {
+    try {
+      const docRef = doc(db, CONNECTIONS_COLLECTION, 'fy_database_records');
+      await setDoc(docRef, { fyDatabase: fyDb, updatedAt: new Date().toISOString() }, { merge: true });
+      return true;
+    } catch (err) {
+      handleFirestoreWriteError(err, 'saveCloudFyDatabase');
+    }
+  }
+  return true;
+}
+
+/**
+ * Retrieves the full Fiscal Year isolated database from Cloud SQL & Firestore
+ */
+export async function getCloudFyDatabase(): Promise<Record<string, any> | null> {
+  try {
+    const res = await fetch('/api/system-settings/fy_database');
+    if (res.ok) {
+      const json = await res.json();
+      const d = json.data?.data || json.data;
+      if (d && typeof d === 'object' && Object.keys(d).length > 0) {
+        return d;
+      }
+    }
+  } catch (err) {}
+
+  try {
+    const docRef = doc(db, CONNECTIONS_COLLECTION, 'fy_database_records');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const d = snap.data();
+      if (d?.fyDatabase && typeof d.fyDatabase === 'object') {
+        return d.fyDatabase;
+      }
+    }
+  } catch (err) {}
+  return null;
+}
+
+/**
  * Retrieves the persisted fiscal year config from Cloud SQL or Firestore
  */
 export async function getCloudFiscalYearConfig(): Promise<{
