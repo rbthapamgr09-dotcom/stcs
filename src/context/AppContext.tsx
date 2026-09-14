@@ -75,8 +75,11 @@ import {
   getOrgSheetsConfig,
   cloudLogin,
   normalizeUserData,
+  saveCloudFiscalYearConfig,
+  getCloudFiscalYearConfig,
   db,
 } from '../services/cloudSyncService';
+import { subscribeToOffices, subscribeToUsers, getOfficeByIdFromFirestore } from '../services/firestoreService';
 import { doc, onSnapshot } from 'firebase/firestore';
 import {
   hashPasswordSync,
@@ -90,6 +93,12 @@ import {
   verifyDataChecksum,
 } from '../utils/securityUtils';
 import { normalizeLogoUrl } from '../utils/logoUtils';
+import {
+  deduplicateOrganizations,
+  deduplicateUsers,
+  isDuplicateOrganization,
+  isDuplicateUser,
+} from '../utils/deduplicate';
 
 interface ConfirmationDialogState {
   isOpen: boolean;
@@ -1134,31 +1143,67 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('Real-time users listener setup notice:', listenerErr);
     }
 
-    // 2. Multi-Organization Cloud Sync across Devices
-    getCloudOrganizations().then((cloudOrgs) => {
-      if (isMounted) {
-        if (cloudOrgs && cloudOrgs.length > 0) {
-          const filtered = cloudOrgs.filter(
-            (co) =>
-              co.id !== 'org_default' &&
-              co.officeName !== 'खानेपानी तथा ढल व्यवस्थापन कार्यालय' &&
-              Boolean(co.officeName)
-          );
+    // 0. Active Fiscal Year Cloud Sync & Real-time Listener
+    getCloudFiscalYearConfig().then((cfg) => {
+      if (cfg && isMounted) {
+        if (cfg.activeFiscalYear) setActiveFiscalYearState(cfg.activeFiscalYear);
+        if (cfg.fiscalYears && Array.isArray(cfg.fiscalYears)) {
+          setFiscalYears(sortFiscalYearsDescending(cfg.fiscalYears));
+        }
+      }
+    }).catch((e) => console.warn('Fiscal year cloud sync notice:', e));
+
+    let unsubscribeMainConfig: (() => void) | undefined;
+    try {
+      const configDocRef = doc(db, 'system_connections', 'main_config');
+      unsubscribeMainConfig = onSnapshot(configDocRef, (snap) => {
+        if (snap.exists() && isMounted) {
+          const d = snap.data();
+          if (d) {
+            if (d.activeFiscalYear) setActiveFiscalYearState(d.activeFiscalYear);
+            if (d.fiscalYears && Array.isArray(d.fiscalYears)) {
+              setFiscalYears(sortFiscalYearsDescending(d.fiscalYears));
+            }
+          }
+        }
+      });
+    } catch (err) {}
+
+    let unsubscribeStandaloneOffices: (() => void) | undefined;
+    let unsubscribeStandaloneUsers: (() => void) | undefined;
+    try {
+      unsubscribeStandaloneOffices = subscribeToOffices((offices) => {
+        if (isMounted && offices && offices.length > 0) {
           setOrganizations((prev) => {
-            const mergedMap = new Map<string, OrganizationItem>();
-            prev.forEach((o) => {
-              if (o.officeName) mergedMap.set(o.id, o);
-            });
-            filtered.forEach((co) => {
-              if (co.officeName) mergedMap.set(co.id, co);
-            });
-            const merged = Array.from(mergedMap.values());
-            try {
-              localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(merged));
-            } catch {}
+            const merged = deduplicateOrganizations([...prev, ...offices]);
+            try { localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(merged)); } catch {}
             return merged;
           });
         }
+      });
+
+      unsubscribeStandaloneUsers = subscribeToUsers((uList) => {
+        if (isMounted && uList && uList.length > 0) {
+          setUsers((prev) => {
+            const validCloudUsers = uList.map(normalizeUserData);
+            const merged = deduplicateUsers([...prev, ...validCloudUsers]);
+            try { localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged)); } catch {}
+            return merged;
+          });
+        }
+      });
+    } catch (err) {}
+
+    // 2. Multi-Organization Cloud Sync across Devices
+    getCloudOrganizations().then((cloudOrgs) => {
+      if (isMounted && cloudOrgs && cloudOrgs.length > 0) {
+        setOrganizations((prev) => {
+          const merged = deduplicateOrganizations([...prev, ...cloudOrgs]);
+          try {
+            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(merged));
+          } catch {}
+          return merged;
+        });
       }
     }).catch((e) => console.warn('Cloud organizations sync notice:', e));
 
@@ -1166,17 +1211,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     getCloudUsers().then((cloudUsers) => {
       if (cloudUsers && cloudUsers.length > 0 && isMounted) {
         setUsers((prev) => {
-          const merged = [...prev];
-          for (const cu of cloudUsers) {
-            const idx = merged.findIndex(
-              (u) => u.id === cu.id || (u.username && cu.username && u.username.toLowerCase() === cu.username.toLowerCase())
-            );
-            if (idx >= 0) {
-              merged[idx] = { ...merged[idx], ...cu };
-            } else {
-              merged.push(cu);
-            }
-          }
+          const merged = deduplicateUsers([...prev, ...cloudUsers]);
           try {
             localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
           } catch {}
@@ -1224,17 +1259,43 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     return () => {
       isMounted = false;
-      if (unsubscribeSupport) {
-        unsubscribeSupport();
-      }
-      if (unsubscribeOrgs) {
-        unsubscribeOrgs();
-      }
-      if (unsubscribeUsers) {
-        unsubscribeUsers();
-      }
+      if (unsubscribeSupport) unsubscribeSupport();
+      if (unsubscribeOrgs) unsubscribeOrgs();
+      if (unsubscribeUsers) unsubscribeUsers();
+      if (unsubscribeMainConfig) unsubscribeMainConfig();
+      if (unsubscribeStandaloneOffices) unsubscribeStandaloneOffices();
+      if (unsubscribeStandaloneUsers) unsubscribeStandaloneUsers();
     };
   }, [currentUser]);
+
+  // Automatic cleanup of duplicate Organizations and Users on startup
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setOrganizations((prev) => {
+        const clean = deduplicateOrganizations(prev);
+        if (clean.length !== prev.length) {
+          try {
+            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(clean));
+          } catch {}
+          saveCloudOrganizations(clean).catch(() => {});
+        }
+        return clean;
+      });
+
+      setUsers((prev) => {
+        const clean = deduplicateUsers(prev);
+        if (clean.length !== prev.length) {
+          try {
+            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(clean));
+          } catch {}
+          saveCloudUsers(clean).catch(() => {});
+        }
+        return clean;
+      });
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, []);
 
   const [auditEmployeeId, setAuditEmployeeId] = useState<string | null>(null);
   const [isUnauthorizedDomainModalOpen, setIsUnauthorizedDomainModalOpen] = useState(false);
@@ -1529,7 +1590,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         (u.id === userIdOrUsername ||
           u.username.toLowerCase() === trimmedInput ||
           (u.email && u.email.toLowerCase() === trimmedInput)) &&
-        u.isActive
+        u.isActive !== false
     );
     if (found) {
       found = normalizeUserData(found);
@@ -1579,6 +1640,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return updated;
           });
           isLocalPasswordValid = true;
+          if (found.organizationId && found.organizationId !== 'all') {
+            const orgExists = organizations.some((o) => o.id === found!.organizationId);
+            if (!orgExists) {
+              getOfficeByIdFromFirestore(found.organizationId).then((fetchedOrg) => {
+                if (fetchedOrg) {
+                  setOrganizations((prev) => {
+                    const exists = prev.some((o) => o.id === fetchedOrg.id);
+                    if (exists) return prev;
+                    const updated = [...prev, fetchedOrg];
+                    try {
+                      localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
+                    } catch {}
+                    return updated;
+                  });
+                }
+              }).catch(() => {});
+            }
+          }
         } else if (cloudResult.wrongPassword) {
           const attempt = recordFailedAttempt(trimmedInput);
           logSecurityEvent({
@@ -1852,9 +1931,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return false;
     }
 
-    const exists = users.some((u) => u.username.toLowerCase() === cleanUsername);
-    if (exists) {
-      addToast('error', 'प्रयोगकर्ता नाम उपलब्ध छैन', 'यो प्रयोगकर्ता नाम (Username) पहिले नै दर्ता भइसकेको छ।');
+    const dupCheck = isDuplicateUser(cleanUsername, userData.email, users);
+    if (dupCheck.isDuplicate) {
+      const reasonMsg = dupCheck.reason === 'email' ? 'इमेल' : 'प्रयोगकर्ता नाम (Username)';
+      addToast('error', 'प्रविष्टि रद्द गरियो', `उक्त ${reasonMsg} पहिले नै प्रणालीमा दर्ता भइसकेको छ। डुप्लिकेट दर्ता गर्न मिल्दैन।`);
       return false;
     }
 
@@ -1926,6 +2006,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const existingTarget = users.find((u) => u.id === updatedUser.id);
     if (!existingTarget) {
       addToast('error', 'त्रुटि', 'प्रयोगकर्ता फेला परेन।');
+      return false;
+    }
+
+    const cleanUsername = (updatedUser.username || '').toLowerCase().trim().replace(/\s+/g, '');
+    const dupCheck = isDuplicateUser(cleanUsername, updatedUser.email, users, updatedUser.id);
+    if (dupCheck.isDuplicate) {
+      const reasonMsg = dupCheck.reason === 'email' ? 'इमेल' : 'प्रयोगकर्ता नाम (Username)';
+      addToast('error', 'प्रमार्जन रद्द गरियो', `उक्त ${reasonMsg} अर्को प्रयोगकर्ताले प्रयोग गरिसकेको छ।`);
       return false;
     }
 
@@ -2298,6 +2386,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     setActiveFiscalYearState(newFy);
+    saveCloudFiscalYearConfig({ activeFiscalYear: newFy, fiscalYears }).catch(() => {});
     addToast('info', 'आर्थिक वर्ष परिवर्तन', `सक्रिय आर्थिक वर्ष ${newFy} चयन गरियो।`);
   };
 
@@ -2333,13 +2422,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     }
 
-    setFiscalYears((prev) => sortFiscalYearsDescending([newFy, ...prev]));
+    const updatedFyList = sortFiscalYearsDescending([newFy, ...fiscalYears]);
+    setFiscalYears(updatedFyList);
     setFyDatabase((prev) => ({
       ...prev,
       [newFy]: initialData,
     }));
 
     setActiveFiscalYear(newFy);
+    saveCloudFiscalYearConfig({ activeFiscalYear: newFy, fiscalYears: updatedFyList }).catch(() => {});
     addToast('success', 'नयाँ आर्थिक वर्ष सिर्जना', `आर्थिक वर्ष ${newFy} सफलतापूर्वक सिर्जना गरी सक्रिय गरियो।`);
     return true;
   };
@@ -2433,6 +2524,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
       return nextOrgDbs;
     });
+
+    saveCloudFiscalYearConfig({
+      activeFiscalYear: activeFiscalYear === oldFy ? trimmedNewFy : activeFiscalYear,
+      fiscalYears: updatedList,
+    }).catch(() => {});
 
     addToast(
       'success',
@@ -3426,6 +3522,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { success: false, message: msg };
     }
 
+    const dupOrgCheck = isDuplicateOrganization(orgData.officeName, organizations);
+    if (dupOrgCheck.isDuplicate) {
+      const msg = `'${orgData.officeName}' नाम गरेको कार्यालय पहिले नै प्रणालीमा दर्ता भइसकेको छ। डुप्लिकेट कार्यालय दर्ता गर्न पाइँदैन।`;
+      addToast('error', 'डुप्लिकेट कार्यालय', msg);
+      return { success: false, message: msg };
+    }
+
+    if (initialAdmin && (initialAdmin.username?.trim() || initialAdmin.email?.trim())) {
+      const cleanAdminUsername = (initialAdmin.username?.trim() || `admin_${Date.now().toString().slice(-4)}`).toLowerCase().replace(/\s+/g, '');
+      const dupUserCheck = isDuplicateUser(cleanAdminUsername, initialAdmin.email, users);
+      if (dupUserCheck.isDuplicate) {
+        const msg = `प्रशासक प्रयोगकर्ता नाम '${cleanAdminUsername}' वा इमेल पहिले नै प्रणालीमा दर्ता भइसकेको छ। कृपया फरक प्रयोगकर्ता नाम/इमेल प्रयोग गर्नुहोस्।`;
+        addToast('error', 'डुप्लिकेट प्रयोगकर्ता', msg);
+        return { success: false, message: msg };
+      }
+    }
+
     const orgId = `org_${Date.now()}`;
     const newOrg: OrganizationItem = {
       ...orgData,
@@ -3460,7 +3573,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     setOrganizations((prev) => {
-      const updated = [...prev, newOrg];
+      const updated = deduplicateOrganizations([...prev, newOrg]);
       try {
         localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
       } catch {}
@@ -3523,6 +3636,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!hasPermission('MANAGE_SETTINGS') && currentUser?.role !== 'SUPER_ADMIN') {
       addToast('error', 'अनाधिकृत कार्य', 'कार्यालय विवरण परिमार्जन गर्न सुपर एडमिन वा एडमिनको अधिकार आवश्यक छ।');
       return false;
+    }
+
+    if (orgData.officeName) {
+      const dupOrgCheck = isDuplicateOrganization(orgData.officeName, organizations, orgId);
+      if (dupOrgCheck.isDuplicate) {
+        addToast('error', 'डुप्लिकेट कार्यालय नाम', `'${orgData.officeName}' नाम गरेको अर्को कार्यालय प्रणालीमा पहिले नै दर्ता छ।`);
+        return false;
+      }
     }
 
     setOrganizations((prev) => {

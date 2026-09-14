@@ -11,7 +11,87 @@ import firebaseConfig from '../../firebase-applet-config.json';
 import { GoogleSheetsConfig, OrganizationSetup, OrganizationItem, User, SystemSupportContact } from '../types';
 import { verifyPasswordSync } from '../utils/securityUtils';
 
-// Initialize Firebase App safely
+import { saveOfficeToFirestore, saveUserToFirestore, getUserFromFirestore } from './firestoreService';
+import { deduplicateOrganizations, deduplicateUsers } from '../utils/deduplicate';
+
+/**
+ * Persists active fiscal year and fiscal year list across Cloud SQL and Firestore
+ */
+export async function saveCloudFiscalYearConfig(data: {
+  activeFiscalYear: string;
+  fiscalYears: string[];
+}): Promise<boolean> {
+  try {
+    await fetch('/api/system-settings/active_fiscal_year', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: {
+          activeFiscalYear: data.activeFiscalYear,
+          fiscalYears: data.fiscalYears,
+        },
+      }),
+    });
+  } catch (sqlErr) {
+    console.warn('Could not save active FY to Cloud SQL API:', sqlErr);
+  }
+
+  if (canWriteFirestore()) {
+    try {
+      const configDocRef = doc(db, CONNECTIONS_COLLECTION, MAIN_CONFIG_DOC);
+      await setDoc(
+        configDocRef,
+        {
+          activeFiscalYear: data.activeFiscalYear,
+          fiscalYears: data.fiscalYears,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      return true;
+    } catch (err) {
+      handleFirestoreWriteError(err, 'saveCloudFiscalYearConfig');
+    }
+  }
+  return true;
+}
+
+/**
+ * Retrieves the persisted fiscal year config from Cloud SQL or Firestore
+ */
+export async function getCloudFiscalYearConfig(): Promise<{
+  activeFiscalYear?: string;
+  fiscalYears?: string[];
+} | null> {
+  try {
+    const res = await fetch('/api/system-settings/active_fiscal_year');
+    if (res.ok) {
+      const json = await res.json();
+      const d = json.data?.data || json.data;
+      if (d && d.activeFiscalYear) {
+        return {
+          activeFiscalYear: d.activeFiscalYear,
+          fiscalYears: d.fiscalYears,
+        };
+      }
+    }
+  } catch (err) {}
+
+  try {
+    const mainDocRef = doc(db, CONNECTIONS_COLLECTION, MAIN_CONFIG_DOC);
+    const mainSnap = await getDoc(mainDocRef);
+    if (mainSnap.exists()) {
+      const d = mainSnap.data();
+      if (d && (d.activeFiscalYear || d.fiscalYears)) {
+        return {
+          activeFiscalYear: d.activeFiscalYear,
+          fiscalYears: d.fiscalYears,
+        };
+      }
+    }
+  } catch (err) {}
+  return null;
+}
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const db = (firebaseConfig as any).firestoreDatabaseId
   ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
@@ -143,9 +223,13 @@ export async function saveCloudOrganization(org: OrganizationItem): Promise<bool
         updatedAt: new Date().toISOString(),
       }, { merge: true });
 
+      // Mirror to standalone office doc in Firestore
+      saveOfficeToFirestore(org).catch(() => {});
+
       return true;
     } catch (err) {
       handleFirestoreWriteError(err, 'saveCloudOrganization');
+      saveOfficeToFirestore(org).catch(() => {});
       return true;
     }
   }
@@ -156,8 +240,9 @@ export async function saveCloudOrganization(org: OrganizationItem): Promise<bool
  * Persists the entire organizations list to Cloud SQL and Firestore
  */
 export async function saveCloudOrganizations(orgs: OrganizationItem[]): Promise<boolean> {
+  const cleanOrgs = deduplicateOrganizations(orgs);
   // 1. Save individually to Cloud SQL
-  for (const org of orgs) {
+  for (const org of cleanOrgs) {
     try {
       await fetch('/api/organization', {
         method: 'POST',
@@ -172,7 +257,7 @@ export async function saveCloudOrganizations(orgs: OrganizationItem[]): Promise<
     try {
       const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
       await setDoc(listDocRef, {
-        organizations: orgs,
+        organizations: cleanOrgs,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
       return true;
@@ -188,13 +273,15 @@ export async function saveCloudOrganizations(orgs: OrganizationItem[]): Promise<
  * Retrieves all registered organizations from Cloud SQL or Firestore
  */
 export async function getCloudOrganizations(): Promise<OrganizationItem[] | null> {
+  let resultOrgs: OrganizationItem[] = [];
+
   // 1. Try Cloud SQL
   try {
     const res = await fetch('/api/organization');
     if (res.ok) {
       const json = await res.json();
       if (Array.isArray(json.organizations) && json.organizations.length > 0) {
-        return json.organizations.map((o: any) => ({
+        resultOrgs = json.organizations.map((o: any) => ({
           id: o.id || 'org_default',
           name: o.name || 'नेपाल सरकार',
           officeName: o.officeName || o.office_name || '',
@@ -245,29 +332,28 @@ export async function getCloudOrganizations(): Promise<OrganizationItem[] | null
     if (snap.exists()) {
       const data = snap.data();
       if (Array.isArray(data.organizations) && data.organizations.length > 0) {
-        return data.organizations as OrganizationItem[];
+        resultOrgs = [...resultOrgs, ...(data.organizations as OrganizationItem[])];
       }
     }
 
     // Secondary fallback: query all documents in collection
     const colSnap = await getDocs(collection(db, ORGANIZATIONS_COLLECTION));
-    const orgsFromDocs: OrganizationItem[] = [];
     colSnap.forEach((d) => {
       if (d.id !== MAIN_ORGS_DOC) {
         const item = d.data() as OrganizationItem;
         if (item && item.officeName) {
-          orgsFromDocs.push(item);
+          resultOrgs.push(item);
         }
       }
     });
-    if (orgsFromDocs.length > 0) {
-      return orgsFromDocs;
-    }
-    return null;
   } catch (err) {
     console.warn('Could not fetch organizations from Cloud Firestore:', err);
-    return null;
   }
+
+  if (resultOrgs.length > 0) {
+    return deduplicateOrganizations(resultOrgs);
+  }
+  return null;
 }
 
 /**
@@ -514,10 +600,15 @@ export async function saveSingleUserToCloud(u: User): Promise<boolean> {
         users: filtered,
         updatedAt: new Date().toISOString(),
       });
+      // Mirror to individual user doc in Firestore
+      saveUserToFirestore(u).catch(() => {});
     } catch (fsErr) {
       handleFirestoreWriteError(fsErr, 'saveSingleUserToCloud');
+      saveUserToFirestore(u).catch(() => {});
       console.warn('Could not sync single user to Firestore:', fsErr);
     }
+  } else {
+    saveUserToFirestore(u).catch(() => {});
   }
 
   return sqlOk;
@@ -527,7 +618,8 @@ export async function saveSingleUserToCloud(u: User): Promise<boolean> {
  * Persists registered users list to Cloud SQL and Firestore
  */
 export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
-  const formattedUsers = usersList.map((u) => ({
+  const cleanUsers = deduplicateUsers(usersList);
+  const formattedUsers = cleanUsers.map((u) => ({
     uid: u.id || u.username,
     email: u.email || `${u.username}@system.local`,
     username: u.username,
@@ -578,7 +670,7 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
     try {
       const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
       await setDoc(docRef, {
-        users: usersList,
+        users: cleanUsers,
         updatedAt: new Date().toISOString(),
       });
       return true;
@@ -646,54 +738,59 @@ export async function cloudLogin(
 
   // 2. Fallback: Check Firestore if Cloud SQL returned notFound or threw an error
   try {
+    let foundUserRaw: User | null = null;
     const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
     const snap = await getDoc(docRef);
     if (snap.exists()) {
       const data = snap.data();
       if (Array.isArray(data?.users)) {
-        const foundUserRaw = data.users.find(
+        foundUserRaw = data.users.find(
           (u: User) =>
             (u.username && u.username.toLowerCase() === cleanInput) ||
             (u.email && u.email.toLowerCase() === cleanInput) ||
             (u.id && u.id.toLowerCase() === cleanInput) ||
             (u.id && u.id === username.trim())
-        );
+        ) || null;
+      }
+    }
 
-        if (foundUserRaw) {
-          const foundUser = normalizeUserData(foundUserRaw);
-          if (foundUser.isActive === false) {
-            return {
-              success: false,
-              inactive: true,
-              message: 'यो खाता निष्क्रिय (Inactive) गरिएको छ। कृपया प्रशासकसँग सम्पर्क गर्नुहोस्।',
-            };
-          }
+    if (!foundUserRaw) {
+      foundUserRaw = await getUserFromFirestore(cleanInput);
+    }
 
-          const userPass =
-            foundUser.password ||
-            (foundUser.role === 'SUPER_ADMIN' || foundUser.role === 'ADMIN'
-              ? 'admin123'
-              : foundUser.role === 'ACCOUNTANT'
-              ? 'account123'
-              : 'viewer123');
+    if (foundUserRaw) {
+      const foundUser = normalizeUserData(foundUserRaw);
+      if (foundUser.isActive === false) {
+        return {
+          success: false,
+          inactive: true,
+          message: 'यो खाता निष्क्रिय (Inactive) गरिएको छ। कृपया प्रशासकसँग सम्पर्क गर्नुहोस्।',
+        };
+      }
 
-          const safeFoundUser: User = {
-            ...foundUser,
-            isActive: Boolean(foundUser.isActive ?? true),
-          };
+      const userPass =
+        foundUser.password ||
+        (foundUser.role === 'SUPER_ADMIN' || foundUser.role === 'ADMIN'
+          ? 'admin123'
+          : foundUser.role === 'ACCOUNTANT'
+          ? 'account123'
+          : 'viewer123');
 
-          if (password === undefined || password === '') {
-            return { success: true, user: safeFoundUser };
-          }
+      const safeFoundUser: User = {
+        ...foundUser,
+        isActive: Boolean(foundUser.isActive ?? true),
+      };
 
-          const passCheck = verifyPasswordSync(password, userPass);
-          if (passCheck.isValid) {
-            saveSingleUserToCloud(safeFoundUser).catch(() => {});
-            return { success: true, user: safeFoundUser };
-          } else {
-            return { success: false, wrongPassword: true, message: 'गलत पासवर्ड प्रविष्ट भयो।' };
-          }
-        }
+      if (password === undefined || password === '') {
+        return { success: true, user: safeFoundUser };
+      }
+
+      const passCheck = verifyPasswordSync(password, userPass);
+      if (passCheck.isValid) {
+        saveSingleUserToCloud(safeFoundUser).catch(() => {});
+        return { success: true, user: safeFoundUser };
+      } else {
+        return { success: false, wrongPassword: true, message: 'गलत पासवर्ड प्रविष्ट भयो।' };
       }
     }
   } catch (fsErr) {
@@ -793,7 +890,7 @@ export async function getCloudUsers(): Promise<User[] | null> {
             }
           }
         }
-        const normalizedList = Array.from(mergedMap.values()).map(normalizeUserData);
+        const normalizedList = deduplicateUsers(Array.from(mergedMap.values()).map(normalizeUserData));
         return normalizedList;
       }
     }
@@ -801,7 +898,7 @@ export async function getCloudUsers(): Promise<User[] | null> {
     console.warn('Could not fetch users from Cloud Firestore:', err);
   }
 
-  return sqlUsers.length > 0 ? sqlUsers.map(normalizeUserData) : null;
+  return sqlUsers.length > 0 ? deduplicateUsers(sqlUsers.map(normalizeUserData)) : null;
 }
 
 /**
