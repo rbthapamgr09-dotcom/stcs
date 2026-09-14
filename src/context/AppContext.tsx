@@ -4,6 +4,7 @@ import {
   SalarySetup,
   DeductionSetup,
   TaxReference,
+  TaxSlab,
   OrganizationSetup,
   GoogleSheetsConfig,
   ToastMessage,
@@ -83,6 +84,8 @@ import {
   getCloudOrgStore,
   saveCloudOrgUser,
   getCloudOrgUsers,
+  saveCloudTaxReferences,
+  getCloudTaxReferences,
   db,
 } from '../services/cloudSyncService';
 import { subscribeToOffices, subscribeToUsers, getOfficeByIdFromFirestore } from '../services/firestoreService';
@@ -130,6 +133,59 @@ export type PermissionType =
   | 'PRINT_REPORTS'
   | 'CARRY_FORWARD'
   | 'RESET_DATA';
+
+/**
+ * Creates completely blank progressive tax slabs and statutory ceiling references for a new office.
+ * Fields start unconfigured/blank until user explicitly inputs and saves to database.
+ */
+export const createBlankTaxReferencePair = (fiscalYear: string, orgId: string = 'org_default'): TaxReference[] => {
+  const blankSlabs: TaxSlab[] = [
+    { id: `slab_1_${Date.now()}`, description: '', fromAmount: undefined, toAmount: undefined, ratePercent: undefined },
+    { id: `slab_2_${Date.now()}`, description: '', fromAmount: undefined, toAmount: undefined, ratePercent: undefined },
+    { id: `slab_3_${Date.now()}`, description: '', fromAmount: undefined, toAmount: undefined, ratePercent: undefined },
+    { id: `slab_4_${Date.now()}`, description: '', fromAmount: undefined, toAmount: undefined, ratePercent: undefined },
+    { id: `slab_5_${Date.now()}`, description: '', fromAmount: undefined, toAmount: undefined, ratePercent: undefined },
+    { id: `slab_6_${Date.now()}`, description: '', fromAmount: undefined, toAmount: undefined, ratePercent: undefined },
+  ];
+
+  const fyClean = (fiscalYear || 'fy').replace(/\//g, '_');
+  return [
+    {
+      id: `tax_ref_single_${orgId}_${fyClean}`,
+      fiscalYear,
+      filingType: 'एकल',
+      slabs: blankSlabs.map((s, i) => ({ ...s, id: `single_slab_${i + 1}_${Date.now()}` })),
+      remoteExemptions: { 'क': undefined, 'ख': undefined, 'ग': undefined, 'घ': undefined, 'ङ': undefined, 'दुर्गम नभएको': undefined },
+      disabilityExemptionPercent: undefined,
+      femaleTaxRebatePercent: undefined,
+      pensionSSTExempt: true,
+      medicalTaxCreditRatePercent: undefined,
+      medicalTaxCreditMaxAmount: undefined,
+      lifeInsuranceMaxDeduction: undefined,
+      citMaxDeductionPercent: undefined,
+      citMaxDeductionAmount: undefined,
+      isConfigured: false,
+      organizationId: orgId,
+    },
+    {
+      id: `tax_ref_couple_${orgId}_${fyClean}`,
+      fiscalYear,
+      filingType: 'दम्पत्ती',
+      slabs: blankSlabs.map((s, i) => ({ ...s, id: `couple_slab_${i + 1}_${Date.now()}` })),
+      remoteExemptions: { 'क': undefined, 'ख': undefined, 'ग': undefined, 'घ': undefined, 'ङ': undefined, 'दुर्गम नभएको': undefined },
+      disabilityExemptionPercent: undefined,
+      femaleTaxRebatePercent: undefined,
+      pensionSSTExempt: true,
+      medicalTaxCreditRatePercent: undefined,
+      medicalTaxCreditMaxAmount: undefined,
+      lifeInsuranceMaxDeduction: undefined,
+      citMaxDeductionPercent: undefined,
+      citMaxDeductionAmount: undefined,
+      isConfigured: false,
+      organizationId: orgId,
+    },
+  ];
+};
 
 interface AppContextType {
   // Navigation & Preferences
@@ -277,6 +333,7 @@ interface AppContextType {
 
   // Tax Reference CRUD
   saveTaxReference: (taxRef: TaxReference) => void;
+  saveTaxReferencesBatch: (taxRefs: TaxReference[]) => Promise<boolean>;
   deleteTaxReference: (id: string) => void;
   getActiveTaxReference: (filingType: 'एकल' | 'दम्पत्ती') => TaxReference;
 
@@ -2455,11 +2512,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     // 2. Prepare target data
+    const defaultTaxRefsForTarget =
+      activeOrganizationId === 'org_default'
+        ? DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: newFy }))
+        : createBlankTaxReferencePair(newFy, activeOrganizationId);
+
     const targetData = updatedDb[newFy] || {
       employees: [],
       salarySetups: {},
       deductionSetups: {},
-      taxReferences: DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: newFy })),
+      taxReferences: defaultTaxRefsForTarget,
     };
     updatedDb[newFy] = targetData;
 
@@ -2471,7 +2533,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setEmployees(targetData.employees || []);
     setSalarySetups(targetData.salarySetups || {});
     setDeductionSetups(targetData.deductionSetups || {});
-    setTaxReferences(targetData.taxReferences || DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: newFy })));
+    setTaxReferences(
+      targetData.taxReferences && targetData.taxReferences.length > 0
+        ? targetData.taxReferences
+        : defaultTaxRefsForTarget
+    );
     setActiveFiscalYearState(newFy);
 
     // 5. Persist to local storage and cloud database (partitioned per organization)
@@ -3482,29 +3548,82 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  const saveTaxReference = (taxRef: TaxReference) => {
+  const saveTaxReferencesBatch = async (newRefs: TaxReference[]): Promise<boolean> => {
     if (!hasPermission('MANAGE_TAX_SLABS')) {
       addToast('error', 'अनाधिकृत कार्य', 'कर स्ल्याब परिवर्तन गर्न अधिकार छैन।');
-      return;
+      return false;
     }
 
-    let updatedTaxReferences: TaxReference[];
-    const idx = taxReferences.findIndex(
-      (t) => t.id === taxRef.id || (t.fiscalYear === taxRef.fiscalYear && t.filingType === taxRef.filingType)
-    );
-    if (idx >= 0) {
-      const copy = [...taxReferences];
-      copy[idx] = taxRef;
-      updatedTaxReferences = copy;
-    } else {
-      updatedTaxReferences = [...taxReferences, taxRef];
+    let updatedTaxReferences = [...taxReferences];
+    for (const ref of newRefs) {
+      const idx = updatedTaxReferences.findIndex(
+        (t) => t.id === ref.id || (t.fiscalYear === ref.fiscalYear && t.filingType === ref.filingType)
+      );
+      if (idx >= 0) {
+        updatedTaxReferences[idx] = ref;
+      } else {
+        updatedTaxReferences.push(ref);
+      }
     }
+
     setTaxReferences(updatedTaxReferences);
+
+    const updatedDb = {
+      ...fyDatabase,
+      [activeFiscalYear]: {
+        ...(fyDatabase[activeFiscalYear] || { employees: [], salarySetups: {}, deductionSetups: {} }),
+        employees,
+        salarySetups,
+        deductionSetups,
+        taxReferences: updatedTaxReferences,
+      },
+    };
+    setFyDatabase(updatedDb);
+
+    try {
+      localStorage.setItem(STORAGE_KEYS.FY_DATABASE, JSON.stringify(updatedDb));
+    } catch {}
+
+    const outgoingOrgUsers = users.filter(
+      (u) => u.organizationId === activeOrganizationId || (!u.organizationId && activeOrganizationId === 'org_default')
+    );
+
+    const updatedStore: OrganizationDataStore = {
+      organization,
+      fiscalYears,
+      activeFiscalYear,
+      fyDatabase: updatedDb,
+      googleSheetsConfig,
+      users: outgoingOrgUsers,
+    };
+
+    setOrgDatabases((prev) => {
+      const cur = prev[activeOrganizationId] || updatedStore;
+      const nextStore = {
+        ...cur,
+        fyDatabase: updatedDb,
+      };
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify({ ...prev, [activeOrganizationId]: nextStore }));
+      } catch {}
+      return { ...prev, [activeOrganizationId]: nextStore };
+    });
+
+    // Persist to Cloud specifically for this office and fiscal year
+    saveCloudTaxReferences(updatedTaxReferences, activeOrganizationId, activeFiscalYear).catch(console.warn);
+    saveCloudFyDatabase(updatedDb, activeOrganizationId).catch(console.warn);
+    saveCloudOrgStore(activeOrganizationId, updatedStore).catch(console.warn);
 
     // Auto-sync immediately to Google Sheets
     triggerAutoSyncOnSave({
       overrideTaxReferences: updatedTaxReferences,
     });
+
+    return true;
+  };
+
+  const saveTaxReference = (taxRef: TaxReference) => {
+    saveTaxReferencesBatch([taxRef]);
   };
 
   const deleteTaxReference = (id: string) => {
@@ -3514,6 +3633,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     const updated = taxReferences.filter((t) => t.id !== id);
     setTaxReferences(updated);
+
+    const updatedDb = {
+      ...fyDatabase,
+      [activeFiscalYear]: {
+        ...(fyDatabase[activeFiscalYear] || { employees: [], salarySetups: {}, deductionSetups: {} }),
+        employees,
+        salarySetups,
+        deductionSetups,
+        taxReferences: updated,
+      },
+    };
+    setFyDatabase(updatedDb);
+
+    try {
+      localStorage.setItem(STORAGE_KEYS.FY_DATABASE, JSON.stringify(updatedDb));
+    } catch {}
+
+    saveCloudTaxReferences(updated, activeOrganizationId, activeFiscalYear).catch(console.warn);
+    saveCloudFyDatabase(updatedDb, activeOrganizationId).catch(console.warn);
 
     // Auto-sync immediately to Google Sheets
     triggerAutoSyncOnSave({
@@ -3574,7 +3712,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         employees: [],
         salarySetups: {},
         deductionSetups: {},
-        taxReferences: DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: targetActiveFy })),
+        taxReferences:
+          orgId === 'org_default'
+            ? DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: targetActiveFy }))
+            : createBlankTaxReferencePair(targetActiveFy, orgId),
       };
 
       loadedFiscalYearRef.current = targetActiveFy;
@@ -3585,7 +3726,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setEmployees(targetFyData.employees || []);
       setSalarySetups(targetFyData.salarySetups || {});
       setDeductionSetups(targetFyData.deductionSetups || {});
-      setTaxReferences(targetFyData.taxReferences || DEFAULT_TAX_REFERENCES);
+      setTaxReferences(
+        targetFyData.taxReferences && targetFyData.taxReferences.length > 0
+          ? targetFyData.taxReferences
+          : (orgId === 'org_default' ? DEFAULT_TAX_REFERENCES : createBlankTaxReferencePair(targetActiveFy, orgId))
+      );
 
       if (targetStore.users && targetStore.users.length > 0) {
         setUsers((prev) => {
@@ -3623,7 +3768,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setEmployees([]);
       setSalarySetups({});
       setDeductionSetups({});
-      setTaxReferences(DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: targetActiveFy })));
+      const blankRefs =
+        orgId === 'org_default'
+          ? DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: targetActiveFy }))
+          : createBlankTaxReferencePair(targetActiveFy, orgId);
+      setTaxReferences(blankRefs);
 
       const targetConfig: GoogleSheetsConfig = {
         ...DEFAULT_GOOGLE_SHEETS_CONFIG,
@@ -3646,7 +3795,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               employees: [],
               salarySetups: {},
               deductionSetups: {},
-              taxReferences: DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: cActiveFy })),
+              taxReferences:
+                orgId === 'org_default'
+                  ? DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: cActiveFy }))
+                  : createBlankTaxReferencePair(cActiveFy, orgId),
             };
             setFyDatabase(cFyDb);
             setActiveFiscalYearState(cActiveFy);
@@ -3654,7 +3806,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setEmployees(cFyData.employees || []);
             setSalarySetups(cFyData.salarySetups || {});
             setDeductionSetups(cFyData.deductionSetups || {});
-            setTaxReferences(cFyData.taxReferences || DEFAULT_TAX_REFERENCES);
+            setTaxReferences(
+              cFyData.taxReferences && cFyData.taxReferences.length > 0
+                ? cFyData.taxReferences
+                : (orgId === 'org_default' ? DEFAULT_TAX_REFERENCES : createBlankTaxReferencePair(cActiveFy, orgId))
+            );
             if (cloudStore.fiscalYears) setFiscalYears(sortFiscalYearsDescending(cloudStore.fiscalYears));
             if (cloudStore.organization) setOrganization(cloudStore.organization);
             if (cloudStore.googleSheetsConfig) setGoogleSheetsConfig(cloudStore.googleSheetsConfig);
@@ -3672,7 +3828,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                   if (fyData.employees) setEmployees(fyData.employees);
                   if (fyData.salarySetups) setSalarySetups(fyData.salarySetups);
                   if (fyData.deductionSetups) setDeductionSetups(fyData.deductionSetups);
-                  if (fyData.taxReferences) setTaxReferences(fyData.taxReferences);
+                  if (fyData.taxReferences && fyData.taxReferences.length > 0) {
+                    setTaxReferences(fyData.taxReferences);
+                  } else {
+                    setTaxReferences(
+                      orgId === 'org_default'
+                        ? DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: targetActiveFy }))
+                        : createBlankTaxReferencePair(targetActiveFy, orgId)
+                    );
+                  }
                 }
               }
             }).catch(() => {});
@@ -3680,6 +3844,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         })
         .catch(() => {});
     }
+
+    // Also specifically query cloud tax-references for this org & fiscal year in case they were saved directly
+    getCloudTaxReferences(orgId, '2083/084')
+      .then((cloudTaxRefs) => {
+        if (cloudTaxRefs && Array.isArray(cloudTaxRefs) && cloudTaxRefs.length > 0) {
+          setTaxReferences(cloudTaxRefs);
+        }
+      })
+      .catch(() => {});
 
     // Load user profile data for this specific organization from cloud
     getCloudOrgUsers(orgId).then((cloudUsers) => {
@@ -3778,13 +3951,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           employees: [],
           salarySetups: {},
           deductionSetups: {},
-          taxReferences: DEFAULT_TAX_REFERENCES.map((tr) => ({ ...tr, fiscalYear: '2083/084' })),
+          taxReferences: createBlankTaxReferencePair('2083/084', orgId),
         },
         '२०८१/८२': {
           employees: [],
           salarySetups: {},
           deductionSetups: {},
-          taxReferences: DEFAULT_TAX_REFERENCES,
+          taxReferences: createBlankTaxReferencePair('२०८१/८२', orgId),
         },
       },
       googleSheetsConfig: initialSheetsConfig,
@@ -5408,6 +5581,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateSalarySetup,
         updateDeductionSetup,
         saveTaxReference,
+        saveTaxReferencesBatch,
         deleteTaxReference,
         getActiveTaxReference,
         updateOrganization,

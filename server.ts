@@ -418,6 +418,42 @@ async function startServer() {
     }
   });
 
+  // Organization-scoped Tax References
+  app.get('/api/organizations/:orgId/tax-references', optionalAuth, async (req, res) => {
+    try {
+      const orgId = req.params.orgId || 'org_default';
+      const fiscalYear = (req.query.fiscalYear as string) || '';
+      const fyData = await getOrgFyDatabase(orgId);
+      if (fyData && fiscalYear && fyData[fiscalYear]?.taxReferences) {
+        return res.json({ success: true, orgId, fiscalYear, taxReferences: fyData[fiscalYear].taxReferences });
+      }
+      res.json({ success: true, orgId, fiscalYear, taxReferences: null });
+    } catch (error: any) {
+      console.error(`Failed to get tax references for org ${req.params.orgId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to fetch tax references' });
+    }
+  });
+
+  app.post('/api/organizations/:orgId/tax-references', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const orgId = req.params.orgId || 'org_default';
+      const updatedBy = req.user?.email || req.body.updatedBy || 'system';
+      const { fiscalYear, taxReferences } = req.body;
+      const fyData = (await getOrgFyDatabase(orgId)) || {};
+      if (fiscalYear) {
+        if (!fyData[fiscalYear]) {
+          fyData[fiscalYear] = { employees: [], salarySetups: {}, deductionSetups: {}, taxReferences: [] };
+        }
+        fyData[fiscalYear].taxReferences = taxReferences;
+        await setOrgFyDatabase(orgId, fyData, updatedBy);
+      }
+      res.json({ success: true, orgId, fiscalYear, count: taxReferences?.length || 0 });
+    } catch (error: any) {
+      console.error(`Failed to save tax references for org ${req.params.orgId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to save tax references' });
+    }
+  });
+
   // Organization-scoped Data Store (Complete tenant bundle: details, FY list, active FY, fyDatabase, users)
   app.get('/api/organizations/:orgId/store', optionalAuth, async (req, res) => {
     try {

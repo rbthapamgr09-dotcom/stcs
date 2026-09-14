@@ -135,9 +135,9 @@ export interface DeductionSetup {
 
 export interface TaxSlab {
   id: string;
-  fromAmount: number;
-  toAmount: number; // use Infinity or very large for above limit
-  ratePercent: number;
+  fromAmount?: number;
+  toAmount?: number; // use Infinity or very large for above limit
+  ratePercent?: number;
   description: string;
 }
 
@@ -147,21 +147,23 @@ export interface TaxReference {
   filingType: FilingType; // एकल वा दम्पत्ती
   slabs: TaxSlab[];
   remoteExemptions: {
-    'क': number;
-    'ख': number;
-    'ग': number;
-    'घ': number;
-    'ङ': number;
-    'दुर्गम नभएको': number;
+    'क'?: number;
+    'ख'?: number;
+    'ग'?: number;
+    'घ'?: number;
+    'ङ'?: number;
+    'दुर्गम नभएको'?: number;
   };
-  disabilityExemptionPercent: number; // e.g. 50% additional basic slab exemption
-  femaleTaxRebatePercent: number; // e.g. 10% rebate for single female
-  pensionSSTExempt: boolean; // True if 1% Social Security Tax is exempt for pension contributors
-  medicalTaxCreditRatePercent: number; // e.g. 15%
-  medicalTaxCreditMaxAmount: number; // e.g. Rs 750
-  lifeInsuranceMaxDeduction: number; // e.g. Rs 40,000
-  citMaxDeductionPercent: number; // e.g. 33.33%
-  citMaxDeductionAmount: number; // e.g. Rs 300,000
+  disabilityExemptionPercent?: number; // e.g. 50% additional basic slab exemption
+  femaleTaxRebatePercent?: number; // e.g. 10% rebate for single female
+  pensionSSTExempt?: boolean; // True if 1% Social Security Tax is exempt for pension contributors
+  medicalTaxCreditRatePercent?: number; // e.g. 15%
+  medicalTaxCreditMaxAmount?: number; // e.g. Rs 750
+  lifeInsuranceMaxDeduction?: number; // e.g. Rs 40,000
+  citMaxDeductionPercent?: number; // e.g. 33.33%
+  citMaxDeductionAmount?: number; // e.g. Rs 300,000
+  isConfigured?: boolean; // False for blank new offices until user sets up and saves
+  organizationId?: string; // Scoped to specific office
 }
 
 export interface OrganizationSetup {

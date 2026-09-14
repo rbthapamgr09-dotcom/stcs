@@ -234,6 +234,105 @@ export async function saveCloudOrgUser(orgId: string, user: any): Promise<boolea
 }
 
 /**
+ * Persists organization and fiscal year scoped tax references to Cloud SQL and Firestore
+ */
+export async function saveCloudTaxReferences(
+  taxRefs: any[],
+  orgId: string = 'org_default',
+  fiscalYear: string
+): Promise<boolean> {
+  const targetOrg = orgId || 'org_default';
+  const cleanFy = fiscalYear.replace(/\//g, '_');
+  try {
+    await fetch(`/api/organizations/${encodeURIComponent(targetOrg)}/tax-references`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fiscalYear, taxReferences: taxRefs }),
+    });
+  } catch (sqlErr) {
+    console.warn(`Could not save tax references for ${targetOrg} to Cloud SQL:`, sqlErr);
+  }
+
+  if (canWriteFirestore()) {
+    try {
+      const taxDocRef = doc(db, 'offices', targetOrg, 'tax_references', cleanFy);
+      await setDoc(
+        taxDocRef,
+        {
+          taxReferences: taxRefs,
+          fiscalYear,
+          orgId: targetOrg,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
+      const connDocRef = doc(db, CONNECTIONS_COLLECTION, `tax_refs_${targetOrg}_${cleanFy}`);
+      await setDoc(
+        connDocRef,
+        {
+          taxReferences: taxRefs,
+          fiscalYear,
+          orgId: targetOrg,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      return true;
+    } catch (err) {
+      handleFirestoreWriteError(err, `saveCloudTaxReferences_${targetOrg}`);
+    }
+  }
+  return true;
+}
+
+/**
+ * Retrieves organization and fiscal year scoped tax references from Cloud SQL and Firestore
+ */
+export async function getCloudTaxReferences(
+  orgId: string = 'org_default',
+  fiscalYear: string
+): Promise<any[] | null> {
+  const targetOrg = orgId || 'org_default';
+  const cleanFy = fiscalYear.replace(/\//g, '_');
+  try {
+    const res = await fetch(
+      `/api/organizations/${encodeURIComponent(targetOrg)}/tax-references?fiscalYear=${encodeURIComponent(fiscalYear)}`
+    );
+    if (res.ok) {
+      const json = await res.json();
+      if (Array.isArray(json.taxReferences) && json.taxReferences.length > 0) {
+        return json.taxReferences;
+      }
+    }
+  } catch (err) {}
+
+  try {
+    const taxDocRef = doc(db, 'offices', targetOrg, 'tax_references', cleanFy);
+    const snap = await getDoc(taxDocRef);
+    if (snap.exists()) {
+      const d = snap.data();
+      if (Array.isArray(d?.taxReferences) && d.taxReferences.length > 0) {
+        return d.taxReferences;
+      }
+    }
+  } catch (err) {}
+
+  try {
+    const connDocRef = doc(db, CONNECTIONS_COLLECTION, `tax_refs_${targetOrg}_${cleanFy}`);
+    const snap = await getDoc(connDocRef);
+    if (snap.exists()) {
+      const d = snap.data();
+      if (Array.isArray(d?.taxReferences) && d.taxReferences.length > 0) {
+        return d.taxReferences;
+      }
+    }
+  } catch (err) {}
+
+  return null;
+}
+
+/**
  * Retrieves user profiles belonging to a specific organization
  */
 export async function getCloudOrgUsers(orgId: string): Promise<any[] | null> {

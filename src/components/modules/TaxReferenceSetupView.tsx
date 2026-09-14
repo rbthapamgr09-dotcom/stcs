@@ -32,6 +32,7 @@ export const TaxReferenceSetupView: React.FC = () => {
   const {
     taxReferences,
     saveTaxReference,
+    saveTaxReferencesBatch,
     activeFiscalYear,
     useDevanagariNumerals,
     employees,
@@ -314,8 +315,7 @@ export const TaxReferenceSetupView: React.FC = () => {
       slabs: coupleSlabs,
     };
 
-    saveTaxReference(updatedSingleRef);
-    saveTaxReference(updatedCoupleRef);
+    saveTaxReferencesBatch([updatedSingleRef, updatedCoupleRef]);
 
     addToast(
       'success',
@@ -331,12 +331,12 @@ export const TaxReferenceSetupView: React.FC = () => {
     if (defaultSingle && defaultCouple) {
       const sRef = {
         ...defaultSingle,
-        id: singleConfig.id,
+        id: singleConfig.id || `tax_single_${activeFiscalYear}`,
         fiscalYear: activeFiscalYear,
       };
       const cRef = {
         ...defaultCouple,
-        id: coupleConfig.id,
+        id: coupleConfig.id || `tax_couple_${activeFiscalYear}`,
         fiscalYear: activeFiscalYear,
       };
 
@@ -363,12 +363,11 @@ export const TaxReferenceSetupView: React.FC = () => {
       }
 
       setUnifiedSlabs(combined);
-      saveTaxReference(sRef);
-      saveTaxReference(cRef);
+      saveTaxReferencesBatch([sRef, cRef]);
       addToast(
         'info',
-        'मानक स्ल्याब रिसेट',
-        'आधिकारिक कर स्ल्याबहरू रिसेट गरियो।'
+        'मानक स्ल्याब लोड गरियो',
+        'नेपाल सरकारको आधिकारिक आयकर स्ल्याबहरू लोड गरियो।'
       );
     }
   };

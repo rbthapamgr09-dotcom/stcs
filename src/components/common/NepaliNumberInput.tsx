@@ -6,13 +6,14 @@ export interface NepaliNumberInputProps {
   id?: string;
   name?: string;
   value: number | undefined | null;
-  onChange: (val: number) => void;
+  onChange: (val: any) => void;
   placeholder?: string;
   className?: string;
   allowDecimals?: boolean;
   formatDecimalOnBlur?: boolean;
   decimalPlaces?: number;
   isInfinityAllowed?: boolean;
+  allowEmpty?: boolean;
   min?: number;
   max?: number;
   disabled?: boolean;
@@ -36,6 +37,7 @@ export const NepaliNumberInput: React.FC<NepaliNumberInputProps> = ({
   formatDecimalOnBlur = true,
   decimalPlaces = 2,
   isInfinityAllowed = false,
+  allowEmpty = false,
   disabled = false,
   useDevanagari: useDevanagariProp,
 }) => {
@@ -54,10 +56,13 @@ export const NepaliNumberInput: React.FC<NepaliNumberInputProps> = ({
   const [isFocused, setIsFocused] = useState(false);
   const [rawText, setRawText] = useState('');
 
-  const numValue = value === null || value === undefined ? 0 : value;
+  const isEmptyValue = value === null || value === undefined || value === ('' as any);
+  const numValue = isEmptyValue ? 0 : Number(value);
 
-  const defaultPlaceholder = placeholder
-    ? toDisplayDigits(placeholder, isDevanagari)
+  const defaultPlaceholder = placeholder !== undefined
+    ? (placeholder ? toDisplayDigits(placeholder, isDevanagari) : '')
+    : allowEmpty
+    ? ''
     : isDevanagari
     ? (allowDecimals && decimalPlaces > 0 ? '०.००' : '०')
     : (allowDecimals && decimalPlaces > 0 ? '0.00' : '0');
@@ -78,13 +83,15 @@ export const NepaliNumberInput: React.FC<NepaliNumberInputProps> = ({
     if (!isFocused) {
       if (isInfinityAllowed && numValue >= 999999990) {
         setRawText('');
-      } else if (numValue === 0 && (value === null || value === undefined)) {
+      } else if (allowEmpty && isEmptyValue) {
+        setRawText('');
+      } else if (numValue === 0 && isEmptyValue) {
         setRawText('');
       } else {
         setRawText(formatWithDecimals(numValue));
       }
     }
-  }, [numValue, value, isFocused, isInfinityAllowed, formatDecimalOnBlur, decimalPlaces, isDevanagari]);
+  }, [numValue, value, isEmptyValue, isFocused, isInfinityAllowed, formatDecimalOnBlur, decimalPlaces, isDevanagari, allowEmpty]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const inputVal = e.target.value;
@@ -101,10 +108,10 @@ export const NepaliNumberInput: React.FC<NepaliNumberInputProps> = ({
     setRawText(displayVal);
 
     if (sanitizedEng === '' || sanitizedEng === '.') {
-      onChange(isInfinityAllowed ? 999999999 : 0);
+      onChange(isInfinityAllowed ? 999999999 : (allowEmpty ? undefined : 0));
     } else {
       const parsed = parseFloat(sanitizedEng);
-      onChange(isNaN(parsed) ? 0 : parsed);
+      onChange(isNaN(parsed) ? (allowEmpty ? undefined : 0) : parsed);
     }
   };
 
@@ -112,7 +119,9 @@ export const NepaliNumberInput: React.FC<NepaliNumberInputProps> = ({
     setIsFocused(true);
     if (isInfinityAllowed && numValue >= 999999990) {
       setRawText('');
-    } else if (numValue === 0 && (value === null || value === undefined)) {
+    } else if (allowEmpty && isEmptyValue) {
+      setRawText('');
+    } else if (numValue === 0 && isEmptyValue) {
       setRawText('');
     } else if (numValue === 0) {
       setRawText('');
@@ -128,6 +137,9 @@ export const NepaliNumberInput: React.FC<NepaliNumberInputProps> = ({
     if (rawText.trim() === '') {
       if (isInfinityAllowed) {
         onChange(999999999);
+      } else if (allowEmpty) {
+        onChange(undefined);
+        setRawText('');
       } else {
         onChange(0);
         setRawText(formatWithDecimals(0));
@@ -135,9 +147,18 @@ export const NepaliNumberInput: React.FC<NepaliNumberInputProps> = ({
     } else {
       const eng = toEnglishDigits(rawText);
       const parsed = parseFloat(eng);
-      const validNum = isNaN(parsed) ? 0 : parsed;
-      onChange(validNum);
-      setRawText(formatWithDecimals(validNum));
+      if (isNaN(parsed)) {
+        if (allowEmpty) {
+          onChange(undefined);
+          setRawText('');
+        } else {
+          onChange(0);
+          setRawText(formatWithDecimals(0));
+        }
+      } else {
+        onChange(parsed);
+        setRawText(formatWithDecimals(parsed));
+      }
     }
   };
 
