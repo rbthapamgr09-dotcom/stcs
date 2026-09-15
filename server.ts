@@ -25,6 +25,7 @@ import {
   listAllUsers,
   deleteUserByUid,
   linkFirebaseUid,
+  sanitizeUser,
   UserEntity,
 } from './src/server/repositories/userRepo.ts';
 import {
@@ -455,7 +456,7 @@ async function startServer() {
       } else {
         usersList = await listAllUsers();
       }
-      res.json({ success: true, users: usersList });
+      res.json({ success: true, users: usersList.map(sanitizeUser) });
     } catch (error: any) {
       console.error('Failed to fetch users:', error);
       res.status(500).json({ error: error.message || 'Failed to fetch users' });
@@ -473,7 +474,7 @@ async function startServer() {
       if (!user) {
         return res.status(404).json({ success: false, error: 'User not found' });
       }
-      res.json({ success: true, user });
+      res.json({ success: true, user: sanitizeUser(user) });
     } catch (error: any) {
       console.error('Failed to lookup user:', error);
       res.status(500).json({ error: error.message || 'Failed to lookup user' });
@@ -497,7 +498,7 @@ async function startServer() {
   app.post(['/api/users', '/api/users/sync'], optionalAuth, async (req: AuthRequest, res) => {
     try {
       const saved = await saveUser(req.body);
-      res.json({ success: true, user: saved });
+      res.json({ success: true, user: sanitizeUser(saved) });
     } catch (error: any) {
       console.error('Failed to save user:', error);
       res.status(500).json({ error: error.message || 'Failed to save user' });
@@ -529,7 +530,7 @@ async function startServer() {
       const orgId = req.params.orgId;
       if (!orgId) throw new Error('orgId is required');
       const usersList = await listUsersByOrganization(orgId);
-      res.json({ success: true, orgId, users: usersList });
+      res.json({ success: true, orgId, users: usersList.map(sanitizeUser) });
     } catch (error: any) {
       console.error(`Failed to get users for org ${req.params.orgId}:`, error);
       res.status(500).json({ error: error.message || 'Failed to fetch organization users' });
@@ -542,7 +543,7 @@ async function startServer() {
       if (!orgId) throw new Error('orgId is required');
       const userData = { ...req.body, organizationId: orgId };
       const saved = await saveUser(userData);
-      res.json({ success: true, orgId, user: saved });
+      res.json({ success: true, orgId, user: sanitizeUser(saved) });
     } catch (error: any) {
       console.error(`Failed to save user for org ${req.params.orgId}:`, error);
       res.status(500).json({ error: error.message || 'Failed to save user for organization' });
@@ -555,7 +556,7 @@ async function startServer() {
       const existing = await getUserByUid(uid);
       const merged = { ...(existing || {}), ...req.body, uid, organizationId: orgId };
       const saved = await saveUser(merged);
-      res.json({ success: true, orgId, user: saved });
+      res.json({ success: true, orgId, user: sanitizeUser(saved) });
     } catch (error: any) {
       console.error(`Failed to update user ${req.params.uid}:`, error);
       res.status(500).json({ error: error.message || 'Failed to update user' });

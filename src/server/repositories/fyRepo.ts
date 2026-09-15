@@ -17,6 +17,10 @@ import {
   upsertEmployee as sqlUpsertEmployee,
 } from '../../db/payroll.ts';
 
+export function slugifyFiscalYear(fy: string): string {
+  return (fy || 'default_fy').replace(/\//g, '_').replace(/\s+/g, '').trim();
+}
+
 export async function getOrgFyDatabase(orgId: string): Promise<Record<string, any> | null> {
   if (!orgId) {
     throw new Error('Tenant scoping violation: orgId is required to get fiscal year database.');
@@ -30,7 +34,9 @@ export async function getOrgFyDatabase(orgId: string): Promise<Record<string, an
     const snap = await adminDb.collection('offices').doc(orgId).collection('fiscal_years').get();
     if (!snap.empty) {
       snap.forEach((doc) => {
-        fyData[doc.id] = doc.data();
+        const data = doc.data();
+        const fyKey = data.fiscalYear || doc.id;
+        fyData[fyKey] = data;
       });
       foundInFirestore = true;
     } else {
@@ -87,7 +93,8 @@ export async function setOrgFyDatabase(orgId: string, data: any, updatedBy: stri
       const batch = adminDb.batch();
       for (const [fy, val] of Object.entries(data)) {
         if (fy && typeof val === 'object') {
-          const docRef = adminDb.collection('offices').doc(orgId).collection('fiscal_years').doc(fy);
+          const fySlug = slugifyFiscalYear(fy);
+          const docRef = adminDb.collection('offices').doc(orgId).collection('fiscal_years').doc(fySlug);
           batch.set(docRef, {
             ...(val as any),
             fiscalYear: fy,

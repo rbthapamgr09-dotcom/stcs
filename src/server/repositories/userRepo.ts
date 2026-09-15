@@ -1,4 +1,4 @@
-import { adminDb } from '../../lib/firebase-admin.ts';
+import { adminDb, adminAuth } from '../../lib/firebase-admin.ts';
 import { isSqlEnabled } from './sqlHelper.ts';
 import {
   localSaveUser,
@@ -40,6 +40,18 @@ export interface UserEntity {
   metadata?: Record<string, any>;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export function sanitizeUser(u: any): any {
+  if (!u) return null;
+  const userCopy = { ...u };
+  delete userCopy.password;
+  if (userCopy.metadata) {
+    const metaCopy = { ...userCopy.metadata };
+    delete metaCopy.password;
+    userCopy.metadata = metaCopy;
+  }
+  return userCopy;
 }
 
 function cleanUserData(data: any): UserEntity {
@@ -87,10 +99,61 @@ export async function saveUser(data: any): Promise<UserEntity> {
   // 1. LocalStore persistence
   localSaveUser(user);
 
-  // 2. Best-effort Firestore write via adminDb
+  // 2. Firebase Auth provisioning / update with Custom Claims (Task 8 & 11)
   try {
+    let authUser: any = null;
+    try {
+      if (user.email) {
+        authUser = await adminAuth.getUserByEmail(user.email);
+      }
+    } catch {
+      // User not found in Firebase Auth yet
+    }
+
+    if (!authUser) {
+      try {
+        authUser = await adminAuth.createUser({
+          uid: user.uid,
+          email: user.email,
+          password: user.password || 'admin123',
+          displayName: user.fullName || user.username,
+        });
+      } catch (createErr: any) {
+        // If UID exists or email exists with different UID
+        if (createErr?.code === 'auth/uid-already-exists') {
+          authUser = await adminAuth.getUser(user.uid);
+        } else if (createErr?.code === 'auth/email-already-exists' && user.email) {
+          authUser = await adminAuth.getUserByEmail(user.email);
+        }
+      }
+    }
+
+    if (authUser) {
+      user.firebaseUid = authUser.uid;
+      // Set Custom Claims for fast, secure RBAC
+      await adminAuth.setCustomUserClaims(authUser.uid, {
+        role: user.role,
+        organizationId: user.organizationId,
+      });
+
+      if (user.password) {
+        try {
+          await adminAuth.updateUser(authUser.uid, {
+            password: user.password,
+            displayName: user.fullName || user.username,
+          });
+        } catch {}
+      }
+    }
+  } catch (authErr: any) {
+    console.warn('[UserRepo] Firebase Auth sync notice for user', user.username, ':', authErr?.message || authErr);
+  }
+
+  // 3. Best-effort Firestore write via adminDb
+  try {
+    const userToSave = sanitizeUser(user);
     const userRef = adminDb.collection('users').doc(user.uid);
-    await userRef.set(user, { merge: true });
+    await userRef.set(userToSave, { merge: true });
 
     if (user.username) {
       const usernameRef = adminDb.collection('usernames').doc(user.username.toLowerCase());
@@ -99,14 +162,25 @@ export async function saveUser(data: any): Promise<UserEntity> {
         authEmail: user.email,
         role: user.role,
         organizationId: user.organizationId,
+        isActive: user.isActive,
         createdAt: user.createdAt,
+      }, { merge: true });
+    }
+
+    // Write server-only credentials doc for verification fallback
+    if (user.password) {
+      await adminDb.collection('credentials').doc(user.uid).set({
+        uid: user.uid,
+        username: user.username,
+        password: user.password,
+        updatedAt: new Date().toISOString(),
       }, { merge: true });
     }
   } catch (err: any) {
     // Handled
   }
 
-  // 3. Best-effort mirror to Cloud SQL
+  // 4. Best-effort mirror to Cloud SQL
   if (await isSqlEnabled()) {
     try {
       await sqlGetOrCreateUser(
