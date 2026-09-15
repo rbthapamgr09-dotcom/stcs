@@ -72,6 +72,9 @@ import {
   saveCloudOrganizations,
   getCloudOrganizations,
   deleteCloudOrganization,
+  deleteCloudFiscalYear,
+  clearCloudFiscalYearData,
+  factoryResetCloudData,
   saveOrgSheetsConfig,
   getOrgSheetsConfig,
   cloudLogin,
@@ -1292,50 +1295,45 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     let unsubscribeStandaloneUsers: (() => void) | undefined;
     try {
       unsubscribeStandaloneOffices = subscribeToOffices((offices) => {
-        if (isMounted && offices && offices.length > 0) {
-          setOrganizations((prev) => {
-            const merged = deduplicateOrganizations([...prev, ...offices]);
-            try { localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(merged)); } catch {}
-            return merged;
-          });
+        if (isMounted && Array.isArray(offices)) {
+          const validOffices = deduplicateOrganizations(
+            offices.filter((o) => o.id !== 'all' && o.id !== 'org_default' && Boolean(o.officeName))
+          );
+          setOrganizations(validOffices);
+          try { localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(validOffices)); } catch {}
         }
       });
 
       unsubscribeStandaloneUsers = subscribeToUsers((uList) => {
-        if (isMounted && uList && uList.length > 0) {
-          setUsers((prev) => {
-            const validCloudUsers = uList.map(normalizeUserData);
-            const merged = deduplicateUsers([...prev, ...validCloudUsers]);
-            try { localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged)); } catch {}
-            return merged;
-          });
+        if (isMounted && Array.isArray(uList)) {
+          const validCloudUsers = deduplicateUsers(uList.map(normalizeUserData));
+          setUsers(validCloudUsers);
+          try { localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(validCloudUsers)); } catch {}
         }
       });
     } catch (err) {}
 
     // 2. Multi-Organization Cloud Sync across Devices
     getCloudOrganizations().then((cloudOrgs) => {
-      if (isMounted && cloudOrgs && cloudOrgs.length > 0) {
-        setOrganizations((prev) => {
-          const merged = deduplicateOrganizations([...prev, ...cloudOrgs]);
-          try {
-            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(merged));
-          } catch {}
-          return merged;
-        });
+      if (isMounted && Array.isArray(cloudOrgs)) {
+        const validOffices = deduplicateOrganizations(
+          cloudOrgs.filter((o) => o.id !== 'all' && o.id !== 'org_default' && Boolean(o.officeName))
+        );
+        setOrganizations(validOffices);
+        try {
+          localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(validOffices));
+        } catch {}
       }
     }).catch((e) => console.warn('Cloud organizations sync notice:', e));
 
     // 3. User Accounts Cloud Sync
     getCloudUsers().then((cloudUsers) => {
-      if (cloudUsers && cloudUsers.length > 0 && isMounted) {
-        setUsers((prev) => {
-          const merged = deduplicateUsers([...prev, ...cloudUsers]);
-          try {
-            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
-          } catch {}
-          return merged;
-        });
+      if (Array.isArray(cloudUsers) && isMounted) {
+        const validUsers = deduplicateUsers(cloudUsers.map(normalizeUserData));
+        setUsers(validUsers);
+        try {
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(validUsers));
+        } catch {}
       }
     }).catch((e) => console.warn('Cloud users sync notice:', e));
 
@@ -2494,7 +2492,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return false;
     }
 
-    const updatedUsers = users.filter((u) => u.id !== id);
+    const updatedUsers = users.filter((u) => u.id !== id && u.uid !== id);
     setUsers(updatedUsers);
     try {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
@@ -2503,7 +2501,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     deleteCloudUser(id).catch(console.warn);
-    saveCloudUsers(updatedUsers).catch(console.warn);
+    if (target.uid && target.uid !== id) {
+      deleteCloudUser(target.uid).catch(console.warn);
+    }
+    if (target.username) {
+      deleteCloudUser(target.username).catch(console.warn);
+    }
     triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({
@@ -2919,6 +2922,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const remaining = sortFiscalYearsDescending(fiscalYears.filter((item) => item !== fy));
         setFiscalYears(remaining);
 
+        deleteCloudFiscalYear(activeOrganizationId || 'org_default', fy).catch(console.warn);
+
         setFyDatabase((prev) => {
           const updated = { ...prev };
           delete updated[fy];
@@ -2961,6 +2966,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       confirmText: `हो, आ.व. ${fy} को सबै डाटा मेटाउनुहोस्`,
       cancelText: 'रद्द गर्नुहोस्',
       onConfirm: () => {
+        clearCloudFiscalYearData(activeOrganizationId || 'org_default', fy).catch(console.warn);
+
         const emptyData: FiscalYearData = {
           employees: [],
           salarySetups: {},
@@ -4263,15 +4270,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     try {
-      const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        const msg = `कार्यालय मेटाउन सकिएन: ${errText || 'सर्भर त्रुटि'}`;
-        addToast('error', 'मेटाउन असफल', msg);
-        return { success: false, message: msg };
-      }
+      await deleteCloudOrganization(orgId);
     } catch (err: any) {
       const msg = `कार्यालय मेटाउन सकिएन: ${err?.message || 'नेटवर्क समस्या'}`;
       addToast('error', 'मेटाउन असफल', msg);
@@ -5576,22 +5575,39 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const clearAllData = () => {
     showConfirmation({
-      title: 'सम्पूर्ण प्रणाली डाटा खाली गर्ने पुष्टि',
-      message: 'के तपाईं सबै कार्यालय/संस्था, प्रयोगकर्ता, आर्थिक वर्ष, कर्मचारी तथा सेटिङ्स विवरण पूर्ण रूपमा मेटाउन निश्चित हुनुहुन्छ? यो कार्य फिर्ता गर्न सकिने छैन।',
+      title: 'सम्पूर्ण प्रणाली डाटा खाली गर्ने पुष्टि (All Clear / Factory Reset)',
+      message: 'के तपाईं सबै कार्यालय/संस्था, प्रयोगकर्ता, आर्थिक वर्ष, कर्मचारी तथा सेटिङ्स विवरण सर्भर र डाटाबेसबाट पूर्ण रूपमा मेटाउन निश्चित हुनुहुन्छ? यो कार्य फिर्ता गर्न सकिने छैन।',
       isDangerous: true,
-      confirmText: 'सबै मेटाउनुहोस्',
+      confirmText: 'हो, सबै डाटा पूर्ण मेटाउनुहोस्',
       cancelText: 'रद्द गर्नुहोस्',
-      onConfirm: () => {
-        // Reset active scoped states
+      onConfirm: async () => {
+        try {
+          // 1. Call Backend to wipe DB, Firestore & local store
+          await factoryResetCloudData();
+        } catch (err) {
+          console.warn('Backend factory reset error:', err);
+        }
+
+        // 2. Reset active scoped states to blank
         setEmployees([]);
         setSalarySetups({});
         setDeductionSetups({});
         setTaxReferences(DEFAULT_TAX_REFERENCES);
-        setOrganization(DEFAULT_ORGANIZATION);
+        setOrganization({
+          ...DEFAULT_ORGANIZATION,
+          name: '',
+          officeName: '',
+          address: '',
+          district: '',
+          province: '',
+          email: '',
+          phone: '',
+          pan: '',
+        });
         
-        // Reset multi-tenancy states
-        setOrganizations(DEFAULT_ORGANIZATIONS);
-        setActiveOrganizationIdState('org_default');
+        // Reset multi-tenancy states to completely empty
+        setOrganizations([]);
+        setActiveOrganizationIdState('');
         
         const freshDb: Record<string, FiscalYearData> = {
           '२०८१/८२': {
@@ -5602,19 +5618,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           },
         };
         setFyDatabase(freshDb);
-        
-        setOrgDatabases({
-          org_default: {
-            organization: DEFAULT_ORGANIZATION,
-            fiscalYears: DEFAULT_FISCAL_YEARS_LIST,
-            activeFiscalYear: '२०८१/८२',
-            fyDatabase: freshDb,
-            googleSheetsConfig: DEFAULT_GOOGLE_SHEETS_CONFIG,
-          }
-        });
+        setOrgDatabases({});
 
-        // Reset users back to initial default users
-        setUsers(DEFAULT_USERS);
+        // Keep only superadmin user
+        const superAdminUsers = DEFAULT_USERS.filter((u) => u.role === 'SUPER_ADMIN');
+        setUsers(superAdminUsers);
         setIsDemoData(false);
         
         // Manually clear all relevant localStorage items to ensure no stale browser data persists
@@ -5627,12 +5635,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           localStorage.removeItem(STORAGE_KEYS.FISCAL_YEARS);
           localStorage.removeItem(STORAGE_KEYS.ACTIVE_FY);
           localStorage.removeItem(STORAGE_KEYS.USERS);
+          localStorage.removeItem('nepal_payroll_employees');
+          localStorage.removeItem('nepal_payroll_salary_setups');
+          localStorage.removeItem('nepal_payroll_deduction_setups');
+          localStorage.removeItem('nepal_payroll_tax_references');
         } catch (e) {
           console.error('Failed to clear some localStorage items', e);
         }
 
         hideConfirmation();
-        addToast('warning', 'प्रणाली पूर्ण रूपमा रिसेट गरियो', 'सम्पूर्ण कार्यालय/संस्था तथा डाटा मेटाइएको छ। तपाईं नयाँ कार्यालय र कर्मचारी थप्न सक्नुहुन्छ।');
+        addToast('success', 'प्रणाली पूर्ण रूपमा खाली गरियो', 'सम्पूर्ण कार्यालय/संस्था, प्रयोगकर्ता तथा डाटाबेस विवरण पूर्ण रूपमा हटाइएको छ।');
       },
     });
   };

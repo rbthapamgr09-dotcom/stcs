@@ -183,3 +183,43 @@ export function localSaveEmployee(orgId: string, fiscalYear: string, employee: a
   }
   scheduleSave();
 }
+
+export function localDeleteFiscalYear(orgId: string, fiscalYear: string): void {
+  ensureLoaded();
+  if (dbState.fyDatabases[orgId] && dbState.fyDatabases[orgId][fiscalYear]) {
+    delete dbState.fyDatabases[orgId][fiscalYear];
+  }
+  if (dbState.employees[orgId] && dbState.employees[orgId][fiscalYear]) {
+    delete dbState.employees[orgId][fiscalYear];
+  }
+  scheduleSave();
+}
+
+export function localClearFiscalYear(orgId: string, fiscalYear: string): void {
+  ensureLoaded();
+  if (dbState.fyDatabases[orgId]) {
+    dbState.fyDatabases[orgId][fiscalYear] = {
+      employees: [],
+      salarySetups: {},
+      deductionSetups: {},
+      taxReferences: [],
+    };
+  }
+  if (dbState.employees[orgId]) {
+    dbState.employees[orgId][fiscalYear] = [];
+  }
+  scheduleSave();
+}
+
+export function localClearAllData(): void {
+  ensureLoaded();
+  dbState = {
+    offices: {},
+    users: {},
+    settings: {},
+    fyDatabases: {},
+    orgStores: {},
+    employees: {},
+  };
+  scheduleSave();
+}

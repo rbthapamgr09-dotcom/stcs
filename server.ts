@@ -13,6 +13,7 @@ import {
   getOfficeById,
   listOffices,
   deleteOfficeById,
+  clearAllOffices,
   OfficeEntity,
 } from './src/server/repositories/officeRepo.ts';
 import {
@@ -24,6 +25,7 @@ import {
   listUsersByOrganization,
   listAllUsers,
   deleteUserByUid,
+  clearAllUsers,
   linkFirebaseUid,
   sanitizeUser,
   UserEntity,
@@ -31,11 +33,14 @@ import {
 import {
   getOrgFyDatabase,
   setOrgFyDatabase,
+  deleteOrgFiscalYear,
+  clearOrgFiscalYearData,
   getOrgDataStore,
   setOrgDataStore,
   getEmployees,
   upsertEmployee,
 } from './src/server/repositories/fyRepo.ts';
+import { localClearAllData } from './src/server/repositories/localStore.ts';
 import {
   getSystemSetting,
   setSystemSetting,
@@ -729,6 +734,87 @@ async function startServer() {
     } catch (error: any) {
       console.error('Failed to save employee:', error);
       res.status(500).json({ error: error.message || 'Failed to save employee' });
+    }
+  });
+
+  // Delete fiscal year
+  app.delete(['/api/offices/:orgId/fiscal-years/:fy', '/api/organizations/:orgId/fiscal-years/:fy'], optionalAuth, async (req, res) => {
+    try {
+      const { orgId, fy } = req.params;
+      const decodedFy = decodeURIComponent(fy);
+      await deleteOrgFiscalYear(orgId, decodedFy);
+      res.json({ success: true, message: `Fiscal year ${decodedFy} deleted` });
+    } catch (error: any) {
+      console.error('Failed to delete fiscal year:', error);
+      res.status(500).json({ error: error.message || 'Failed to delete fiscal year' });
+    }
+  });
+
+  // Clear fiscal year data (all employees and setups for that FY)
+  app.post(['/api/offices/:orgId/fiscal-years/:fy/clear', '/api/organizations/:orgId/fiscal-years/:fy/clear'], optionalAuth, async (req, res) => {
+    try {
+      const { orgId, fy } = req.params;
+      const decodedFy = decodeURIComponent(fy);
+      await clearOrgFiscalYearData(orgId, decodedFy);
+      res.json({ success: true, message: `Fiscal year ${decodedFy} data cleared` });
+    } catch (error: any) {
+      console.error('Failed to clear fiscal year data:', error);
+      res.status(500).json({ error: error.message || 'Failed to clear fiscal year data' });
+    }
+  });
+
+  // System Full Clear / Factory Reset endpoint
+  app.post(['/api/system/clear-all', '/api/system/factory-reset'], optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      console.log('[System] Executing All Clear / Factory Reset requested by:', req.user?.email || 'admin');
+      
+      // 1. Clear local memory and file store
+      localClearAllData();
+
+      // 2. Clear all offices from Firestore and SQL
+      await clearAllOffices();
+
+      // 3. Clear non-superadmin users
+      await clearAllUsers(true);
+
+      // 4. Re-initialize base superadmin accounts
+      await saveUser({
+        uid: 'user_super_admin',
+        username: 'superadmin',
+        fullName: 'प्रणाली सुपर प्रशासक (Super Admin)',
+        email: 'superadmin@system.local',
+        role: 'SUPER_ADMIN',
+        organizationId: 'all',
+        password: 'admin123',
+        designation: 'कार्यालय प्रमुख / आईटी सुपर एडमिन',
+        phone: '9851000001',
+        isActive: true,
+        mustChangePassword: false,
+        isFirstLogin: false,
+      });
+
+      await saveUser({
+        uid: 'rbthapamgr09',
+        username: 'rbthapamgr09',
+        fullName: 'RB Thapa (Super Admin)',
+        email: 'rbthapamgr09@gmail.com',
+        role: 'SUPER_ADMIN',
+        organizationId: 'all',
+        password: 'admin123',
+        designation: 'प्रणाली व्यवस्थापक (System Admin)',
+        phone: '9851000001',
+        isActive: true,
+        mustChangePassword: false,
+        isFirstLogin: false,
+      });
+
+      res.json({
+        success: true,
+        message: 'सम्पूर्ण प्रणाली डाटा (All Clear / Factory Reset) सफलतापूर्वक खाली गरियो।',
+      });
+    } catch (error: any) {
+      console.error('[System] Factory reset failed:', error);
+      res.status(500).json({ error: error.message || 'डाटा खाली गर्न सकिएन।' });
     }
   });
 

@@ -7,6 +7,8 @@ import {
   localSetOrgStore,
   localGetEmployees,
   localSaveEmployee,
+  localDeleteFiscalYear,
+  localClearFiscalYear,
 } from './localStore.ts';
 import {
   getOrgFyDatabase as sqlGetOrgFyDatabase,
@@ -218,4 +220,65 @@ export async function upsertEmployee(employee: any, orgId: string, fiscalYear: s
     }
   }
   return employee;
+}
+
+export async function deleteOrgFiscalYear(orgId: string, fiscalYear: string): Promise<boolean> {
+  if (!orgId || !fiscalYear) return false;
+
+  // 1. LocalStore
+  localDeleteFiscalYear(orgId, fiscalYear);
+
+  // 2. Firestore
+  try {
+    const fySlug = slugifyFiscalYear(fiscalYear);
+    await adminDb.collection('offices').doc(orgId).collection('fiscal_years').doc(fySlug).delete();
+    await adminDb.collection('offices').doc(orgId).collection('fiscal_years').doc(fiscalYear).delete();
+
+    // Update parent fy_database doc if present
+    const docRef = adminDb.collection('offices').doc(orgId).collection('data').doc('fy_database');
+    const snap = await docRef.get();
+    if (snap.exists) {
+      const d = snap.data()?.data || snap.data() || {};
+      delete d[fiscalYear];
+      await docRef.set({ data: d, updatedAt: new Date().toISOString() }, { merge: true });
+    }
+  } catch (err: any) {
+    console.warn(`[FyRepo] Error deleting fiscal year ${fiscalYear} for org ${orgId}:`, err?.message || err);
+  }
+
+  return true;
+}
+
+export async function clearOrgFiscalYearData(orgId: string, fiscalYear: string): Promise<boolean> {
+  if (!orgId || !fiscalYear) return false;
+
+  // 1. LocalStore
+  localClearFiscalYear(orgId, fiscalYear);
+
+  // 2. Firestore
+  try {
+    const fySlug = slugifyFiscalYear(fiscalYear);
+    const emptyPayload = {
+      officeId: orgId,
+      fiscalYear,
+      employees: [],
+      salarySetups: {},
+      deductionSetups: {},
+      taxReferences: [],
+      updatedAt: new Date().toISOString(),
+    };
+    await adminDb.collection('offices').doc(orgId).collection('fiscal_years').doc(fySlug).set(emptyPayload);
+
+    const docRef = adminDb.collection('offices').doc(orgId).collection('data').doc('fy_database');
+    const snap = await docRef.get();
+    if (snap.exists) {
+      const d = snap.data()?.data || snap.data() || {};
+      d[fiscalYear] = emptyPayload;
+      await docRef.set({ data: d, updatedAt: new Date().toISOString() }, { merge: true });
+    }
+  } catch (err: any) {
+    console.warn(`[FyRepo] Error clearing fiscal year data ${fiscalYear} for org ${orgId}:`, err?.message || err);
+  }
+
+  return true;
 }

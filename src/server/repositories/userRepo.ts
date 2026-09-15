@@ -395,28 +395,73 @@ export async function listAllUsers(): Promise<UserEntity[]> {
 export async function deleteUserByUid(uid: string): Promise<boolean> {
   if (!uid) return false;
 
+  const existing = (await getUserByUid(uid)) || (await getUserByUsername(uid));
   localDeleteUser(uid);
-  const existing = await getUserByUid(uid);
+  if (existing?.uid && existing.uid !== uid) {
+    localDeleteUser(existing.uid);
+  }
 
-  // Firestore
+  // 1. Firestore
   try {
     await adminDb.collection('users').doc(uid).delete();
+    if (existing?.uid && existing.uid !== uid) {
+      await adminDb.collection('users').doc(existing.uid).delete();
+    }
     if (existing?.username) {
       await adminDb.collection('usernames').doc(existing.username.toLowerCase()).delete();
     }
+    await adminDb.collection('credentials').doc(uid).delete();
+    if (existing?.uid) {
+      await adminDb.collection('credentials').doc(existing.uid).delete();
+    }
+
+    // Legacy list cleanup
+    try {
+      const legacyRef = adminDb.collection('system_users').doc('registered_accounts');
+      const snap = await legacyRef.get();
+      if (snap.exists && Array.isArray(snap.data()?.users)) {
+        const filtered = snap.data()?.users.filter((u: any) => u.id !== uid && u.uid !== uid && u.username !== uid);
+        await legacyRef.set({ users: filtered, updatedAt: new Date().toISOString() });
+      }
+    } catch {}
   } catch (err: any) {
-    // Handled
+    console.warn(`[UserRepo] Notice deleting user ${uid} from Firestore:`, err?.message || err);
   }
 
-  // SQL
+  // 2. Firebase Auth deletion
+  try {
+    if (existing?.firebaseUid) {
+      await adminAuth.deleteUser(existing.firebaseUid);
+    } else if (existing?.uid) {
+      await adminAuth.deleteUser(existing.uid);
+    }
+  } catch (authErr) {
+    // Non-blocking if auth user doesn't exist
+  }
+
+  // 3. SQL deletion
   if (await isSqlEnabled()) {
     try {
       await sqlDeleteUserByUid(uid);
+      if (existing?.uid && existing.uid !== uid) {
+        await sqlDeleteUserByUid(existing.uid);
+      }
     } catch (sqlErr: any) {
       // Handled
     }
   }
 
+  return true;
+}
+
+export async function clearAllUsers(preserveSuperAdmin: boolean = true): Promise<boolean> {
+  const allUsers = await listAllUsers();
+  for (const u of allUsers) {
+    if (preserveSuperAdmin && (u.role === 'SUPER_ADMIN' || u.username === 'superadmin' || u.username === 'rbthapamgr09')) {
+      continue;
+    }
+    await deleteUserByUid(u.uid || u.id);
+  }
   return true;
 }
 

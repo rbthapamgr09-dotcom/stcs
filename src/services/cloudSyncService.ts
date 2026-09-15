@@ -1060,6 +1060,56 @@ export async function deleteCloudUser(userId: string): Promise<void> {
   }
 }
 
+/**
+ * Deletes a fiscal year record from the backend
+ */
+export async function deleteCloudFiscalYear(orgId: string, fiscalYear: string): Promise<boolean> {
+  try {
+    const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}/fiscal-years/${encodeURIComponent(fiscalYear)}`, {
+      method: 'DELETE',
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('Could not delete fiscal year from backend API:', err);
+    return false;
+  }
+}
+
+/**
+ * Clears fiscal year payroll and employee data on backend
+ */
+export async function clearCloudFiscalYearData(orgId: string, fiscalYear: string): Promise<boolean> {
+  try {
+    const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}/fiscal-years/${encodeURIComponent(fiscalYear)}/clear`, {
+      method: 'POST',
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('Could not clear fiscal year data on backend API:', err);
+    return false;
+  }
+}
+
+/**
+ * Executes a full system wipe / factory reset on backend
+ */
+export async function factoryResetCloudData(): Promise<{ success: boolean; message?: string }> {
+  try {
+    const res = await authenticatedFetch('/api/system/clear-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return { success: true, message: data.message };
+    }
+    const errText = await res.text();
+    return { success: false, message: errText || 'Factory reset failed on server' };
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Network error during factory reset' };
+  }
+}
+
 
 /**
  * Searches and retrieves a single user by username or email from Cloud SQL or Firestore.

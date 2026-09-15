@@ -188,10 +188,38 @@ export async function deleteOfficeById(id: string): Promise<boolean> {
 
   localDeleteOffice(id);
 
+  // Firestore: delete office document and subcollections
   try {
-    await adminDb.collection('offices').doc(id).delete();
+    const officeDoc = adminDb.collection('offices').doc(id);
+    
+    // Delete subcollections
+    try {
+      const fySnaps = await officeDoc.collection('fiscal_years').get();
+      const batch = adminDb.batch();
+      fySnaps.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+    } catch {}
+
+    try {
+      const dataSnaps = await officeDoc.collection('data').get();
+      const batch = adminDb.batch();
+      dataSnaps.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+    } catch {}
+
+    await officeDoc.delete();
+
+    // Legacy mirror update
+    try {
+      const legacyRef = adminDb.collection('system_organizations').doc('registered_offices');
+      const snap = await legacyRef.get();
+      if (snap.exists && Array.isArray(snap.data()?.organizations)) {
+        const filtered = snap.data()?.organizations.filter((o: any) => o.id !== id);
+        await legacyRef.set({ organizations: filtered, updatedAt: new Date().toISOString() });
+      }
+    } catch {}
   } catch (err: any) {
-    // Handled
+    console.warn(`[OfficeRepo] Notice deleting office ${id} from Firestore:`, err?.message || err);
   }
 
   if (await isSqlEnabled()) {
@@ -200,6 +228,32 @@ export async function deleteOfficeById(id: string): Promise<boolean> {
     } catch (sqlErr: any) {
       // Handled
     }
+  }
+
+  return true;
+}
+
+export async function clearAllOffices(): Promise<boolean> {
+  // 1. Local
+  const localList = localListOffices();
+  for (const o of localList) {
+    if (o.id) localDeleteOffice(o.id);
+  }
+
+  // 2. Firestore
+  try {
+    const snaps = await adminDb.collection('offices').get();
+    const batch = adminDb.batch();
+    snaps.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+
+    try {
+      await adminDb.collection('system_organizations').doc('registered_offices').delete();
+    } catch {}
+  } catch (err: any) {
+    console.warn('[OfficeRepo] Error clearing all offices from Firestore:', err);
   }
 
   return true;
