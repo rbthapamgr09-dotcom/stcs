@@ -515,11 +515,11 @@ export async function getCloudOrganizations(): Promise<OrganizationItem[] | null
  */
 export async function deleteCloudOrganization(orgId: string): Promise<boolean> {
   try {
-    await authenticatedFetch(`/api/organization/${encodeURIComponent(orgId)}`, {
+    await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
       method: 'DELETE',
     });
   } catch (err) {
-    console.warn('Could not delete organization from Cloud SQL API:', err);
+    console.warn('Could not delete organization from Backend API:', err);
   }
 
   if (canWriteFirestore()) {

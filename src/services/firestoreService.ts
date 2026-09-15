@@ -136,10 +136,8 @@ export function subscribeToOffices(onUpdate: (offices: OrganizationItem[]) => vo
     return onSnapshot(
       collRef,
       (snap) => {
-        if (!snap.empty) {
-          const offices = snap.docs.map((d) => ({ ...(d.data() as OrganizationItem), id: d.id }));
-          onUpdate(offices);
-        }
+        const offices = snap.docs.map((d) => ({ ...(d.data() as OrganizationItem), id: d.id }));
+        onUpdate(offices);
       },
       (err) => {
         console.warn('[Firestore] subscribeToOffices snapshot notice:', err?.message || err);
@@ -411,10 +409,8 @@ export function subscribeToUsers(onUpdate: (users: User[]) => void, officeId?: s
     return onSnapshot(
       q,
       (snap: any) => {
-        if (!snap.empty) {
-          const users = snap.docs.map((d: any) => d.data() as User);
-          onUpdate(users);
-        }
+        const users = snap.docs.map((d: any) => d.data() as User);
+        onUpdate(users);
       },
       (err: any) => {
         console.warn('[Firestore] subscribeToUsers snapshot notice:', err?.message || err);

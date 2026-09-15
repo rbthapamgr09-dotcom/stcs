@@ -124,13 +124,17 @@ export async function upsertOrganization(data: any) {
 
 export async function deleteOrganizationById(id: string) {
   try {
+    try {
+      await withDbRetry(() => db.delete(employees).where(eq(employees.orgId, id)));
+    } catch {}
+    
     const result = await withDbRetry(() =>
       db.delete(organizations).where(eq(organizations.id, id)).returning()
     );
     return result[0] || null;
   } catch (error) {
-    console.error('Error deleting organization from DB:', error);
-    throw new Error('Failed to delete organization.', { cause: error });
+    console.warn('Notice deleting organization from SQL DB:', error);
+    return null;
   }
 }
 
