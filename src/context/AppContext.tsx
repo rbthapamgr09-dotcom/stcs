@@ -4026,8 +4026,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
 
       if (!res.ok) {
-        const errText = await res.text();
-        const msg = `कार्यालय सुरक्षित हुन सकेन: ${errText || 'सर्भर त्रुटि'}`;
+        let errMessage = '';
+        try {
+          const errJson = await res.json();
+          errMessage = errJson.error || errJson.message || '';
+        } catch {
+          const rawText = await res.text().catch(() => '');
+          errMessage = rawText;
+        }
+        const msg = `कार्यालय सुरक्षित हुन सकेन: ${errMessage || 'सर्भर त्रुटि'}`;
         addToast('error', 'कार्यालय सुरक्षित हुन सकेन', msg);
         return { success: false, message: msg };
       }
@@ -4129,8 +4136,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         body: JSON.stringify(orgData),
       });
       if (!res.ok) {
-        const errText = await res.text();
-        addToast('error', 'कार्यालय सुरक्षित हुन सकेन', errText || 'सर्भरमा अपडेट गर्न सकिएन।');
+        let errMessage = '';
+        try {
+          const errJson = await res.json();
+          errMessage = errJson.error || errJson.message || '';
+        } catch {
+          const rawText = await res.text().catch(() => '');
+          errMessage = rawText;
+        }
+        addToast('error', 'कार्यालय सुरक्षित हुन सकेन', errMessage || 'सर्भरमा अपडेट गर्न सकिएन।');
         return false;
       }
     } catch (e: any) {

@@ -1,0 +1,527 @@
+{
+  "offices": {
+    "all": {
+      "id": "all",
+      "name": "नेपाल सरकार",
+      "officeName": "समग्र प्रणाली (All Offices)",
+      "officeCode": "",
+      "ministryName": "",
+      "departmentName": "",
+      "parentBodyName": "",
+      "province": "बागमती प्रदेश",
+      "district": "काठमाडौं",
+      "localLevel": "",
+      "address": "काठमाडौं",
+      "email": "superadmin@system.local",
+      "phone": "",
+      "mobile": "",
+      "whatsapp": "",
+      "website": "",
+      "panNumber": "",
+      "registrationNo": "",
+      "authorizedPersonName": "",
+      "authorizedPersonDesignation": "",
+      "currentFiscalYear": "२०८१/८२",
+      "logoUrl": "",
+      "signatureUrl": "",
+      "headerText": "",
+      "footerText": "",
+      "alignment": "center",
+      "spreadsheetId": "",
+      "spreadsheetUrl": "",
+      "driveFolderId": "1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj",
+      "lastSyncedAt": "2026-09-15T11:16:20.384Z",
+      "syncStatus": "IDLE",
+      "createdById": "",
+      "isActive": true,
+      "createdAt": "2026-09-15T11:16:20.385Z",
+      "updatedAt": "2026-09-15T11:16:20.385Z"
+    },
+    "org_default": {
+      "id": "org_default",
+      "name": "नेपाल सरकार",
+      "officeName": "केन्द्रीय कार्यालय",
+      "officeCode": "",
+      "ministryName": "",
+      "departmentName": "",
+      "parentBodyName": "",
+      "province": "बागमती प्रदेश",
+      "district": "काठमाडौं",
+      "localLevel": "",
+      "address": "काठमाडौं",
+      "email": "admin@system.local",
+      "phone": "",
+      "mobile": "",
+      "whatsapp": "",
+      "website": "",
+      "panNumber": "",
+      "registrationNo": "",
+      "authorizedPersonName": "",
+      "authorizedPersonDesignation": "",
+      "currentFiscalYear": "२०८१/८२",
+      "logoUrl": "",
+      "signatureUrl": "",
+      "headerText": "",
+      "footerText": "",
+      "alignment": "center",
+      "spreadsheetId": "",
+      "spreadsheetUrl": "",
+      "driveFolderId": "1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj",
+      "lastSyncedAt": "2026-09-15T11:16:20.775Z",
+      "syncStatus": "IDLE",
+      "createdById": "",
+      "isActive": true,
+      "createdAt": "2026-09-15T11:16:20.775Z",
+      "updatedAt": "2026-09-15T11:16:20.775Z"
+    },
+    "org_1789233319137": {
+      "id": "org_1789233319137",
+      "name": "नेपाल सरकार",
+      "officeName": "महाकाली पुल योजना",
+      "officeCode": "",
+      "ministryName": "पूर्वाधार विकास मन्त्रालय",
+      "departmentName": "सडक विभाग",
+      "parentBodyName": "सडक सुधार तथा विकास योजना निर्देशनालय",
+      "province": "सुदूरपश्चिम प्रदेश",
+      "district": "कञ्चनपुर",
+      "localLevel": "भीमदत्त नगरपालिका",
+      "address": "महेन्द्रनगर, कञ्चनपुर",
+      "email": "mbp.dor@gmail.com",
+      "phone": "099-521122",
+      "mobile": "",
+      "whatsapp": "-",
+      "website": "",
+      "panNumber": "-",
+      "registrationNo": "337017601",
+      "authorizedPersonName": "",
+      "authorizedPersonDesignation": "",
+      "currentFiscalYear": "२०८१/८२",
+      "logoUrl": "",
+      "signatureUrl": "",
+      "headerText": "",
+      "footerText": "",
+      "alignment": "center",
+      "spreadsheetId": "1DJa3s7f_K4Jz9d6h3N5Wnh5UayGFavPw2xm6DWRTWUo",
+      "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/1DJa3s7f_K4Jz9d6h3N5Wnh5UayGFavPw2xm6DWRTWUo/edit",
+      "driveFolderId": "1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj",
+      "lastSyncedAt": "2026-09-14T15:43:42.000Z",
+      "syncStatus": "SUCCESS",
+      "createdById": "",
+      "isActive": true,
+      "createdAt": "2026-09-12T17:15:24.744Z",
+      "updatedAt": "2026-09-15T11:15:21.038Z"
+    }
+  },
+  "users": {},
+  "settings": {},
+  "fyDatabases": {
+    "org_default": {
+      "2083/084": {
+        "employees": [],
+        "salarySetups": {},
+        "deductionSetups": {},
+        "taxReferences": [
+          {
+            "id": "tax_ref_2081_82_single",
+            "slabs": [
+              {
+                "id": "slab_1",
+                "toAmount": 500000,
+                "fromAmount": 0,
+                "description": "पहिलो रु. ५,००,००० सम्म (सामाजिक सुरक्षा कर १%)",
+                "ratePercent": 1
+              },
+              {
+                "id": "slab_2",
+                "toAmount": 700000,
+                "fromAmount": 500000,
+                "description": "थप रु. २,००,००० सम्म (१०%)",
+                "ratePercent": 10
+              },
+              {
+                "id": "slab_3",
+                "toAmount": 1000000,
+                "fromAmount": 700000,
+                "description": "थप रु. ३,००,००० सम्म (२०%)",
+                "ratePercent": 20
+              },
+              {
+                "id": "slab_4",
+                "toAmount": 2000000,
+                "fromAmount": 1000000,
+                "description": "थप रु. १०,००,००० सम्म (३०%)",
+                "ratePercent": 30
+              },
+              {
+                "id": "slab_5",
+                "toAmount": 5000000,
+                "fromAmount": 2000000,
+                "description": "थप रु. ३०,००,००० सम्म (३६%)",
+                "ratePercent": 36
+              },
+              {
+                "id": "slab_6",
+                "toAmount": 999999999,
+                "fromAmount": 5000000,
+                "description": "रु. ५०,००,००० भन्दा माथि (३९%)",
+                "ratePercent": 39
+              }
+            ],
+            "filingType": "एकल",
+            "fiscalYear": "2083/084",
+            "pensionSSTExempt": true,
+            "remoteExemptions": {
+              "क": 50000,
+              "ख": 40000,
+              "ग": 30000,
+              "घ": 20000,
+              "ङ": 10000,
+              "दुर्गम नभएको": 0
+            },
+            "citMaxDeductionAmount": 300000,
+            "citMaxDeductionPercent": 33.33,
+            "femaleTaxRebatePercent": 10,
+            "lifeInsuranceMaxDeduction": 40000,
+            "medicalTaxCreditMaxAmount": 750,
+            "disabilityExemptionPercent": 50,
+            "medicalTaxCreditRatePercent": 15
+          },
+          {
+            "id": "tax_ref_2081_82_couple",
+            "slabs": [
+              {
+                "id": "slab_c_1",
+                "toAmount": 600000,
+                "fromAmount": 0,
+                "description": "पहिलो रु. ६,००,००० सम्म (सामाजिक सुरक्षा कर १%)",
+                "ratePercent": 1
+              },
+              {
+                "id": "slab_c_2",
+                "toAmount": 800000,
+                "fromAmount": 600000,
+                "description": "थप रु. २,००,००० सम्म (१०%)",
+                "ratePercent": 10
+              },
+              {
+                "id": "slab_c_3",
+                "toAmount": 1100000,
+                "fromAmount": 800000,
+                "description": "थप रु. ३,००,००० सम्म (२०%)",
+                "ratePercent": 20
+              },
+              {
+                "id": "slab_c_4",
+                "toAmount": 2000000,
+                "fromAmount": 1100000,
+                "description": "थप रु. ९,००,००० सम्म (३०%)",
+                "ratePercent": 30
+              },
+              {
+                "id": "slab_c_5",
+                "toAmount": 5000000,
+                "fromAmount": 2000000,
+                "description": "थप रु. ३०,००,००० सम्म (३६%)",
+                "ratePercent": 36
+              },
+              {
+                "id": "slab_c_6",
+                "toAmount": 999999999,
+                "fromAmount": 5000000,
+                "description": "रु. ५०,००,००० भन्दा माथि (३९%)",
+                "ratePercent": 39
+              }
+            ],
+            "filingType": "दम्पत्ती",
+            "fiscalYear": "2083/084",
+            "pensionSSTExempt": true,
+            "remoteExemptions": {
+              "क": 50000,
+              "ख": 40000,
+              "ग": 30000,
+              "घ": 20000,
+              "ङ": 10000,
+              "दुर्गम नभएको": 0
+            },
+            "citMaxDeductionAmount": 300000,
+            "citMaxDeductionPercent": 33.33,
+            "femaleTaxRebatePercent": 10,
+            "lifeInsuranceMaxDeduction": 40000,
+            "medicalTaxCreditMaxAmount": 750,
+            "disabilityExemptionPercent": 50,
+            "medicalTaxCreditRatePercent": 15
+          },
+          {
+            "id": "tax_ref_2082_83_single",
+            "slabs": [
+              {
+                "id": "slab_82_1",
+                "toAmount": 500000,
+                "fromAmount": 0,
+                "description": "पहिलो रु. ५,००,००० सम्म (१% सा.सु.कर)",
+                "ratePercent": 1
+              },
+              {
+                "id": "slab_82_2",
+                "toAmount": 700000,
+                "fromAmount": 500000,
+                "description": "थप रु. २,००,००० सम्म (१०%)",
+                "ratePercent": 10
+              },
+              {
+                "id": "slab_82_3",
+                "toAmount": 1000000,
+                "fromAmount": 700000,
+                "description": "थप रु. ३,००,००० सम्म (२०%)",
+                "ratePercent": 20
+              },
+              {
+                "id": "slab_82_4",
+                "toAmount": 2000000,
+                "fromAmount": 1000000,
+                "description": "थप रु. १०,००,००० सम्म (३०%)",
+                "ratePercent": 30
+              },
+              {
+                "id": "slab_82_5",
+                "toAmount": 5000000,
+                "fromAmount": 2000000,
+                "description": "थप रु. ३०,००,००० सम्म (३६%)",
+                "ratePercent": 36
+              },
+              {
+                "id": "slab_82_6",
+                "toAmount": 999999999,
+                "fromAmount": 5000000,
+                "description": "रु. ५०,००,००० भन्दा माथि (३९%)",
+                "ratePercent": 39
+              }
+            ],
+            "filingType": "एकल",
+            "fiscalYear": "2083/084",
+            "pensionSSTExempt": true,
+            "remoteExemptions": {
+              "क": 50000,
+              "ख": 40000,
+              "ग": 30000,
+              "घ": 20000,
+              "ङ": 10000,
+              "दुर्गम नभएको": 0
+            },
+            "citMaxDeductionAmount": 300000,
+            "citMaxDeductionPercent": 33.33,
+            "femaleTaxRebatePercent": 10,
+            "lifeInsuranceMaxDeduction": 40000,
+            "medicalTaxCreditMaxAmount": 750,
+            "disabilityExemptionPercent": 50,
+            "medicalTaxCreditRatePercent": 15
+          }
+        ]
+      },
+      "२०८१/८२": {
+        "employees": [],
+        "salarySetups": {},
+        "taxReferences": [
+          {
+            "id": "tax_ref_2081_82_single",
+            "slabs": [
+              {
+                "id": "slab_1",
+                "toAmount": 500000,
+                "fromAmount": 0,
+                "description": "पहिलो रु. ५,००,००० सम्म (सामाजिक सुरक्षा कर १%)",
+                "ratePercent": 1
+              },
+              {
+                "id": "slab_2",
+                "toAmount": 700000,
+                "fromAmount": 500000,
+                "description": "थप रु. २,००,००० सम्म (१०%)",
+                "ratePercent": 10
+              },
+              {
+                "id": "slab_3",
+                "toAmount": 1000000,
+                "fromAmount": 700000,
+                "description": "थप रु. ३,००,००० सम्म (२०%)",
+                "ratePercent": 20
+              },
+              {
+                "id": "slab_4",
+                "toAmount": 2000000,
+                "fromAmount": 1000000,
+                "description": "थप रु. १०,००,००० सम्म (३०%)",
+                "ratePercent": 30
+              },
+              {
+                "id": "slab_5",
+                "toAmount": 5000000,
+                "fromAmount": 2000000,
+                "description": "थप रु. ३०,००,००० सम्म (३६%)",
+                "ratePercent": 36
+              },
+              {
+                "id": "slab_6",
+                "toAmount": 999999999,
+                "fromAmount": 5000000,
+                "description": "रु. ५०,००,००० भन्दा माथि (३९%)",
+                "ratePercent": 39
+              }
+            ],
+            "filingType": "एकल",
+            "fiscalYear": "२०८१/८२",
+            "pensionSSTExempt": true,
+            "remoteExemptions": {
+              "क": 50000,
+              "ख": 40000,
+              "ग": 30000,
+              "घ": 20000,
+              "ङ": 10000,
+              "दुर्गम नभएको": 0
+            },
+            "citMaxDeductionAmount": 300000,
+            "citMaxDeductionPercent": 33.33,
+            "femaleTaxRebatePercent": 10,
+            "lifeInsuranceMaxDeduction": 40000,
+            "medicalTaxCreditMaxAmount": 750,
+            "disabilityExemptionPercent": 50,
+            "medicalTaxCreditRatePercent": 15
+          },
+          {
+            "id": "tax_ref_2081_82_couple",
+            "slabs": [
+              {
+                "id": "slab_c_1",
+                "toAmount": 600000,
+                "fromAmount": 0,
+                "description": "पहिलो रु. ६,००,००० सम्म (सामाजिक सुरक्षा कर १%)",
+                "ratePercent": 1
+              },
+              {
+                "id": "slab_c_2",
+                "toAmount": 800000,
+                "fromAmount": 600000,
+                "description": "थप रु. २,००,००० सम्म (१०%)",
+                "ratePercent": 10
+              },
+              {
+                "id": "slab_c_3",
+                "toAmount": 1100000,
+                "fromAmount": 800000,
+                "description": "थप रु. ३,००,००० सम्म (२०%)",
+                "ratePercent": 20
+              },
+              {
+                "id": "slab_c_4",
+                "toAmount": 2000000,
+                "fromAmount": 1100000,
+                "description": "थप रु. ९,००,००० सम्म (३०%)",
+                "ratePercent": 30
+              },
+              {
+                "id": "slab_c_5",
+                "toAmount": 5000000,
+                "fromAmount": 2000000,
+                "description": "थप रु. ३०,००,००० सम्म (३६%)",
+                "ratePercent": 36
+              },
+              {
+                "id": "slab_c_6",
+                "toAmount": 999999999,
+                "fromAmount": 5000000,
+                "description": "रु. ५०,००,००० भन्दा माथि (३९%)",
+                "ratePercent": 39
+              }
+            ],
+            "filingType": "दम्पत्ती",
+            "fiscalYear": "२०८१/८२",
+            "pensionSSTExempt": true,
+            "remoteExemptions": {
+              "क": 50000,
+              "ख": 40000,
+              "ग": 30000,
+              "घ": 20000,
+              "ङ": 10000,
+              "दुर्गम नभएको": 0
+            },
+            "citMaxDeductionAmount": 300000,
+            "citMaxDeductionPercent": 33.33,
+            "femaleTaxRebatePercent": 10,
+            "lifeInsuranceMaxDeduction": 40000,
+            "medicalTaxCreditMaxAmount": 750,
+            "disabilityExemptionPercent": 50,
+            "medicalTaxCreditRatePercent": 15
+          },
+          {
+            "id": "tax_ref_2082_83_single",
+            "slabs": [
+              {
+                "id": "slab_82_1",
+                "toAmount": 500000,
+                "fromAmount": 0,
+                "description": "पहिलो रु. ५,००,००० सम्म (१% सा.सु.कर)",
+                "ratePercent": 1
+              },
+              {
+                "id": "slab_82_2",
+                "toAmount": 700000,
+                "fromAmount": 500000,
+                "description": "थप रु. २,००,००० सम्म (१०%)",
+                "ratePercent": 10
+              },
+              {
+                "id": "slab_82_3",
+                "toAmount": 1000000,
+                "fromAmount": 700000,
+                "description": "थप रु. ३,००,००० सम्म (२०%)",
+                "ratePercent": 20
+              },
+              {
+                "id": "slab_82_4",
+                "toAmount": 2000000,
+                "fromAmount": 1000000,
+                "description": "थप रु. १०,००,००० सम्म (३०%)",
+                "ratePercent": 30
+              },
+              {
+                "id": "slab_82_5",
+                "toAmount": 5000000,
+                "fromAmount": 2000000,
+                "description": "थप रु. ३०,००,००० सम्म (३६%)",
+                "ratePercent": 36
+              },
+              {
+                "id": "slab_82_6",
+                "toAmount": 999999999,
+                "fromAmount": 5000000,
+                "description": "रु. ५०,००,००० भन्दा माथि (३९%)",
+                "ratePercent": 39
+              }
+            ],
+            "filingType": "एकल",
+            "fiscalYear": "२०८२/८३",
+            "pensionSSTExempt": true,
+            "remoteExemptions": {
+              "क": 50000,
+              "ख": 40000,
+              "ग": 30000,
+              "घ": 20000,
+              "ङ": 10000,
+              "दुर्गम नभएको": 0
+            },
+            "citMaxDeductionAmount": 300000,
+            "citMaxDeductionPercent": 33.33,
+            "femaleTaxRebatePercent": 10,
+            "lifeInsuranceMaxDeduction": 40000,
+            "medicalTaxCreditMaxAmount": 750,
+            "disabilityExemptionPercent": 50,
+            "medicalTaxCreditRatePercent": 15
+          }
+        ],
+        "deductionSetups": {}
+      }
+    }
+  },
+  "orgStores": {},
+  "employees": {}
+}
