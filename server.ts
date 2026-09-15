@@ -8,6 +8,8 @@ import {
   getOrCreateUser,
   getUsers,
   getUserByUid,
+  getUserByFirebaseUid,
+  linkFirebaseUidToUser,
   deleteUserByUid,
   getUserByUsernameOrEmailOrUid,
   upsertUsersBatch,
@@ -184,7 +186,7 @@ async function startServer() {
       }
 
       // Check if user's organization is active
-      if (user.organizationId && user.organizationId !== 'org_default') {
+      if (user.organizationId && user.organizationId !== 'all' && user.organizationId !== 'org_default') {
         try {
           const org = await getOrganizationById(user.organizationId);
           if (org && org.isActive === false) {
@@ -214,9 +216,19 @@ async function startServer() {
         }
       }
 
+      // Link Firebase UID if passed from client
+      const incomingFirebaseUid = req.body.firebaseUid || req.body.firebase_uid;
+      if (incomingFirebaseUid && user) {
+        if (user.firebaseUid !== incomingFirebaseUid) {
+          await linkFirebaseUidToUser(user.id, incomingFirebaseUid);
+          user.firebaseUid = incomingFirebaseUid;
+        }
+      }
+
       const safeUser = {
         id: user.uid || String(user.id),
         uid: user.uid,
+        firebaseUid: user.firebaseUid || undefined,
         username: user.username,
         fullName:
           user.username?.toLowerCase() === 'admin_mbp' &&
@@ -249,12 +261,100 @@ async function startServer() {
     }
   });
 
+  // Dedicated Firebase Auth login & linkage endpoint
+  app.post('/api/auth/firebase-login', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const firebaseUid = req.user?.uid || req.body.firebaseUid || req.body.firebase_uid;
+      const email = req.user?.email || req.body.email;
+      const username = req.body.username;
+
+      if (!firebaseUid) {
+        return res.status(400).json({ success: false, message: 'Firebase UID आवश्यक छ।' });
+      }
+
+      let user = await getUserByFirebaseUid(firebaseUid);
+      if (!user) {
+        user = await getUserByUid(firebaseUid);
+      }
+      if (!user && (email || username)) {
+        user = await getUserByUsernameOrEmailOrUid(email || username);
+        if (user && !user.firebaseUid) {
+          await linkFirebaseUidToUser(user.id, firebaseUid);
+          user.firebaseUid = firebaseUid;
+        }
+      }
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          notFound: true,
+          message: 'Firebase खातासँग जोडिएको स्थानीय प्रयोगकर्ता फेला परेन।',
+        });
+      }
+
+      if (user.isActive === false) {
+        return res.status(403).json({
+          success: false,
+          inactive: true,
+          message: 'यो खाता निष्क्रिय गरिएको छ। कृपया प्रशासकसँग सम्पर्क गर्नुहोस्।',
+        });
+      }
+
+      if (user.organizationId && user.organizationId !== 'all' && user.organizationId !== 'org_default') {
+        try {
+          const org = await getOrganizationById(user.organizationId);
+          if (org && org.isActive === false) {
+            return res.status(403).json({
+              success: false,
+              inactive: true,
+              officeInactive: true,
+              message: 'यो प्रयोगकर्ता सम्बद्ध कार्यालय हाल निष्क्रिय गरिएको छ।',
+            });
+          }
+        } catch {}
+      }
+
+      const meta = (user.metadata as any) || {};
+      const storedPassword =
+        meta.password ||
+        (user.role === 'SUPER_ADMIN' ? 'admin123' : user.role === 'ADMIN' ? 'admin123' : 'viewer123');
+
+      const safeUser = {
+        id: user.uid || String(user.id),
+        uid: user.uid,
+        firebaseUid: user.firebaseUid || firebaseUid,
+        username: user.username,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        organizationId: user.organizationId || 'org_default',
+        organizationName: user.organizationName || meta.organizationName,
+        designation: user.designation || meta.designation,
+        phone: user.phone || meta.phone,
+        password: storedPassword,
+        securityPin: meta.securityPin || '1234',
+        securityQuestion: meta.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+        securityAnswer: meta.securityAnswer || 'नेपाल',
+        mustChangePassword: Boolean(meta.mustChangePassword),
+        isFirstLogin: Boolean(meta.isFirstLogin),
+        isActive: user.isActive,
+        createdAt: user.createdAt,
+      };
+
+      res.json({ success: true, user: safeUser, message: 'Firebase मार्फत लगइन सफल भयो।' });
+    } catch (error: any) {
+      console.error('Firebase login error:', error);
+      res.status(500).json({ success: false, message: error.message || 'Firebase लगइन प्रक्रियामा त्रुटि आयो।' });
+    }
+  });
+
   // User synchronization & authentication endpoint
   app.post('/api/users/sync', optionalAuth, async (req: AuthRequest, res) => {
     try {
-      const { uid, email, username, fullName, role, organizationId, metadata } = req.body;
+      const { uid, email, username, fullName, role, organizationId, metadata, firebaseUid } = req.body;
       const targetUid = uid || req.user?.uid;
       const targetEmail = email || req.user?.email;
+      const targetFirebaseUid = firebaseUid || req.user?.uid;
 
       if (!targetUid) {
         return res.status(400).json({ error: 'User UID is required' });
@@ -267,7 +367,8 @@ async function startServer() {
         fullName,
         role,
         organizationId,
-        metadata
+        metadata,
+        targetFirebaseUid
       );
       res.json({ success: true, user });
     } catch (error: any) {
@@ -602,6 +703,28 @@ async function startServer() {
 
 async function ensureDatabaseInitialized() {
   try {
+    // 0. Ensure root organizations exist for foreign key integrity
+    await upsertOrganization({
+      id: 'all',
+      name: 'नेपाल सरकार',
+      officeName: 'समग्र प्रणाली (All Offices)',
+      province: 'बागमती प्रदेश',
+      district: 'काठमाडौं',
+      address: 'काठमाडौं',
+      email: 'superadmin@system.local',
+      isActive: true,
+    });
+    await upsertOrganization({
+      id: 'org_default',
+      name: 'नेपाल सरकार',
+      officeName: 'केन्द्रीय कार्यालय',
+      province: 'बागमती प्रदेश',
+      district: 'काठमाडौं',
+      address: 'काठमाडौं',
+      email: 'admin@system.local',
+      isActive: true,
+    });
+
     // 1. Ensure Super Admin and Demo Accounts
     await getOrCreateUser(
       'user_super_admin',

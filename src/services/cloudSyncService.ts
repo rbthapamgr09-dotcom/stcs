@@ -13,6 +13,32 @@ import { verifyPasswordSync } from '../utils/securityUtils';
 
 import { saveOfficeToFirestore, saveUserToFirestore, getUserFromFirestore } from './firestoreService';
 import { deduplicateOrganizations, deduplicateUsers } from '../utils/deduplicate';
+import { auth } from '../lib/firebase';
+
+/**
+ * Helper to perform authenticated HTTP requests to backend API,
+ * automatically passing the Firebase ID token in Authorization header when available.
+ */
+export async function authenticatedFetch(url: string, init?: RequestInit): Promise<Response> {
+  let token: string | null = null;
+  try {
+    if (auth?.currentUser) {
+      token = await auth.currentUser.getIdToken();
+    }
+  } catch (err) {
+    // Non-fatal token retrieval notice
+  }
+
+  const headers = new Headers(init?.headers || {});
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  return fetch(url, {
+    ...init,
+    headers,
+  });
+}
 
 /**
  * Persists active fiscal year and fiscal year list across Cloud SQL and Firestore
@@ -484,7 +510,7 @@ export async function saveCloudOrganization(org: OrganizationItem): Promise<bool
 
   // 1. Sync to Cloud SQL via /api/organization
   try {
-    await fetch('/api/organization', {
+    await authenticatedFetch('/api/organization', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -534,7 +560,7 @@ export async function saveCloudOrganizations(orgs: OrganizationItem[]): Promise<
   // 1. Save individually to Cloud SQL
   for (const org of cleanOrgs) {
     try {
-      await fetch('/api/organization', {
+      await authenticatedFetch('/api/organization', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(org),
@@ -567,7 +593,7 @@ export async function getCloudOrganizations(): Promise<OrganizationItem[] | null
 
   // 1. Try Cloud SQL
   try {
-    const res = await fetch('/api/organization');
+    const res = await authenticatedFetch('/api/organization');
     if (res.ok) {
       const json = await res.json();
       if (Array.isArray(json.organizations) && json.organizations.length > 0) {
@@ -651,7 +677,7 @@ export async function getCloudOrganizations(): Promise<OrganizationItem[] | null
  */
 export async function deleteCloudOrganization(orgId: string): Promise<boolean> {
   try {
-    await fetch(`/api/organization/${encodeURIComponent(orgId)}`, {
+    await authenticatedFetch(`/api/organization/${encodeURIComponent(orgId)}`, {
       method: 'DELETE',
     });
   } catch (err) {
@@ -847,6 +873,7 @@ export async function saveSingleUserToCloud(u: User): Promise<boolean> {
     organizationName: u.organizationName,
     designation: u.designation,
     phone: u.phone,
+    firebaseUid: u.firebaseUid || undefined,
     metadata: {
       password: u.password,
       securityPin: u.securityPin || '1234',
@@ -863,7 +890,7 @@ export async function saveSingleUserToCloud(u: User): Promise<boolean> {
 
   let sqlOk = false;
   try {
-    const res = await fetch('/api/users/sync', {
+    const res = await authenticatedFetch('/api/users/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -919,6 +946,7 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
     organizationName: u.organizationName,
     designation: u.designation,
     phone: u.phone,
+    firebaseUid: u.firebaseUid || undefined,
     metadata: {
       password: u.password,
       securityPin: u.securityPin || '1234',
@@ -935,7 +963,7 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
 
   // 1. Sync users to Cloud SQL via Batch API (instant & atomic)
   try {
-    const batchRes = await fetch('/api/users/batch-sync', {
+    const batchRes = await authenticatedFetch('/api/users/batch-sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ users: formattedUsers }),
@@ -944,7 +972,7 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
     if (!batchRes.ok) {
       // Fallback to individual sync
       for (const payload of formattedUsers) {
-        await fetch('/api/users/sync', {
+        await authenticatedFetch('/api/users/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -995,7 +1023,8 @@ export function normalizeUserData(u: User): User {
  */
 export async function cloudLogin(
   username: string,
-  password?: string
+  password?: string,
+  firebaseUid?: string
 ): Promise<{ success: boolean; user?: User; notFound?: boolean; wrongPassword?: boolean; inactive?: boolean; message?: string }> {
   const cleanInput = (username || '').trim().toLowerCase();
   if (!cleanInput) {
@@ -1007,7 +1036,7 @@ export async function cloudLogin(
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: cleanInput, password }),
+      body: JSON.stringify({ username: cleanInput, password, firebaseUid }),
     });
     const json = await res.json();
     if (json.success && json.user) {
@@ -1102,12 +1131,14 @@ export async function getCloudUsers(): Promise<User[] | null> {
 
   // 1. Try Cloud SQL
   try {
-    const res = await fetch('/api/users');
+    const res = await authenticatedFetch('/api/users');
     if (res.ok) {
       const json = await res.json();
       if (Array.isArray(json.users) && json.users.length > 0) {
         sqlUsers = json.users.map((u: any) => ({
           id: u.uid || String(u.id),
+          uid: u.uid,
+          firebaseUid: u.firebaseUid || u.firebase_uid,
           username: u.username,
           fullName: u.fullName || u.full_name,
           email: u.email,
@@ -1214,7 +1245,7 @@ export async function lookupCloudUser(usernameOrEmail: string): Promise<User | n
 
   // 1. Try Cloud SQL lookup endpoint
   try {
-    const res = await fetch(`/api/users/lookup?q=${encodeURIComponent(clean)}`);
+    const res = await authenticatedFetch(`/api/users/lookup?q=${encodeURIComponent(clean)}`);
     if (res.ok) {
       const json = await res.json();
       if (json.success && json.user) {
@@ -1222,6 +1253,8 @@ export async function lookupCloudUser(usernameOrEmail: string): Promise<User | n
         const meta = u.metadata || {};
         return {
           id: u.uid || String(u.id),
+          uid: u.uid,
+          firebaseUid: u.firebaseUid || u.firebase_uid,
           username: u.username,
           fullName: u.fullName || u.full_name,
           email: u.email,

@@ -13,12 +13,13 @@ import {
 // Users table with Firebase Auth UID linkage
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
-  uid: text('uid').notNull().unique(), // Firebase Auth UID / ID
+  uid: text('uid').notNull().unique(), // Internal UID / User ID
+  firebaseUid: text('firebase_uid').unique(), // Firebase Auth UID
   username: text('username').notNull(),
   fullName: text('full_name').notNull(),
   email: text('email'),
   role: text('role').notNull().default('GENERAL_USER'),
-  organizationId: text('organization_id').default('org_default'),
+  organizationId: text('organization_id').references(() => organizations.id, { onDelete: 'set null' }),
   organizationName: text('organization_name'),
   designation: text('designation'),
   phone: text('phone'),

@@ -9,7 +9,8 @@ export async function getOrCreateUser(
   fullName?: string,
   role?: string,
   organizationId?: string,
-  metadata?: Record<string, any>
+  metadata?: Record<string, any>,
+  firebaseUid?: string
 ) {
   try {
     const cleanUsername = (username || email.split('@')[0] || uid).trim();
@@ -21,18 +22,22 @@ export async function getOrCreateUser(
     const cleanPhone = (metadata as any)?.phone || null;
     const cleanIsActive = (metadata as any)?.isActive !== undefined ? Boolean((metadata as any).isActive) : true;
     const cleanEmail = email ? email.trim().toLowerCase() : `${cleanUsername.toLowerCase()}@system.local`;
+    const cleanFirebaseUid = firebaseUid || (metadata as any)?.firebaseUid || null;
 
-    // 1. Check if user already exists by uid OR matching username
+    // 1. Check if user already exists by uid, firebaseUid OR matching username
+    const conditions = [
+      eq(users.uid, uid),
+      sql`lower(${users.username}) = ${cleanUsername.toLowerCase()}`,
+    ];
+    if (cleanFirebaseUid) {
+      conditions.push(eq(users.firebaseUid, cleanFirebaseUid));
+    }
+
     const existing = await withDbRetry(() =>
       db
         .select()
         .from(users)
-        .where(
-          or(
-            eq(users.uid, uid),
-            sql`lower(${users.username}) = ${cleanUsername.toLowerCase()}`
-          )
-        )
+        .where(or(...conditions))
         .limit(1)
     );
 
@@ -48,6 +53,7 @@ export async function getOrCreateUser(
           .update(users)
           .set({
             uid: uid || existingUser.uid,
+            firebaseUid: cleanFirebaseUid || existingUser.firebaseUid,
             username: cleanUsername,
             email: cleanEmail || existingUser.email,
             fullName: cleanFullName,
@@ -71,6 +77,7 @@ export async function getOrCreateUser(
           .insert(users)
           .values({
             uid,
+            firebaseUid: cleanFirebaseUid,
             email: cleanEmail,
             username: cleanUsername,
             fullName: cleanFullName,
@@ -86,6 +93,7 @@ export async function getOrCreateUser(
           .onConflictDoUpdate({
             target: users.uid,
             set: {
+              firebaseUid: cleanFirebaseUid,
               username: cleanUsername,
               email: cleanEmail,
               fullName: cleanFullName,
@@ -156,9 +164,43 @@ export async function getUserByUid(uid: string) {
   }
 }
 
+export async function getUserByFirebaseUid(firebaseUid: string) {
+  try {
+    if (!firebaseUid) return null;
+    const result = await withDbRetry(() =>
+      db.select().from(users).where(eq(users.firebaseUid, firebaseUid)).limit(1)
+    );
+    return result[0] || null;
+  } catch (error) {
+    console.error('Database query failed in getUserByFirebaseUid:', error);
+    return null;
+  }
+}
+
+export async function linkFirebaseUidToUser(userId: number, firebaseUid: string) {
+  try {
+    if (!userId || !firebaseUid) return null;
+    const updated = await withDbRetry(() =>
+      db
+        .update(users)
+        .set({
+          firebaseUid,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, userId))
+        .returning()
+    );
+    return updated[0] || null;
+  } catch (error) {
+    console.error('Database query failed in linkFirebaseUidToUser:', error);
+    return null;
+  }
+}
+
 export async function getUserByUsernameOrEmailOrUid(identifier: string) {
   try {
     const lower = identifier.trim().toLowerCase();
+    const cleanId = identifier.trim();
     const result = await withDbRetry(() =>
       db
         .select()
@@ -167,7 +209,8 @@ export async function getUserByUsernameOrEmailOrUid(identifier: string) {
           or(
             sql`lower(${users.username}) = ${lower}`,
             sql`lower(${users.email}) = ${lower}`,
-            eq(users.uid, identifier.trim())
+            eq(users.uid, cleanId),
+            eq(users.firebaseUid, cleanId)
           )
         )
         .orderBy(desc(users.updatedAt))

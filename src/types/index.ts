@@ -9,6 +9,8 @@ export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'GENERAL_USER' | 'ACCOUNTANT' |
 
 export interface User {
   id: string;
+  uid?: string;
+  firebaseUid?: string;
   username: string; // User ID / प्रयोगकर्ता आइडी
   password?: string; // पासवर्ड
   fullName: string;

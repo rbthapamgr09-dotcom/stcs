@@ -88,6 +88,7 @@ import {
   getCloudTaxReferences,
   db,
 } from '../services/cloudSyncService';
+import { auth } from '../lib/firebase';
 import { subscribeToOffices, subscribeToUsers, getOfficeByIdFromFirestore } from '../services/firestoreService';
 import { doc, onSnapshot } from 'firebase/firestore';
 import {
@@ -1733,9 +1734,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // This allows seamless login on a new device/browser or after password change on another device
     if (!found || !isLocalPasswordValid) {
       try {
-        const cloudResult = await cloudLogin(trimmedInput, password);
+        const cloudResult = await cloudLogin(trimmedInput, password, auth?.currentUser?.uid);
         if (cloudResult.success && cloudResult.user) {
           found = cloudResult.user;
+
+          if (found.isActive === false) {
+            const msg = 'यो खाता निष्क्रिय (Inactive) गरिएको छ। कृपया प्रशासकसँग सम्पर्क गर्नुहोस्।';
+            addToast('error', 'खाता निष्क्रिय', msg);
+            return { success: false, message: msg };
+          }
+
+          if (found.organizationId && found.organizationId !== 'all' && found.organizationId !== 'org_default') {
+            const org = organizations.find((o) => o.id === found!.organizationId);
+            if (org && org.isActive === false) {
+              const msg = 'यो प्रयोगकर्ता सम्बद्ध कार्यालय हाल निष्क्रिय गरिएको छ।';
+              addToast('error', 'कार्यालय निष्क्रिय', msg);
+              return { success: false, message: msg };
+            }
+          }
+
           // Update local state and cache to localStorage
           setUsers((prev) => {
             const updated = prev.filter(
@@ -1766,6 +1783,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               }).catch(() => {});
             }
           }
+        } else if (cloudResult.inactive) {
+          const msg = cloudResult.message || 'यो खाता वा सम्बद्ध कार्यालय निष्क्रिय (Inactive) गरिएको छ।';
+          addToast('error', 'खाता निष्क्रिय', msg);
+          return { success: false, message: msg };
         } else if (cloudResult.wrongPassword) {
           const attempt = recordFailedAttempt(trimmedInput);
           logSecurityEvent({
