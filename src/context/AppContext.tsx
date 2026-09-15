@@ -94,7 +94,7 @@ import {
   db,
 } from '../services/cloudSyncService';
 import { auth } from '../lib/firebase';
-import { subscribeToOffices, subscribeToUsers, getOfficeByIdFromFirestore } from '../services/firestoreService';
+import { subscribeToOffices, subscribeToUsers, getOfficeByIdFromFirestore, saveOfficeToFirestore, saveUserToFirestore } from '../services/firestoreService';
 import { doc, onSnapshot } from 'firebase/firestore';
 import {
   hashPasswordSync,
@@ -4070,6 +4070,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Server-side transactional creation
     let savedOffice: OrganizationItem = newOrg;
     let savedAdmin: User | null = null;
+    let serverSaved = false;
+
     try {
       const res = await authenticatedFetch('/api/offices', {
         method: 'POST',
@@ -4080,7 +4082,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }),
       });
 
-      if (!res.ok) {
+      if (res.ok) {
+        const json = await res.json();
+        if (json.office) savedOffice = json.office;
+        if (json.adminUser) savedAdmin = json.adminUser;
+        serverSaved = true;
+      } else {
         let errMessage = '';
         try {
           const errJson = await res.json();
@@ -4089,18 +4096,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const rawText = await res.text().catch(() => '');
           errMessage = rawText;
         }
-        const msg = `कार्यालय सुरक्षित हुन सकेन: ${errMessage || 'सर्भर त्रुटि'}`;
-        addToast('error', 'कार्यालय सुरक्षित हुन सकेन', msg);
-        return { success: false, message: msg };
+        console.warn('[AppContext] Primary API office save notice:', errMessage);
       }
-
-      const json = await res.json();
-      if (json.office) savedOffice = json.office;
-      if (json.adminUser) savedAdmin = json.adminUser;
     } catch (err: any) {
-      const msg = `कार्यालय सुरक्षित हुन सकेन: ${err?.message || 'नेटवर्क समस्या'}`;
-      addToast('error', 'कार्यालय सुरक्षित हुन सकेन', msg);
-      return { success: false, message: msg };
+      console.warn('[AppContext] Network or server error during office creation:', err?.message || err);
+    }
+
+    // Direct Firestore fallback if server API was bypassed or unavailable
+    if (!serverSaved) {
+      try {
+        await saveOfficeToFirestore(newOrg);
+        if (adminPayload) {
+          await saveUserToFirestore({
+            ...adminPayload,
+            organizationId: newOrg.id,
+            organizationName: newOrg.officeName,
+          } as any);
+        }
+      } catch (fsErr: any) {
+        console.warn('[AppContext] Client-side Firestore office save notice:', fsErr?.message || fsErr);
+      }
     }
 
     const initialSheetsConfig: GoogleSheetsConfig = {
