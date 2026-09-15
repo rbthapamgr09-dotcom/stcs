@@ -245,7 +245,7 @@ export const SettingsView: React.FC = () => {
     setShowOrgModal(true);
   };
 
-  const handleSaveOrg = (e: React.FormEvent) => {
+  const handleSaveOrg = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!orgFormData.officeName.trim()) {
       addToast('error', 'फाराम अधुरो', 'कृपया कार्यालयको नाम अनिवार्य प्रविष्ट गर्नुहोस्।');
@@ -253,7 +253,7 @@ export const SettingsView: React.FC = () => {
     }
 
     if (editingOrg) {
-      updateOrganizationDetails(editingOrg.id, {
+      const ok = await updateOrganizationDetails(editingOrg.id, {
         name: orgFormData.name,
         officeName: orgFormData.officeName,
         ministryName: orgFormData.ministryName,
@@ -274,7 +274,9 @@ export const SettingsView: React.FC = () => {
         spreadsheetUrl: orgFormData.spreadsheetUrl || (orgFormData.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${orgFormData.spreadsheetId}/edit` : ''),
         driveFolderId: orgFormData.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
       });
-      setShowOrgModal(false);
+      if (ok) {
+        setShowOrgModal(false);
+      }
     } else {
       let initialAdmin = undefined;
       if (orgFormData.createAdminUser) {
@@ -291,7 +293,7 @@ export const SettingsView: React.FC = () => {
         };
       }
 
-      const res = addOrganization(
+      const res = await addOrganization(
         {
           name: orgFormData.name || orgFormData.officeName,
           officeName: orgFormData.officeName,
@@ -329,8 +331,8 @@ export const SettingsView: React.FC = () => {
       isDangerous: true,
       confirmText: 'मेटाउनुहोस्',
       cancelText: 'रद्द गर्नुहोस्',
-      onConfirm: () => {
-        const res = deleteOrganization(orgId);
+      onConfirm: async () => {
+        const res = await deleteOrganization(orgId);
         if (res.success) {
           hideConfirmation();
         }

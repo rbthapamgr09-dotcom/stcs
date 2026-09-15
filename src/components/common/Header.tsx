@@ -18,6 +18,7 @@ import {
   EyeOff,
   ArrowLeft,
   ArrowRight,
+  RefreshCw,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { getCurrentDualDate, toNepaliDigits } from '../../utils/nepaliCalendar';
@@ -53,6 +54,8 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
     isPrivacyMasked,
     togglePrivacyMasking,
     lockScreen,
+    failedSyncQueue,
+    retryFailedSyncs,
   } = useApp();
 
   const currentDate = getCurrentDualDate();
@@ -259,6 +262,18 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
             <Cloud className="w-3.5 h-3.5 text-emerald-600" />
             <span>Firestore क्लाउड</span>
           </div>
+
+          {/* Outbox Sync Retry Button if failed items exist */}
+          {failedSyncQueue && failedSyncQueue.length > 0 && (
+            <button
+              onClick={retryFailedSyncs}
+              title={`${failedSyncQueue.length} वटा विवरण क्लाउडमा सिंक हुन बाँकी छ। पुनः सिंक गर्न क्लिक गर्नुहोस्।`}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold border bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100 shadow-xs cursor-pointer animate-pulse"
+            >
+              <RefreshCw className="w-3 h-3 text-amber-700" />
+              <span>सिंक बाँकी ({failedSyncQueue.length})</span>
+            </button>
+          )}
 
           {/* Print Button */}
           <button

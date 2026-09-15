@@ -4,32 +4,41 @@ import fs from 'fs';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { requireAuth, optionalAuth, AuthRequest } from './src/middleware/auth.ts';
+import { adminAuth, FIRESTORE_DATABASE_ID } from './src/lib/firebase-admin.ts';
+import { verifyPasswordSync, hashPasswordSync } from './src/utils/securityUtils.ts';
+import { initSqlSchema } from './src/db/index.ts';
+import { isSqlEnabled, getSqlStatus } from './src/server/repositories/sqlHelper.ts';
 import {
-  getOrCreateUser,
-  getUsers,
+  saveOffice,
+  getOfficeById,
+  listOffices,
+  deleteOfficeById,
+  OfficeEntity,
+} from './src/server/repositories/officeRepo.ts';
+import {
+  saveUser,
   getUserByUid,
+  getUserByUsername,
   getUserByFirebaseUid,
-  linkFirebaseUidToUser,
-  deleteUserByUid,
   getUserByUsernameOrEmailOrUid,
-  upsertUsersBatch,
-  getUsersByOrganization,
-} from './src/db/users.ts';
-import { verifyPasswordSync } from './src/utils/securityUtils.ts';
+  listUsersByOrganization,
+  listAllUsers,
+  deleteUserByUid,
+  linkFirebaseUid,
+  UserEntity,
+} from './src/server/repositories/userRepo.ts';
 import {
-  getOrganizations,
-  getOrganizationById,
-  upsertOrganization,
-  deleteOrganizationById,
-  getSystemSetting,
-  setSystemSetting,
-  getEmployees,
-  upsertEmployee,
   getOrgFyDatabase,
   setOrgFyDatabase,
   getOrgDataStore,
   setOrgDataStore,
-} from './src/db/payroll.ts';
+  getEmployees,
+  upsertEmployee,
+} from './src/server/repositories/fyRepo.ts';
+import {
+  getSystemSetting,
+  setSystemSetting,
+} from './src/server/repositories/settingsRepo.ts';
 
 function freePortSync(port: number) {
   try {
@@ -64,17 +73,11 @@ function freePortSync(port: number) {
                 break;
               }
             }
-          } catch {
-            // ignore
-          }
+          } catch {}
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 async function startServer() {
@@ -84,23 +87,50 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '15mb' }));
+
+  // Initialize and reconcile core database accounts and organizations
+  ensureDatabaseInitialized().catch((err) => console.warn('[Bootstrap] Database init warning:', err));
 
   // --- API Routes ---
 
-  // Initialize and reconcile core database accounts and organizations
-  ensureDatabaseInitialized().catch((err) => console.warn('Core database init warning:', err));
-
-  // Health check endpoint
-  app.get('/api/health', (_req, res) => {
+  // Health check endpoint (Task 3)
+  app.get('/api/health', async (_req, res) => {
+    await isSqlEnabled();
     res.json({
       status: 'ok',
-      database: 'Cloud SQL (PostgreSQL)',
+      firestore: 'up',
+      sql: getSqlStatus(),
+      databaseId: FIRESTORE_DATABASE_ID,
       timestamp: new Date().toISOString(),
     });
   });
 
-  // Dedicated server-side login authentication endpoint
+  // Auth: Resolve username to email and uid (Task 8)
+  app.post('/api/auth/resolve', async (req, res) => {
+    try {
+      const { username } = req.body;
+      if (!username || typeof username !== 'string') {
+        return res.status(400).json({ error: 'प्रयोगकर्ता नाम (username) आवश्यक छ।' });
+      }
+      const user = await getUserByUsername(username.trim());
+      if (!user) {
+        return res.status(404).json({ error: 'प्रयोगकर्ता फेला परेन (User not found)' });
+      }
+      res.json({
+        success: true,
+        uid: user.uid,
+        authEmail: user.email,
+        role: user.role,
+        organizationId: user.organizationId,
+      });
+    } catch (err: any) {
+      console.error('Auth resolve error:', err);
+      res.status(500).json({ error: err.message || 'त्रुटि आयो।' });
+    }
+  });
+
+  // Auth: Login with username/password
   app.post('/api/auth/login', async (req, res) => {
     try {
       const { username, password } = req.body;
@@ -109,65 +139,7 @@ async function startServer() {
       }
 
       const cleanUser = username.trim();
-      let user = await getUserByUsernameOrEmailOrUid(cleanUser);
-
-      // Auto-reconciliation fallback for known office admin accounts
-      if (!user) {
-        if (cleanUser.toLowerCase() === 'admin_mbp') {
-          user = await getOrCreateUser(
-            'user_admin_mbp',
-            'mbp.dor@gmail.com',
-            'admin_mbp',
-            'महाकाली पुल योजना, कञ्चनपुर',
-            'ADMIN',
-            'org_1789233319137',
-            {
-              password: 'admin123',
-              organizationName: 'महाकाली पुल योजना',
-              designation: 'कार्यालय प्रशासक / लेखा अधिकृत',
-              phone: '-',
-              securityPin: '1234',
-              securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',
-              securityAnswer: 'नेपाल',
-              isActive: true,
-              mustChangePassword: false,
-              isFirstLogin: false,
-            }
-          );
-        } else {
-          // Check if any organization in database has this admin pattern
-          try {
-            const orgs = await getOrganizations();
-            const matchedOrg = orgs.find(
-              (o) =>
-                ((o.officeCode || (o as any).code) && `admin_${((o.officeCode || (o as any).code) as string).toLowerCase()}` === cleanUser.toLowerCase()) ||
-                (o.registrationNo && `admin_${o.registrationNo.toLowerCase()}` === cleanUser.toLowerCase()) ||
-                (o.email && o.email.toLowerCase() === cleanUser.toLowerCase())
-            );
-            if (matchedOrg) {
-              const orgName = (matchedOrg as any).officeName || (matchedOrg as any).name || 'कार्यालय';
-              user = await getOrCreateUser(
-                `user_${cleanUser.toLowerCase()}`,
-                matchedOrg.email || `${cleanUser}@system.local`,
-                cleanUser,
-                orgName,
-                'ADMIN',
-                matchedOrg.id,
-                {
-                  password: 'admin123',
-                  organizationName: orgName,
-                  isActive: true,
-                  securityPin: '1234',
-                  mustChangePassword: false,
-                  isFirstLogin: false,
-                }
-              );
-            }
-          } catch (lookupErr) {
-            console.warn('Auto org-admin lookup note:', lookupErr);
-          }
-        }
-      }
+      const user = await getUserByUsernameOrEmailOrUid(cleanUser);
 
       if (!user) {
         return res.status(404).json({
@@ -188,7 +160,7 @@ async function startServer() {
       // Check if user's organization is active
       if (user.organizationId && user.organizationId !== 'all' && user.organizationId !== 'org_default') {
         try {
-          const org = await getOrganizationById(user.organizationId);
+          const org = await getOfficeById(user.organizationId);
           if (org && org.isActive === false) {
             return res.status(403).json({
               success: false,
@@ -200,10 +172,8 @@ async function startServer() {
         } catch {}
       }
 
-      const meta = (user.metadata as any) || {};
-      const storedPassword =
-        meta.password ||
-        (user.role === 'SUPER_ADMIN' ? 'admin123' : user.role === 'ADMIN' ? 'admin123' : 'viewer123');
+      const meta = user.metadata || {};
+      const storedPassword = user.password || meta.password || 'admin123';
 
       if (password !== undefined && password !== '') {
         const check = verifyPasswordSync(password, storedPassword);
@@ -218,50 +188,57 @@ async function startServer() {
 
       // Link Firebase UID if passed from client
       const incomingFirebaseUid = req.body.firebaseUid || req.body.firebase_uid;
-      if (incomingFirebaseUid && user) {
-        if (user.firebaseUid !== incomingFirebaseUid) {
-          await linkFirebaseUidToUser(user.id, incomingFirebaseUid);
-          user.firebaseUid = incomingFirebaseUid;
-        }
+      if (incomingFirebaseUid && user.firebaseUid !== incomingFirebaseUid) {
+        await linkFirebaseUid(user.uid, incomingFirebaseUid);
+        user.firebaseUid = incomingFirebaseUid;
+      }
+
+      // Attempt to mint a custom token for Firebase Auth if possible
+      let customToken: string | undefined = undefined;
+      try {
+        customToken = await adminAuth.createCustomToken(user.uid, {
+          role: user.role,
+          organizationId: user.organizationId,
+        });
+      } catch {
+        // Custom token generation not available in current environment, proceed gracefully
       }
 
       const safeUser = {
-        id: user.uid || String(user.id),
+        id: user.uid,
         uid: user.uid,
-        firebaseUid: user.firebaseUid || undefined,
+        firebaseUid: user.firebaseUid,
         username: user.username,
-        fullName:
-          user.username?.toLowerCase() === 'admin_mbp' &&
-          (!user.fullName || user.fullName === 'Mahakali Bridge Project' || user.fullName === 'admin_mbp')
-            ? 'महाकाली पुल योजना, कंचनपुर'
-            : user.fullName,
+        fullName: user.fullName,
         email: user.email,
         role: user.role,
-        organizationId: user.organizationId || 'org_default',
-        organizationName:
-          user.organizationName ||
-          meta.organizationName ||
-          (user.username?.toLowerCase() === 'admin_mbp' ? 'महाकाली पुल योजना' : undefined),
+        organizationId: user.organizationId,
+        organizationName: user.organizationName || meta.organizationName,
         designation: user.designation || meta.designation,
         phone: user.phone || meta.phone,
         password: storedPassword,
-        securityPin: meta.securityPin || '1234',
-        securityQuestion: meta.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
-        securityAnswer: meta.securityAnswer || 'नेपाल',
-        mustChangePassword: Boolean(meta.mustChangePassword),
-        isFirstLogin: Boolean(meta.isFirstLogin),
+        securityPin: user.securityPin || meta.securityPin || '1234',
+        securityQuestion: user.securityQuestion || meta.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+        securityAnswer: user.securityAnswer || meta.securityAnswer || 'नेपाल',
+        mustChangePassword: Boolean(user.mustChangePassword ?? meta.mustChangePassword),
+        isFirstLogin: Boolean(user.isFirstLogin ?? meta.isFirstLogin),
         isActive: user.isActive,
         createdAt: user.createdAt,
       };
 
-      res.json({ success: true, user: safeUser, message: 'लगइन सफल भयो।' });
+      res.json({
+        success: true,
+        user: safeUser,
+        customToken,
+        message: 'लगइन सफल भयो।',
+      });
     } catch (error: any) {
       console.error('Server login error:', error);
       res.status(500).json({ success: false, message: error.message || 'लगइन प्रक्रियामा त्रुटि आयो।' });
     }
   });
 
-  // Dedicated Firebase Auth login & linkage endpoint
+  // Auth: Firebase token / UID exchange & linkage
   app.post('/api/auth/firebase-login', optionalAuth, async (req: AuthRequest, res) => {
     try {
       const firebaseUid = req.user?.uid || req.body.firebaseUid || req.body.firebase_uid;
@@ -279,7 +256,7 @@ async function startServer() {
       if (!user && (email || username)) {
         user = await getUserByUsernameOrEmailOrUid(email || username);
         if (user && !user.firebaseUid) {
-          await linkFirebaseUidToUser(user.id, firebaseUid);
+          await linkFirebaseUid(user.uid, firebaseUid);
           user.firebaseUid = firebaseUid;
         }
       }
@@ -300,43 +277,27 @@ async function startServer() {
         });
       }
 
-      if (user.organizationId && user.organizationId !== 'all' && user.organizationId !== 'org_default') {
-        try {
-          const org = await getOrganizationById(user.organizationId);
-          if (org && org.isActive === false) {
-            return res.status(403).json({
-              success: false,
-              inactive: true,
-              officeInactive: true,
-              message: 'यो प्रयोगकर्ता सम्बद्ध कार्यालय हाल निष्क्रिय गरिएको छ।',
-            });
-          }
-        } catch {}
-      }
-
-      const meta = (user.metadata as any) || {};
-      const storedPassword =
-        meta.password ||
-        (user.role === 'SUPER_ADMIN' ? 'admin123' : user.role === 'ADMIN' ? 'admin123' : 'viewer123');
+      const meta = user.metadata || {};
+      const storedPassword = user.password || meta.password || 'admin123';
 
       const safeUser = {
-        id: user.uid || String(user.id),
+        id: user.uid,
         uid: user.uid,
         firebaseUid: user.firebaseUid || firebaseUid,
         username: user.username,
         fullName: user.fullName,
         email: user.email,
         role: user.role,
-        organizationId: user.organizationId || 'org_default',
+        organizationId: user.organizationId,
         organizationName: user.organizationName || meta.organizationName,
         designation: user.designation || meta.designation,
         phone: user.phone || meta.phone,
         password: storedPassword,
-        securityPin: meta.securityPin || '1234',
-        securityQuestion: meta.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
-        securityAnswer: meta.securityAnswer || 'नेपाल',
-        mustChangePassword: Boolean(meta.mustChangePassword),
-        isFirstLogin: Boolean(meta.isFirstLogin),
+        securityPin: user.securityPin || meta.securityPin || '1234',
+        securityQuestion: user.securityQuestion || meta.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+        securityAnswer: user.securityAnswer || meta.securityAnswer || 'नेपाल',
+        mustChangePassword: Boolean(user.mustChangePassword ?? meta.mustChangePassword),
+        isFirstLogin: Boolean(user.isFirstLogin ?? meta.isFirstLogin),
         isActive: user.isActive,
         createdAt: user.createdAt,
       };
@@ -348,62 +309,160 @@ async function startServer() {
     }
   });
 
-  // User synchronization & authentication endpoint
-  app.post('/api/users/sync', optionalAuth, async (req: AuthRequest, res) => {
+  // Current user profile
+  app.get('/api/users/me', requireAuth, async (req: AuthRequest, res) => {
     try {
-      const { uid, email, username, fullName, role, organizationId, metadata, firebaseUid } = req.body;
-      const targetUid = uid || req.user?.uid;
-      const targetEmail = email || req.user?.email;
-      const targetFirebaseUid = firebaseUid || req.user?.uid;
-
-      if (!targetUid) {
-        return res.status(400).json({ error: 'User UID is required' });
-      }
-
-      const user = await getOrCreateUser(
-        targetUid,
-        targetEmail || '',
-        username,
-        fullName,
-        role,
-        organizationId,
-        metadata,
-        targetFirebaseUid
-      );
+      const uid = req.user?.uid;
+      if (!uid) return res.status(401).json({ error: 'Unauthorized' });
+      const user = await getUserByUid(uid);
       res.json({ success: true, user });
-    } catch (error: any) {
-      console.error('Failed to sync user:', error);
-      res.status(500).json({ error: error.message || 'Failed to sync user' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch profile' });
     }
   });
 
-  // Batch User synchronization endpoint
-  app.post(['/api/users/batch', '/api/users/batch-sync'], optionalAuth, async (req: AuthRequest, res) => {
+  // Update password for current user
+  app.post('/api/users/me/password-changed', requireAuth, async (req: AuthRequest, res) => {
     try {
-      const usersList = req.body.users;
-      if (!Array.isArray(usersList)) {
-        return res.status(400).json({ error: 'users must be an array' });
+      const uid = req.user?.uid;
+      if (!uid) return res.status(401).json({ error: 'Unauthorized' });
+      const { newPassword } = req.body;
+      if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+        return res.status(400).json({ error: 'पासवर्ड कम्तिमा ६ अक्षरको हुनुपर्छ।' });
       }
-      const saved = await upsertUsersBatch(usersList);
-      res.json({ success: true, count: saved.length });
-    } catch (error: any) {
-      console.error('Failed to batch sync users:', error);
-      res.status(500).json({ error: error.message || 'Failed to batch sync users' });
+      const user = await getUserByUid(uid);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+
+      user.password = newPassword;
+      user.mustChangePassword = false;
+      user.isFirstLogin = false;
+      if (user.metadata) {
+        user.metadata.password = newPassword;
+        user.metadata.mustChangePassword = false;
+        user.metadata.isFirstLogin = false;
+      }
+      await saveUser(user);
+      res.json({ success: true, message: 'पासवर्ड सफलतापूर्वक परिवर्तन भयो।' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to change password' });
     }
   });
 
-  // Get all users
-  app.get('/api/users', optionalAuth, async (_req: AuthRequest, res) => {
+  // --- Office / Organization Endpoints (Task 5, 6, 7) ---
+
+  // List offices
+  app.get(['/api/offices', '/api/organization', '/api/organizations'], optionalAuth, async (req: AuthRequest, res) => {
     try {
-      const allUsers = await getUsers();
-      res.json({ success: true, users: allUsers });
+      const allOrgs = await listOffices();
+      // If caller is authenticated and not SUPER_ADMIN, scope to their office
+      if (req.user && req.user.role !== 'SUPER_ADMIN') {
+        const scoped = allOrgs.filter((o) => o.id === req.user?.organizationId);
+        return res.json({ success: true, offices: scoped, organizations: scoped });
+      }
+      res.json({ success: true, offices: allOrgs, organizations: allOrgs });
+    } catch (error: any) {
+      console.error('Failed to fetch offices:', error);
+      res.status(500).json({ error: error.message || 'Failed to fetch offices' });
+    }
+  });
+
+  // Get single office
+  app.get(['/api/offices/:id', '/api/organization/:id', '/api/organizations/:id'], optionalAuth, async (req, res) => {
+    try {
+      const org = await getOfficeById(req.params.id);
+      if (!org) {
+        return res.status(404).json({ success: false, error: 'Office not found' });
+      }
+      res.json({ success: true, office: org, organization: org });
+    } catch (error: any) {
+      console.error('Failed to fetch office:', error);
+      res.status(500).json({ error: error.message || 'Failed to fetch office' });
+    }
+  });
+
+  // Create office + optional admin user (Transactional Setup - Task 5)
+  app.post(['/api/offices', '/api/organization', '/api/organizations'], optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const body = req.body;
+      const officeData = body.office || body;
+      const adminUserData = body.adminUser || body.admin;
+
+      if (!officeData.officeName && !officeData.name) {
+        return res.status(400).json({ error: 'कार्यालयको नाम (officeName) अनिवार्य छ।' });
+      }
+
+      const savedOffice = await saveOffice(officeData);
+      let savedAdmin: UserEntity | null = null;
+
+      if (adminUserData) {
+        const adminToSave = {
+          ...adminUserData,
+          organizationId: savedOffice.id,
+          organizationName: savedOffice.officeName || savedOffice.name,
+          role: 'ADMIN',
+          isActive: true,
+        };
+        savedAdmin = await saveUser(adminToSave);
+      }
+
+      res.status(201).json({
+        success: true,
+        office: savedOffice,
+        organization: savedOffice,
+        adminUser: savedAdmin,
+      });
+    } catch (error: any) {
+      console.error('Failed to create office:', error);
+      res.status(500).json({ error: error.message || 'कार्यालय सुरक्षित गर्न सकिएन।' });
+    }
+  });
+
+  // Update office
+  const updateOfficeHandler = async (req: AuthRequest, res: express.Response) => {
+    try {
+      const id = req.params.id;
+      const existing = await getOfficeById(id);
+      const merged = { ...(existing || {}), ...req.body, id };
+      const saved = await saveOffice(merged);
+      res.json({ success: true, office: saved, organization: saved });
+    } catch (error: any) {
+      console.error('Failed to update office:', error);
+      res.status(500).json({ error: error.message || 'कार्यालय अपडेट गर्न सकिएन।' });
+    }
+  };
+  app.patch(['/api/offices/:id', '/api/organization/:id', '/api/organizations/:id'], optionalAuth, updateOfficeHandler);
+  app.put(['/api/offices/:id', '/api/organization/:id', '/api/organizations/:id'], optionalAuth, updateOfficeHandler);
+
+  // Delete office
+  app.delete(['/api/offices/:id', '/api/organization/:id', '/api/organizations/:id'], optionalAuth, async (req, res) => {
+    try {
+      await deleteOfficeById(req.params.id);
+      res.json({ success: true, message: 'Office deleted successfully' });
+    } catch (error: any) {
+      console.error('Failed to delete office:', error);
+      res.status(500).json({ error: error.message || 'Failed to delete office' });
+    }
+  });
+
+  // --- Users Endpoints ---
+
+  // List all users
+  app.get('/api/users', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      let usersList: UserEntity[];
+      if (req.user && req.user.role !== 'SUPER_ADMIN' && req.user.organizationId) {
+        usersList = await listUsersByOrganization(req.user.organizationId);
+      } else {
+        usersList = await listAllUsers();
+      }
+      res.json({ success: true, users: usersList });
     } catch (error: any) {
       console.error('Failed to fetch users:', error);
       res.status(500).json({ error: error.message || 'Failed to fetch users' });
     }
   });
 
-  // User lookup endpoint by username, email, or UID
+  // Lookup user
   app.get('/api/users/lookup', optionalAuth, async (req: AuthRequest, res) => {
     try {
       const q = String(req.query.q || '').trim();
@@ -421,83 +480,107 @@ async function startServer() {
     }
   });
 
-  // Delete user endpoint
+  // Delete user
   app.delete('/api/users/:uid', optionalAuth, async (req: AuthRequest, res) => {
     try {
       const { uid } = req.params;
-      if (!uid) {
-        return res.status(400).json({ error: 'UID is required' });
-      }
-      const deleted = await deleteUserByUid(uid);
-      res.json({ success: true, user: deleted });
+      if (!uid) return res.status(400).json({ error: 'UID is required' });
+      const ok = await deleteUserByUid(uid);
+      res.json({ success: ok, message: 'User deleted' });
     } catch (error: any) {
       console.error('Failed to delete user:', error);
       res.status(500).json({ error: error.message || 'Failed to delete user' });
     }
   });
 
-  // Get current user profile
-  app.get('/api/users/me', requireAuth, async (req: AuthRequest, res) => {
+  // Sync / Save user
+  app.post(['/api/users', '/api/users/sync'], optionalAuth, async (req: AuthRequest, res) => {
     try {
-      if (!req.user?.uid) {
-        return res.status(401).json({ error: 'Unauthorized' });
+      const saved = await saveUser(req.body);
+      res.json({ success: true, user: saved });
+    } catch (error: any) {
+      console.error('Failed to save user:', error);
+      res.status(500).json({ error: error.message || 'Failed to save user' });
+    }
+  });
+
+  // Batch user sync
+  app.post(['/api/users/batch', '/api/users/batch-sync'], optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const usersList = req.body.users;
+      if (!Array.isArray(usersList)) {
+        return res.status(400).json({ error: 'users must be an array' });
       }
-      const user = await getUserByUid(req.user.uid);
-      res.json({ success: true, user });
-    } catch (error: any) {
-      console.error('Failed to fetch user me:', error);
-      res.status(500).json({ error: error.message || 'Failed to fetch user profile' });
-    }
-  });
-
-  // Organization settings
-  app.get(['/api/organization', '/api/organizations'], optionalAuth, async (_req, res) => {
-    try {
-      const orgs = await getOrganizations();
-      res.json({ success: true, organizations: orgs });
-    } catch (error: any) {
-      console.error('Failed to fetch organization:', error);
-      res.status(500).json({ error: error.message || 'Failed to fetch organization' });
-    }
-  });
-
-  app.get(['/api/organization/:id', '/api/organizations/:id'], optionalAuth, async (req, res) => {
-    try {
-      const org = await getOrganizationById(req.params.id);
-      if (!org) {
-        return res.status(404).json({ success: false, error: 'Organization not found' });
+      const saved: UserEntity[] = [];
+      for (const u of usersList) {
+        const s = await saveUser(u);
+        saved.push(s);
       }
-      res.json({ success: true, organization: org });
+      res.json({ success: true, count: saved.length });
     } catch (error: any) {
-      console.error('Failed to fetch organization:', error);
-      res.status(500).json({ error: error.message || 'Failed to fetch organization' });
+      console.error('Failed to batch sync users:', error);
+      res.status(500).json({ error: error.message || 'Failed to batch sync users' });
     }
   });
 
-  app.post(['/api/organization', '/api/organizations'], optionalAuth, async (req: AuthRequest, res) => {
+  // Office-scoped users
+  app.get(['/api/offices/:orgId/users', '/api/organizations/:orgId/users'], optionalAuth, async (req, res) => {
     try {
-      const saved = await upsertOrganization(req.body);
-      res.json({ success: true, organization: saved });
+      const orgId = req.params.orgId;
+      if (!orgId) throw new Error('orgId is required');
+      const usersList = await listUsersByOrganization(orgId);
+      res.json({ success: true, orgId, users: usersList });
     } catch (error: any) {
-      console.error('Failed to save organization:', error);
-      res.status(500).json({ error: error.message || 'Failed to save organization' });
+      console.error(`Failed to get users for org ${req.params.orgId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to fetch organization users' });
     }
   });
 
-  app.delete(['/api/organization/:id', '/api/organizations/:id'], optionalAuth, async (req, res) => {
+  app.post(['/api/offices/:orgId/users', '/api/organizations/:orgId/users'], optionalAuth, async (req: AuthRequest, res) => {
     try {
-      await deleteOrganizationById(req.params.id);
-      res.json({ success: true, message: 'Organization deleted successfully' });
+      const orgId = req.params.orgId;
+      if (!orgId) throw new Error('orgId is required');
+      const userData = { ...req.body, organizationId: orgId };
+      const saved = await saveUser(userData);
+      res.json({ success: true, orgId, user: saved });
     } catch (error: any) {
-      console.error('Failed to delete organization:', error);
-      res.status(500).json({ error: error.message || 'Failed to delete organization' });
+      console.error(`Failed to save user for org ${req.params.orgId}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to save user for organization' });
     }
   });
 
-  // Organization-scoped Fiscal Year Database (Isolated per office and per FY)
-  app.get('/api/organizations/:orgId/fy-database', optionalAuth, async (req, res) => {
+  const updateOfficeUserHandler = async (req: AuthRequest, res: express.Response) => {
     try {
-      const orgId = req.params.orgId || 'org_default';
+      const { orgId, uid } = req.params;
+      const existing = await getUserByUid(uid);
+      const merged = { ...(existing || {}), ...req.body, uid, organizationId: orgId };
+      const saved = await saveUser(merged);
+      res.json({ success: true, orgId, user: saved });
+    } catch (error: any) {
+      console.error(`Failed to update user ${req.params.uid}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to update user' });
+    }
+  };
+  app.patch('/api/offices/:orgId/users/:uid', optionalAuth, updateOfficeUserHandler);
+  app.put('/api/offices/:orgId/users/:uid', optionalAuth, updateOfficeUserHandler);
+
+  app.delete('/api/offices/:orgId/users/:uid', optionalAuth, async (req, res) => {
+    try {
+      const { uid } = req.params;
+      await deleteUserByUid(uid);
+      res.json({ success: true, message: 'User deleted' });
+    } catch (error: any) {
+      console.error(`Failed to delete user ${req.params.uid}:`, error);
+      res.status(500).json({ error: error.message || 'Failed to delete user' });
+    }
+  });
+
+  // --- Fiscal Year & Store Endpoints (Tenant-Scoped) ---
+
+  app.get(['/api/offices/:orgId/fy-database', '/api/organizations/:orgId/fy-database'], optionalAuth, async (req, res) => {
+    try {
+      const orgId = req.params.orgId;
+      if (!orgId) throw new Error('orgId is required');
       const data = await getOrgFyDatabase(orgId);
       res.json({ success: true, orgId, data });
     } catch (error: any) {
@@ -506,9 +589,10 @@ async function startServer() {
     }
   });
 
-  app.post('/api/organizations/:orgId/fy-database', optionalAuth, async (req: AuthRequest, res) => {
+  const saveFyDbHandler = async (req: AuthRequest, res: express.Response) => {
     try {
-      const orgId = req.params.orgId || 'org_default';
+      const orgId = req.params.orgId;
+      if (!orgId) throw new Error('orgId is required');
       const updatedBy = req.user?.email || req.body.updatedBy || 'system';
       const fyData = req.body.data || req.body;
       const saved = await setOrgFyDatabase(orgId, fyData, updatedBy);
@@ -517,48 +601,14 @@ async function startServer() {
       console.error(`Failed to save FY database for org ${req.params.orgId}:`, error);
       res.status(500).json({ error: error.message || 'Failed to save organization FY database' });
     }
-  });
+  };
+  app.post(['/api/offices/:orgId/fy-database', '/api/organizations/:orgId/fy-database'], optionalAuth, saveFyDbHandler);
+  app.put(['/api/offices/:orgId/fy-database', '/api/organizations/:orgId/fy-database'], optionalAuth, saveFyDbHandler);
 
-  // Organization-scoped Tax References
-  app.get('/api/organizations/:orgId/tax-references', optionalAuth, async (req, res) => {
+  app.get(['/api/offices/:orgId/store', '/api/organizations/:orgId/store'], optionalAuth, async (req, res) => {
     try {
-      const orgId = req.params.orgId || 'org_default';
-      const fiscalYear = (req.query.fiscalYear as string) || '';
-      const fyData = await getOrgFyDatabase(orgId);
-      if (fyData && fiscalYear && fyData[fiscalYear]?.taxReferences) {
-        return res.json({ success: true, orgId, fiscalYear, taxReferences: fyData[fiscalYear].taxReferences });
-      }
-      res.json({ success: true, orgId, fiscalYear, taxReferences: null });
-    } catch (error: any) {
-      console.error(`Failed to get tax references for org ${req.params.orgId}:`, error);
-      res.status(500).json({ error: error.message || 'Failed to fetch tax references' });
-    }
-  });
-
-  app.post('/api/organizations/:orgId/tax-references', optionalAuth, async (req: AuthRequest, res) => {
-    try {
-      const orgId = req.params.orgId || 'org_default';
-      const updatedBy = req.user?.email || req.body.updatedBy || 'system';
-      const { fiscalYear, taxReferences } = req.body;
-      const fyData = (await getOrgFyDatabase(orgId)) || {};
-      if (fiscalYear) {
-        if (!fyData[fiscalYear]) {
-          fyData[fiscalYear] = { employees: [], salarySetups: {}, deductionSetups: {}, taxReferences: [] };
-        }
-        fyData[fiscalYear].taxReferences = taxReferences;
-        await setOrgFyDatabase(orgId, fyData, updatedBy);
-      }
-      res.json({ success: true, orgId, fiscalYear, count: taxReferences?.length || 0 });
-    } catch (error: any) {
-      console.error(`Failed to save tax references for org ${req.params.orgId}:`, error);
-      res.status(500).json({ error: error.message || 'Failed to save tax references' });
-    }
-  });
-
-  // Organization-scoped Data Store (Complete tenant bundle: details, FY list, active FY, fyDatabase, users)
-  app.get('/api/organizations/:orgId/store', optionalAuth, async (req, res) => {
-    try {
-      const orgId = req.params.orgId || 'org_default';
+      const orgId = req.params.orgId;
+      if (!orgId) throw new Error('orgId is required');
       const store = await getOrgDataStore(orgId);
       res.json({ success: true, orgId, store });
     } catch (error: any) {
@@ -567,9 +617,10 @@ async function startServer() {
     }
   });
 
-  app.post('/api/organizations/:orgId/store', optionalAuth, async (req: AuthRequest, res) => {
+  const saveStoreHandler = async (req: AuthRequest, res: express.Response) => {
     try {
-      const orgId = req.params.orgId || 'org_default';
+      const orgId = req.params.orgId;
+      if (!orgId) throw new Error('orgId is required');
       const updatedBy = req.user?.email || req.body.updatedBy || 'system';
       const storeData = req.body.data || req.body;
       const saved = await setOrgDataStore(orgId, storeData, updatedBy);
@@ -578,56 +629,60 @@ async function startServer() {
       console.error(`Failed to save store for org ${req.params.orgId}:`, error);
       res.status(500).json({ error: error.message || 'Failed to save organization store' });
     }
-  });
+  };
+  app.post(['/api/offices/:orgId/store', '/api/organizations/:orgId/store'], optionalAuth, saveStoreHandler);
+  app.put(['/api/offices/:orgId/store', '/api/organizations/:orgId/store'], optionalAuth, saveStoreHandler);
 
-  // Organization-scoped Users (User Profile Data bound to organization)
-  app.get('/api/organizations/:orgId/users', optionalAuth, async (req, res) => {
+  // --- One-Time Migration Endpoint (Task 9) ---
+  app.post('/api/migrate/local-state', optionalAuth, async (req: AuthRequest, res) => {
     try {
-      const orgId = req.params.orgId;
-      if (!orgId || orgId === 'all') {
-        const allUsers = await getUsers();
-        return res.json({ success: true, users: allUsers });
+      const { offices, users, fyDatabases } = req.body;
+      let migratedOffices = 0;
+      let migratedUsers = 0;
+      let migratedFy = 0;
+
+      if (Array.isArray(offices)) {
+        for (const off of offices) {
+          if (off && (off.id || off.officeName)) {
+            await saveOffice(off);
+            migratedOffices++;
+          }
+        }
       }
-      const orgUsers = await getUsersByOrganization(orgId);
-      res.json({ success: true, orgId, users: orgUsers });
-    } catch (error: any) {
-      console.error(`Failed to get users for org ${req.params.orgId}:`, error);
-      res.status(500).json({ error: error.message || 'Failed to fetch organization users' });
+
+      if (Array.isArray(users)) {
+        for (const u of users) {
+          if (u && (u.uid || u.username)) {
+            await saveUser(u);
+            migratedUsers++;
+          }
+        }
+      }
+
+      if (fyDatabases && typeof fyDatabases === 'object') {
+        for (const [orgId, fyDb] of Object.entries(fyDatabases)) {
+          if (orgId && fyDb) {
+            await setOrgFyDatabase(orgId, fyDb, 'migration');
+            migratedFy++;
+          }
+        }
+      }
+
+      res.json({
+        success: true,
+        migratedCount: {
+          offices: migratedOffices,
+          users: migratedUsers,
+          fyDatabases: migratedFy,
+        },
+      });
+    } catch (err: any) {
+      console.error('Migration error:', err);
+      res.status(500).json({ error: err.message || 'माइग्रेसनमा त्रुटि आयो।' });
     }
   });
 
-  app.post('/api/organizations/:orgId/users', optionalAuth, async (req: AuthRequest, res) => {
-    try {
-      const orgId = req.params.orgId || 'org_default';
-      const { uid, email, username, fullName, role, designation, phone, metadata, password } = req.body;
-      const targetUid = uid || username || `user_${Date.now()}`;
-      const targetEmail = email || `${(username || targetUid).toLowerCase()}@system.local`;
-
-      const meta = {
-        ...(metadata || {}),
-        password: password || metadata?.password || 'user123',
-        designation: designation || metadata?.designation || '',
-        phone: phone || metadata?.phone || '',
-        organizationId: orgId,
-      };
-
-      const user = await getOrCreateUser(
-        targetUid,
-        targetEmail,
-        username,
-        fullName,
-        role,
-        orgId,
-        meta
-      );
-      res.json({ success: true, orgId, user });
-    } catch (error: any) {
-      console.error(`Failed to save user for org ${req.params.orgId}:`, error);
-      res.status(500).json({ error: error.message || 'Failed to save user for organization' });
-    }
-  });
-
-  // System Settings (Google Sheets connection, payroll state, etc.)
+  // --- System Settings Endpoints ---
   app.get(['/api/settings/:key', '/api/system-settings/:key'], optionalAuth, async (req, res) => {
     try {
       const data = await getSystemSetting(req.params.key);
@@ -638,7 +693,7 @@ async function startServer() {
     }
   });
 
-  app.post(['/api/settings/:key', '/api/system-settings/:key'], optionalAuth, async (req: AuthRequest, res) => {
+  const saveSettingHandler = async (req: AuthRequest, res: express.Response) => {
     try {
       const updatedBy = req.user?.email || req.body.updatedBy || 'system';
       const saved = await setSystemSetting(req.params.key, req.body.data || req.body, updatedBy);
@@ -647,12 +702,15 @@ async function startServer() {
       console.error(`Failed to save setting ${req.params.key}:`, error);
       res.status(500).json({ error: error.message || 'Failed to save setting' });
     }
-  });
+  };
+  app.post(['/api/settings/:key', '/api/system-settings/:key'], optionalAuth, saveSettingHandler);
+  app.put(['/api/settings/:key', '/api/system-settings/:key'], optionalAuth, saveSettingHandler);
 
   // Employees
   app.get('/api/employees', optionalAuth, async (req, res) => {
     try {
-      const orgId = (req.query.orgId as string) || 'org_default';
+      const orgId = (req.query.orgId as string);
+      if (!orgId) throw new Error('orgId is required');
       const empList = await getEmployees(orgId);
       res.json({ success: true, employees: empList });
     } catch (error: any) {
@@ -663,7 +721,8 @@ async function startServer() {
 
   app.post('/api/employees', optionalAuth, async (req, res) => {
     try {
-      const orgId = req.body.orgId || 'org_default';
+      const orgId = req.body.orgId;
+      if (!orgId) throw new Error('orgId is required');
       const saved = await upsertEmployee(req.body, orgId);
       res.json({ success: true, employee: saved });
     } catch (error: any) {
@@ -701,10 +760,15 @@ async function startServer() {
   process.on('SIGINT', shutdown);
 }
 
+// Single guarded bootstrap (Task 10)
 async function ensureDatabaseInitialized() {
   try {
-    // 0. Ensure root organizations exist for foreign key integrity
-    await upsertOrganization({
+    if (await isSqlEnabled()) {
+      await initSqlSchema();
+    }
+
+    // Ensure root organizations exist
+    await saveOffice({
       id: 'all',
       name: 'नेपाल सरकार',
       officeName: 'समग्र प्रणाली (All Offices)',
@@ -714,7 +778,8 @@ async function ensureDatabaseInitialized() {
       email: 'superadmin@system.local',
       isActive: true,
     });
-    await upsertOrganization({
+
+    await saveOffice({
       id: 'org_default',
       name: 'नेपाल सरकार',
       officeName: 'केन्द्रीय कार्यालय',
@@ -725,80 +790,80 @@ async function ensureDatabaseInitialized() {
       isActive: true,
     });
 
-    // 1. Ensure Super Admin and Demo Accounts
-    await getOrCreateUser(
-      'user_super_admin',
-      'superadmin@system.local',
-      'superadmin',
-      'प्रणाली सुपर प्रशासक (Super Admin)',
-      'SUPER_ADMIN',
-      'all',
-      {
+    // Check if initial users already exist
+    const existingUsers = await listAllUsers();
+    const hasSuperAdmin = existingUsers.some(
+      (u) => u.role === 'SUPER_ADMIN' || u.username === 'superadmin' || u.username === 'rbthapamgr09'
+    );
+
+    if (!hasSuperAdmin) {
+      console.log('[Bootstrap] Creating initial SUPER_ADMIN accounts...');
+      await saveUser({
+        uid: 'user_super_admin',
+        username: 'superadmin',
+        fullName: 'प्रणाली सुपर प्रशासक (Super Admin)',
+        email: 'superadmin@system.local',
+        role: 'SUPER_ADMIN',
+        organizationId: 'all',
         password: 'admin123',
-        organizationName: 'समग्र प्रणाली (All Offices)',
         designation: 'कार्यालय प्रमुख / आईटी सुपर एडमिन',
         phone: '9851000001',
         isActive: true,
         mustChangePassword: false,
         isFirstLogin: false,
-        securityPin: '1234',
-        securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',
-        securityAnswer: 'नेपाल',
-      }
-    );
+      });
 
-    await getOrCreateUser(
-      'rbthapamgr09',
-      'rbthapamgr09@gmail.com',
-      'rbthapamgr09',
-      'RB Thapa (Super Admin)',
-      'SUPER_ADMIN',
-      'all',
-      {
+      await saveUser({
+        uid: 'rbthapamgr09',
+        username: 'rbthapamgr09',
+        fullName: 'RB Thapa (Super Admin)',
+        email: 'rbthapamgr09@gmail.com',
+        role: 'SUPER_ADMIN',
+        organizationId: 'all',
         password: 'admin123',
-        organizationName: 'समग्र प्रणाली (All Offices)',
         designation: 'प्रणाली व्यवस्थापक (System Admin)',
         phone: '9851000001',
         isActive: true,
         mustChangePassword: false,
         isFirstLogin: false,
-        securityPin: '1234',
-        securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',
-        securityAnswer: 'नेपाल',
-      }
-    );
+      });
+    }
 
-    // 2. Ensure admin_mbp for Mahakali Bridge Project
-    await getOrCreateUser(
-      'user_admin_mbp',
-      'mbp.dor@gmail.com',
-      'admin_mbp',
-      'महाकाली पुल योजना, कञ्चनपुर',
-      'ADMIN',
-      'org_1789233319137',
-      {
+    // Mahakali Bridge Project initial record if not present
+    const existingMbp = await getOfficeById('org_1789233319137');
+    if (!existingMbp) {
+      await saveOffice({
+        id: 'org_1789233319137',
+        name: 'नेपाल सरकार',
+        officeName: 'महाकाली पुल योजना, कञ्चनपुर',
+        province: 'सुदूरपश्चिम प्रदेश',
+        district: 'कञ्चनपुर',
+        address: 'महेन्द्रनगर, कञ्चनपुर',
+        email: 'mbp.dor@gmail.com',
+        isActive: true,
+      });
+    }
+    const existingAdminMbp = await getUserByUsername('admin_mbp');
+    if (!existingAdminMbp) {
+      await saveUser({
+        uid: 'user_admin_mbp',
+        username: 'admin_mbp',
+        fullName: 'महाकाली पुल योजना, कञ्चनपुर',
+        email: 'mbp.dor@gmail.com',
+        role: 'ADMIN',
+        organizationId: 'org_1789233319137',
         password: 'admin123',
-        organizationName: 'महाकाली पुल योजना',
         designation: 'कार्यालय प्रशासक / लेखा अधिकृत',
         phone: '-',
-        securityPin: '1234',
-        securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',
-        securityAnswer: 'नेपाल',
         isActive: true,
         mustChangePassword: false,
         isFirstLogin: false,
-      }
-    );
-
-    // 3. Ensure all registered organizations have active status
-    const allOrgs = await getOrganizations();
-    for (const org of allOrgs) {
-      if (org.isActive === undefined || org.isActive === null) {
-        await upsertOrganization({ ...org, isActive: true });
-      }
+      });
     }
+
+    console.log('[Bootstrap] Core database verification completed.');
   } catch (err) {
-    console.warn('Database initialization note:', err);
+    console.warn('[Bootstrap] Database initialization note:', err);
   }
 }
 

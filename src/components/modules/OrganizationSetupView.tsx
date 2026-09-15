@@ -123,7 +123,7 @@ export const OrganizationSetupView: React.FC = () => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // Validate all mandatory fields (Name, Office Name, Province, District, Local Level, Email)
@@ -139,8 +139,10 @@ export const OrganizationSetupView: React.FC = () => {
       return;
     }
 
-    updateOrganization(formData);
-    addToast('success', 'सुरक्षित भयो', 'कार्यालय तथा लेटरहेड विवरण र लोगो सफलतापूर्वक सुरक्षित गरियो।');
+    const ok = await updateOrganization(formData);
+    if (ok) {
+      addToast('success', 'सुरक्षित भयो', 'कार्यालय तथा लेटरहेड विवरण र लोगो सफलतापूर्वक सुरक्षित गरियो।');
+    }
   };
 
   return (

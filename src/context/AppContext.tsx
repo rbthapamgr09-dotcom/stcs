@@ -86,6 +86,8 @@ import {
   getCloudOrgUsers,
   saveCloudTaxReferences,
   getCloudTaxReferences,
+  authenticatedFetch,
+  CloudSaveResult,
   db,
 } from '../services/cloudSyncService';
 import { auth } from '../lib/firebase';
@@ -188,6 +190,15 @@ export const createBlankTaxReferencePair = (fiscalYear: string, orgId: string = 
   ];
 };
 
+export interface QueuedSyncItem {
+  id: string;
+  type: 'ORGANIZATION' | 'USER' | 'FY_CONFIG' | 'FY_DATABASE' | 'ORG_STORE' | 'SYSTEM_SETTING';
+  payload: any;
+  retryCount: number;
+  error?: string;
+  createdAt: string;
+}
+
 interface AppContextType {
   // Navigation & Preferences
   activeTab: string;
@@ -224,10 +235,15 @@ interface AppContextType {
       designation?: string;
       securityPin?: string;
     }
-  ) => { success: boolean; organization?: OrganizationItem; message: string };
-  updateOrganizationDetails: (orgId: string, orgData: Partial<OrganizationItem>) => boolean;
-  toggleOrganizationActive: (orgId: string, isActive?: boolean) => boolean;
-  deleteOrganization: (orgId: string) => { success: boolean; message: string };
+  ) => Promise<{ success: boolean; organization?: OrganizationItem; message: string }>;
+  updateOrganizationDetails: (orgId: string, orgData: Partial<OrganizationItem>) => Promise<boolean>;
+  toggleOrganizationActive: (orgId: string, isActive?: boolean) => Promise<boolean>;
+  deleteOrganization: (orgId: string) => Promise<{ success: boolean; message: string }>;
+
+  // Outbox Sync Queue
+  failedSyncQueue: QueuedSyncItem[];
+  retryFailedSyncs: () => Promise<void>;
+  addToSyncQueue: (item: Omit<QueuedSyncItem, 'id' | 'createdAt' | 'retryCount'>) => void;
 
   // Fiscal Year Management
   fiscalYears: string[];
@@ -339,7 +355,7 @@ interface AppContextType {
   getActiveTaxReference: (filingType: 'एकल' | 'दम्पत्ती') => TaxReference;
 
   // Organization & Support
-  updateOrganization: (org: Partial<OrganizationSetup>) => void;
+  updateOrganization: (org: Partial<OrganizationSetup>) => Promise<boolean>;
   supportContact: SystemSupportContact;
   updateSupportContact: (contact: Partial<SystemSupportContact>) => void;
 
@@ -1371,34 +1387,79 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, [currentUser]);
 
-  // Automatic cleanup of duplicate Organizations and Users on startup
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setOrganizations((prev) => {
-        const clean = deduplicateOrganizations(prev);
-        if (clean.length !== prev.length) {
-          try {
-            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(clean));
-          } catch {}
-          saveCloudOrganizations(clean).catch(() => {});
-        }
-        return clean;
-      });
+  // Outbox / Failed sync queue
+  const [failedSyncQueue, setFailedSyncQueue] = useState<QueuedSyncItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('stcs_failed_sync_queue');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
-      setUsers((prev) => {
-        const clean = deduplicateUsers(prev);
-        if (clean.length !== prev.length) {
-          try {
-            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(clean));
-          } catch {}
-          saveCloudUsers(clean).catch(() => {});
-        }
-        return clean;
-      });
-    }, 1500);
+  const addToSyncQueue = (item: Omit<QueuedSyncItem, 'id' | 'createdAt' | 'retryCount'>) => {
+    const queueItem: QueuedSyncItem = {
+      ...item,
+      id: `sync_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: new Date().toISOString(),
+      retryCount: 0,
+    };
+    setFailedSyncQueue((prev) => {
+      const next = [queueItem, ...prev.slice(0, 49)];
+      try {
+        localStorage.setItem('stcs_failed_sync_queue', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
 
-    return () => clearTimeout(timer);
-  }, []);
+  const retryFailedSyncs = async (): Promise<void> => {
+    if (failedSyncQueue.length === 0) return;
+    const currentQueue = [...failedSyncQueue];
+    const remaining: QueuedSyncItem[] = [];
+
+    for (const item of currentQueue) {
+      try {
+        let res: CloudSaveResult = { ok: false };
+        if (item.type === 'ORGANIZATION') {
+          res = await saveCloudOrganization(item.payload);
+        } else if (item.type === 'USER') {
+          res = await saveSingleUserToCloud(item.payload);
+        } else if (item.type === 'FY_CONFIG') {
+          res = await saveCloudFiscalYearConfig(item.payload.config);
+        } else if (item.type === 'FY_DATABASE') {
+          res = await saveCloudFyDatabase(item.payload.db, item.payload.orgId);
+        } else if (item.type === 'ORG_STORE') {
+          res = await saveCloudOrgStore(item.payload.orgId, item.payload.store);
+        }
+
+        if (!res.ok) {
+          remaining.push({
+            ...item,
+            retryCount: item.retryCount + 1,
+            error: res.error,
+          });
+        }
+      } catch (err: any) {
+        remaining.push({
+          ...item,
+          retryCount: item.retryCount + 1,
+          error: err?.message,
+        });
+      }
+    }
+
+    setFailedSyncQueue(remaining);
+    try {
+      localStorage.setItem('stcs_failed_sync_queue', JSON.stringify(remaining));
+    } catch {}
+
+    if (remaining.length === 0) {
+      addToast('success', 'सिंक सम्पन्न', 'सबै बाँकी विवरणहरू सफलतापूर्वक क्लाउडमा सिंक गरियो।');
+    } else {
+      addToast('warning', 'सिंक अधुरो', `${remaining.length} वटा विवरण अझै सिंक हुन सकेनन्। पुनः प्रयास गर्नुहोस्।`);
+    }
+  };
 
   const [auditEmployeeId, setAuditEmployeeId] = useState<string | null>(null);
   const [isUnauthorizedDomainModalOpen, setIsUnauthorizedDomainModalOpen] = useState(false);
@@ -3897,7 +3958,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     addToast('info', 'कार्यालय परिवर्तन', `${orgObj?.officeName || orgObj?.name || 'कार्यालय'} को डाटा सक्रिय गरियो।`);
   };
 
-  const addOrganization = (
+  const addOrganization = async (
     orgData: Omit<OrganizationItem, 'id' | 'createdAt'>,
     initialAdmin?: {
       username: string;
@@ -3908,7 +3969,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       designation?: string;
       securityPin?: string;
     }
-  ): { success: boolean; organization?: OrganizationItem; message: string } => {
+  ): Promise<{ success: boolean; organization?: OrganizationItem; message: string }> => {
     if (!hasPermission('MANAGE_USERS') && currentUser?.role !== 'SUPER_ADMIN') {
       const msg = 'नयाँ कार्यालय सिर्जना गर्न सुपर एडमिनको अधिकार आवश्यक पर्दछ।';
       addToast('error', 'अनाधिकृत कार्य', msg);
@@ -3922,6 +3983,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { success: false, message: msg };
     }
 
+    let adminPayload: any = null;
     if (initialAdmin && (initialAdmin.username?.trim() || initialAdmin.email?.trim())) {
       const cleanAdminUsername = (initialAdmin.username?.trim() || `admin_${Date.now().toString().slice(-4)}`).toLowerCase().replace(/\s+/g, '');
       const dupUserCheck = isDuplicateUser(cleanAdminUsername, initialAdmin.email, users);
@@ -3930,6 +3992,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addToast('error', 'डुप्लिकेट प्रयोगकर्ता', msg);
         return { success: false, message: msg };
       }
+      adminPayload = {
+        username: cleanAdminUsername,
+        password: initialAdmin.password || 'admin123',
+        fullName: initialAdmin.fullName || `${orgData.officeName} प्रशासक`,
+        email: initialAdmin.email || orgData.email || `${cleanAdminUsername}@system.local`,
+        phone: initialAdmin.phone || orgData.phone || orgData.mobile || '',
+        designation: initialAdmin.designation || 'कार्यालय प्रशासक / लेखा अधिकृत',
+        securityPin: initialAdmin.securityPin || '1234',
+        role: 'ADMIN',
+      };
     }
 
     const orgId = `org_${Date.now()}`;
@@ -3940,18 +4012,47 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       isActive: true,
     };
 
+    // Server-side transactional creation
+    let savedOffice: OrganizationItem = newOrg;
+    let savedAdmin: User | null = null;
+    try {
+      const res = await authenticatedFetch('/api/offices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          office: newOrg,
+          adminUser: adminPayload,
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        const msg = `कार्यालय सुरक्षित हुन सकेन: ${errText || 'सर्भर त्रुटि'}`;
+        addToast('error', 'कार्यालय सुरक्षित हुन सकेन', msg);
+        return { success: false, message: msg };
+      }
+
+      const json = await res.json();
+      if (json.office) savedOffice = json.office;
+      if (json.adminUser) savedAdmin = json.adminUser;
+    } catch (err: any) {
+      const msg = `कार्यालय सुरक्षित हुन सकेन: ${err?.message || 'नेटवर्क समस्या'}`;
+      addToast('error', 'कार्यालय सुरक्षित हुन सकेन', msg);
+      return { success: false, message: msg };
+    }
+
     const initialSheetsConfig: GoogleSheetsConfig = {
       ...DEFAULT_GOOGLE_SHEETS_CONFIG,
       webAppUrl: orgData.webAppUrl || '',
       spreadsheetId: orgData.spreadsheetId || '',
       spreadsheetUrl: orgData.spreadsheetUrl || '',
-      spreadsheetName: `stcs_${newOrg.officeName}`,
+      spreadsheetName: `stcs_${savedOffice.officeName}`,
       autoSync: true,
       syncMode: 'auto',
     };
 
     const newOrgStore: OrganizationDataStore = {
-      organization: { ...newOrg },
+      organization: { ...savedOffice },
       fiscalYears: DEFAULT_FY_LIST,
       activeFiscalYear: '2083/084',
       fyDatabase: {
@@ -3959,81 +4060,55 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           employees: [],
           salarySetups: {},
           deductionSetups: {},
-          taxReferences: createBlankTaxReferencePair('2083/084', orgId),
+          taxReferences: createBlankTaxReferencePair('2083/084', savedOffice.id),
         },
         '२०८१/८२': {
           employees: [],
           salarySetups: {},
           deductionSetups: {},
-          taxReferences: createBlankTaxReferencePair('२०८१/८२', orgId),
+          taxReferences: createBlankTaxReferencePair('२०८१/८२', savedOffice.id),
         },
       },
       googleSheetsConfig: initialSheetsConfig,
     };
 
     setOrganizations((prev) => {
-      const updated = deduplicateOrganizations([...prev, newOrg]);
+      const updated = deduplicateOrganizations([...prev, savedOffice]);
       try {
         localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
       } catch {}
-      saveCloudOrganizations(updated).catch(() => {});
       return updated;
     });
+
     setOrgDatabases((prev) => {
-      const updated = { ...prev, [orgId]: newOrgStore };
+      const updated = { ...prev, [savedOffice.id]: newOrgStore };
       try {
         localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(updated));
       } catch {}
       return updated;
     });
-    saveCloudOrganization(newOrg).catch((e) => console.warn('Cloud save org notice:', e));
-    saveOrgSheetsConfig(orgId, initialSheetsConfig).catch(() => {});
 
-    if (initialAdmin && (initialAdmin.username?.trim() || initialAdmin.fullName?.trim())) {
-      const cleanAdminUsername = (initialAdmin.username?.trim() || `admin_${Date.now().toString().slice(-4)}`).toLowerCase().replace(/\s+/g, '');
-      const hashedAdminPass = hashPasswordSync(initialAdmin.password || 'admin123').encoded;
-      const adminUser: User = {
-        id: `user_${Date.now() + 1}`,
-        username: cleanAdminUsername,
-        password: hashedAdminPass,
-        fullName: initialAdmin.fullName || `${newOrg.officeName} प्रशासक`,
-        role: 'ADMIN',
-        organizationId: orgId,
-        organizationName: newOrg.officeName,
-        email: initialAdmin.email || newOrg.email || `${cleanAdminUsername}@system.local`,
-        phone: initialAdmin.phone || newOrg.phone || newOrg.mobile || '',
-        designation: initialAdmin.designation || 'कार्यालय प्रशासक / लेखा अधिकृत',
-        securityPin: initialAdmin.securityPin || '1234',
-        securityQuestion: 'तपाईंको पहिलो विद्यालयको नाम के हो?',
-        securityAnswer: 'नेपाल',
-        isActive: true,
-        mustChangePassword: true,
-        isFirstLogin: true,
-        createdAt: new Date().toLocaleDateString('ne-NP'),
-      };
-      const updatedUsers = [...users.filter((u) => u.username.toLowerCase() !== adminUser.username.toLowerCase()), adminUser];
-      setUsers(updatedUsers);
-      try {
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
-      } catch {}
-      saveCloudUsers(updatedUsers).catch((e) => console.warn('Cloud save users notice:', e));
-      saveSingleUserToCloud({ ...adminUser, password: initialAdmin.password || 'admin123' }).catch((e) =>
-        console.warn('Cloud save admin user notice:', e)
-      );
-      triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
+    if (savedAdmin) {
+      setUsers((prev) => {
+        const updatedUsers = [...prev.filter((u) => u.username.toLowerCase() !== savedAdmin!.username.toLowerCase()), savedAdmin!];
+        try {
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+        } catch {}
+        return updatedUsers;
+      });
     }
 
     addToast(
       'success',
       'कार्यालय दर्ता भयो',
-      `'${newOrg.officeName}' सफलतापूर्वक दर्ता गरियो${
-        initialAdmin?.username ? ` र एडमिन प्रयोगकर्ता '${initialAdmin.username}' सिर्जना गरियो` : ''
+      `'${savedOffice.officeName}' सफलतापूर्वक दर्ता गरियो${
+        savedAdmin?.username ? ` र एडमिन प्रयोगकर्ता '${savedAdmin.username}' सिर्जना गरियो` : ''
       }।`
     );
-    return { success: true, organization: newOrg, message: 'कार्यालय सफलतापूर्वक सिर्जना गरियो।' };
+    return { success: true, organization: savedOffice, message: 'कार्यालय सफलतापूर्वक सिर्जना गरियो।' };
   };
 
-  const updateOrganizationDetails = (orgId: string, orgData: Partial<OrganizationItem>): boolean => {
+  const updateOrganizationDetails = async (orgId: string, orgData: Partial<OrganizationItem>): Promise<boolean> => {
     if (!hasPermission('MANAGE_SETTINGS') && currentUser?.role !== 'SUPER_ADMIN') {
       addToast('error', 'अनाधिकृत कार्य', 'कार्यालय विवरण परिमार्जन गर्न सुपर एडमिन वा एडमिनको अधिकार आवश्यक छ।');
       return false;
@@ -4047,16 +4122,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
+    try {
+      const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orgData),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        addToast('error', 'कार्यालय सुरक्षित हुन सकेन', errText || 'सर्भरमा अपडेट गर्न सकिएन।');
+        return false;
+      }
+    } catch (e: any) {
+      addToast('error', 'कार्यालय सुरक्षित हुन सकेन', e?.message || 'नेटवर्क त्रुटि आयो।');
+      return false;
+    }
+
     setOrganizations((prev) => {
       const updated = prev.map((o) => (o.id === orgId ? { ...o, ...orgData } : o));
-      saveCloudOrganizations(updated).catch(() => {});
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
+      } catch {}
       return updated;
     });
-
-    const existingOrg = organizations.find((o) => o.id === orgId);
-    if (existingOrg) {
-      saveCloudOrganization({ ...existingOrg, ...orgData, id: orgId }).catch(() => {});
-    }
 
     if (orgId === activeOrganizationId) {
       setOrganization((prev) => ({ ...prev, ...orgData }));
@@ -4077,7 +4165,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return true;
   };
 
-  const toggleOrganizationActive = (orgId: string, isActive?: boolean): boolean => {
+  const toggleOrganizationActive = async (orgId: string, isActive?: boolean): Promise<boolean> => {
     if (!hasPermission('MANAGE_SETTINGS') && currentUser?.role !== 'SUPER_ADMIN') {
       addToast('error', 'अनाधिकृत कार्य', 'कार्यालयको अवस्था (सक्रिय/निष्क्रिय) परिवर्तन गर्न सुपर एडमिन वा एडमिनको अधिकार आवश्यक छ।');
       return false;
@@ -4091,20 +4179,34 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const newIsActive = isActive !== undefined ? isActive : !targetOrg.isActive;
 
-    // 1. Update organizations list without affecting other organizations
+    try {
+      const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: newIsActive }),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        addToast('error', 'अवस्था परिवर्तन हुन सकेन', errText || 'सर्भरमा अपडेट गर्न सकिएन।');
+        return false;
+      }
+    } catch (e: any) {
+      addToast('error', 'अवस्था परिवर्तन हुन सकेन', e?.message || 'नेटवर्क त्रुटि आयो।');
+      return false;
+    }
+
+    // Update state and cache
     setOrganizations((prev) => {
       const updated = prev.map((o) => (o.id === orgId ? { ...o, isActive: newIsActive } : o));
       try {
         localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
       } catch {}
-      saveCloudOrganizations(updated).catch(() => {});
       return updated;
     });
 
-    // 2. Update specific organization store in orgDatabases
     setOrgDatabases((prev) => {
       if (!prev[orgId]) return prev;
-      const updated = {
+      return {
         ...prev,
         [orgId]: {
           ...prev[orgId],
@@ -4114,19 +4216,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           },
         },
       };
-      try {
-        localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(updated));
-      } catch {}
-      return updated;
     });
 
-    // 3. If currently active organization, update single active organization state
     if (orgId === activeOrganizationId) {
       setOrganization((prev) => ({ ...prev, isActive: newIsActive }));
     }
-
-    // 4. Save to cloud
-    saveCloudOrganization({ ...targetOrg, isActive: newIsActive }).catch(() => {});
 
     addToast(
       newIsActive ? 'success' : 'info',
@@ -4136,7 +4230,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return true;
   };
 
-  const deleteOrganization = (orgId: string): { success: boolean; message: string } => {
+  const deleteOrganization = async (orgId: string): Promise<{ success: boolean; message: string }> => {
     if (currentUser?.role !== 'SUPER_ADMIN') {
       const msg = 'कार्यालय मेटाउन केवल सुपर एडमिनलाई मात्र अधिकार छ।';
       addToast('error', 'अनाधिकृत कार्य', msg);
@@ -4154,6 +4248,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { success: false, message: 'कार्यालय फेला परेन।' };
     }
 
+    try {
+      const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        const msg = `कार्यालय मेटाउन सकिएन: ${errText || 'सर्भर त्रुटि'}`;
+        addToast('error', 'मेटाउन असफल', msg);
+        return { success: false, message: msg };
+      }
+    } catch (err: any) {
+      const msg = `कार्यालय मेटाउन सकिएन: ${err?.message || 'नेटवर्क समस्या'}`;
+      addToast('error', 'मेटाउन असफल', msg);
+      return { success: false, message: msg };
+    }
+
     // If active org is being deleted, switch to another first
     if (activeOrganizationId === orgId) {
       const nextOrg = organizations.find((o) => o.id !== orgId);
@@ -4164,13 +4274,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setOrganizations((prev) => {
       const filtered = prev.filter((o) => o.id !== orgId);
-      saveCloudOrganizations(filtered).catch(() => {});
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(filtered));
+      } catch {}
       return filtered;
     });
-    deleteCloudOrganization(orgId).catch(() => {});
     setOrgDatabases((prev) => {
       const copy = { ...prev };
       delete copy[orgId];
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(copy));
+      } catch {}
       return copy;
     });
 
@@ -4196,26 +4310,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch {}
 
     // Persist to Cloud SQL and Firestore across all devices
-    saveCloudSupportContact(updated, currentUser?.username || 'admin').catch((err) => {
+    saveCloudSupportContact(updated, currentUser?.username || 'admin').then((res) => {
+      if (!res.ok) {
+        addToSyncQueue({ type: 'SYSTEM_SETTING', payload: updated, error: res.error });
+      }
+    }).catch((err) => {
       console.warn('Could not save support contact to cloud:', err);
     });
 
     addToast('success', 'सम्पर्क विवरण सुरक्षित भयो', 'लगइन पृष्ठ तथा सहायता सन्देशको सम्पर्क विवरण सफलतापूर्वक सुरक्षित गरियो।');
   };
 
-  const updateOrganization = (org: Partial<OrganizationSetup>) => {
+  const updateOrganization = async (org: Partial<OrganizationSetup>): Promise<boolean> => {
     if (!hasPermission('MANAGE_SETTINGS')) {
       addToast('error', 'अनाधिकृत कार्य', 'कार्यालय विवरण परिवर्तन गर्न एडमिनको अधिकार आवश्यक पर्दछ।');
-      return;
+      return false;
     }
-    const updatedOrg = { ...organization, ...org };
-    setOrganization(updatedOrg);
-    updateOrganizationDetails(activeOrganizationId, org);
-
-    // Auto-sync immediately to Google Sheets
-    triggerAutoSyncOnSave({
-      overrideOrganization: updatedOrg,
-    });
+    const success = await updateOrganizationDetails(activeOrganizationId, org);
+    if (success) {
+      const updatedOrg = { ...organization, ...org };
+      setOrganization(updatedOrg);
+      // Auto-sync immediately to Google Sheets
+      triggerAutoSyncOnSave({
+        overrideOrganization: updatedOrg,
+      });
+      return true;
+    }
+    return false;
   };
 
   const updateGoogleSheetsConfig = (cfg: Partial<GoogleSheetsConfig>) => {
@@ -5530,6 +5651,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateOrganizationDetails,
         toggleOrganizationActive,
         deleteOrganization,
+        failedSyncQueue,
+        retryFailedSyncs,
+        addToSyncQueue,
         supportContact,
         updateSupportContact,
         fiscalYears,

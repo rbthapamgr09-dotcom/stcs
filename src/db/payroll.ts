@@ -33,7 +33,10 @@ export async function getOrganizationById(id: string) {
 
 export async function upsertOrganization(data: any) {
   try {
-    const orgId = data.id || 'org_default';
+    if (!data.id) {
+      throw new Error('Organization id is required for database operations');
+    }
+    const orgId = data.id;
     const result = await withDbRetry(() =>
       db
         .insert(organizations)
@@ -174,7 +177,8 @@ export async function setSystemSetting(key: string, data: any, updatedBy?: strin
 }
 
 // Employees
-export async function getEmployees(orgId: string = 'org_default') {
+export async function getEmployees(orgId: string) {
+  if (!orgId) throw new Error('orgId is required for all database operations');
   try {
     return await withDbRetry(() =>
       db.select().from(employees).where(eq(employees.orgId, orgId))
@@ -185,7 +189,8 @@ export async function getEmployees(orgId: string = 'org_default') {
   }
 }
 
-export async function upsertEmployee(emp: any, orgId: string = 'org_default') {
+export async function upsertEmployee(emp: any, orgId: string) {
+  if (!orgId) throw new Error('orgId is required for all database operations');
   try {
     const result = await withDbRetry(() =>
       db
@@ -266,7 +271,8 @@ export async function upsertEmployee(emp: any, orgId: string = 'org_default') {
 }
 
 // Organization-scoped Fiscal Year Database (Isolated per office and per FY)
-export async function getOrgFyDatabase(orgId: string = 'org_default') {
+export async function getOrgFyDatabase(orgId: string) {
+  if (!orgId) throw new Error('orgId is required');
   try {
     const key = `fy_database_${orgId}`;
     const result = await getSystemSetting(key);
@@ -277,7 +283,8 @@ export async function getOrgFyDatabase(orgId: string = 'org_default') {
   }
 }
 
-export async function setOrgFyDatabase(orgId: string = 'org_default', data: any, updatedBy?: string) {
+export async function setOrgFyDatabase(orgId: string, data: any, updatedBy?: string) {
+  if (!orgId) throw new Error('orgId is required');
   try {
     const key = `fy_database_${orgId}`;
     return await setSystemSetting(key, data, updatedBy);
@@ -288,7 +295,8 @@ export async function setOrgFyDatabase(orgId: string = 'org_default', data: any,
 }
 
 // Full Organization Isolated Data Store (org, fiscalYears, activeFy, fyDatabase, users, sheetsConfig)
-export async function getOrgDataStore(orgId: string = 'org_default') {
+export async function getOrgDataStore(orgId: string) {
+  if (!orgId) throw new Error('orgId is required');
   try {
     const key = `org_store_${orgId}`;
     const result = await getSystemSetting(key);
@@ -299,7 +307,8 @@ export async function getOrgDataStore(orgId: string = 'org_default') {
   }
 }
 
-export async function setOrgDataStore(orgId: string = 'org_default', data: any, updatedBy?: string) {
+export async function setOrgDataStore(orgId: string, data: any, updatedBy?: string) {
+  if (!orgId) throw new Error('orgId is required');
   try {
     const key = `org_store_${orgId}`;
     return await setSystemSetting(key, data, updatedBy);

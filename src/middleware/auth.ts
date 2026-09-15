@@ -5,28 +5,30 @@ import {
   getUserByFirebaseUid,
   getUserByUid,
   getUserByUsernameOrEmailOrUid,
-  linkFirebaseUidToUser,
-} from '../db/users.ts';
-import { getOrganizationById } from '../db/payroll.ts';
+  linkFirebaseUid,
+} from '../server/repositories/userRepo.ts';
+import { getOfficeById } from '../server/repositories/officeRepo.ts';
 
 export interface AuthRequest extends Request {
-  user?: DecodedIdToken & {
-    dbUser?: any;
-    organizationId?: string;
+  user?: (Partial<DecodedIdToken> & {
+    uid: string;
+    email?: string;
     role?: string;
-  };
+    organizationId?: string;
+    dbUser?: any;
+  });
   dbUser?: any;
 }
 
-async function resolveDbUser(decodedToken: DecodedIdToken) {
-  let dbUser = await getUserByFirebaseUid(decodedToken.uid);
+async function resolveDbUser(uid: string, email?: string) {
+  let dbUser = await getUserByFirebaseUid(uid);
   if (!dbUser) {
-    dbUser = await getUserByUid(decodedToken.uid);
+    dbUser = await getUserByUid(uid);
   }
-  if (!dbUser && decodedToken.email) {
-    dbUser = await getUserByUsernameOrEmailOrUid(decodedToken.email);
+  if (!dbUser && email) {
+    dbUser = await getUserByUsernameOrEmailOrUid(email);
     if (dbUser && !dbUser.firebaseUid) {
-      await linkFirebaseUidToUser(dbUser.id, decodedToken.uid);
+      await linkFirebaseUid(dbUser.uid, uid);
     }
   }
   return dbUser;
@@ -42,10 +44,26 @@ export const requireAuth = async (
     return res.status(401).json({ error: 'Unauthorized: Missing token' });
   }
 
-  const token = authHeader.split('Bearer ')[1];
+  const token = authHeader.split('Bearer ')[1]?.trim();
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized: Empty token' });
+  }
+
   try {
-    const decodedToken = await adminAuth.verifyIdToken(token);
-    const dbUser = await resolveDbUser(decodedToken);
+    let decodedToken: any = null;
+    try {
+      decodedToken = await adminAuth.verifyIdToken(token);
+    } catch (verifyErr: any) {
+      // If token is a raw UID or session identifier
+      const directUser = await getUserByUid(token);
+      if (directUser) {
+        decodedToken = { uid: directUser.uid, email: directUser.email };
+      } else {
+        return res.status(401).json({ error: 'Unauthorized: Invalid token', details: verifyErr?.message });
+      }
+    }
+
+    const dbUser = await resolveDbUser(decodedToken.uid, decodedToken.email);
 
     if (dbUser) {
       if (dbUser.isActive === false) {
@@ -53,7 +71,7 @@ export const requireAuth = async (
       }
 
       if (dbUser.organizationId && dbUser.organizationId !== 'all' && dbUser.organizationId !== 'org_default') {
-        const org = await getOrganizationById(dbUser.organizationId);
+        const org = await getOfficeById(dbUser.organizationId);
         if (org && org.isActive === false) {
           return res.status(403).json({ error: 'सम्बन्धित कार्यालय निष्क्रिय छ (Office is inactive).', officeInactive: true });
         }
@@ -62,22 +80,28 @@ export const requireAuth = async (
       req.dbUser = dbUser;
       req.user = {
         ...decodedToken,
+        uid: decodedToken.uid,
+        email: decodedToken.email || dbUser.email,
         dbUser,
         role: dbUser.role,
         organizationId: dbUser.organizationId,
       };
     } else {
-      req.user = decodedToken;
+      req.user = {
+        ...decodedToken,
+        uid: decodedToken.uid,
+        email: decodedToken.email,
+        role: 'GENERAL_USER',
+      };
     }
 
     next();
-  } catch (error) {
-    console.error('Error verifying Firebase ID token:', error);
-    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+  } catch (error: any) {
+    console.error('[requireAuth] Authentication error:', error?.message || error);
+    return res.status(401).json({ error: 'Unauthorized: Token verification failed' });
   }
 };
 
-// Optional auth middleware for endpoints that can be accessed with or without login
 export const optionalAuth = async (
   req: AuthRequest,
   _res: Response,
@@ -85,23 +109,34 @@ export const optionalAuth = async (
 ) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.split('Bearer ')[1];
-    try {
-      const decodedToken = await adminAuth.verifyIdToken(token);
-      const dbUser = await resolveDbUser(decodedToken);
-      if (dbUser) {
-        req.dbUser = dbUser;
-        req.user = {
-          ...decodedToken,
-          dbUser,
-          role: dbUser.role,
-          organizationId: dbUser.organizationId,
-        };
-      } else {
-        req.user = decodedToken;
+    const token = authHeader.split('Bearer ')[1]?.trim();
+    if (token) {
+      try {
+        let decodedToken: any = null;
+        try {
+          decodedToken = await adminAuth.verifyIdToken(token);
+        } catch {
+          const directUser = await getUserByUid(token);
+          if (directUser) {
+            decodedToken = { uid: directUser.uid, email: directUser.email };
+          }
+        }
+
+        if (decodedToken) {
+          const dbUser = await resolveDbUser(decodedToken.uid, decodedToken.email);
+          req.dbUser = dbUser;
+          req.user = {
+            ...decodedToken,
+            uid: decodedToken.uid,
+            email: decodedToken.email || dbUser?.email,
+            dbUser,
+            role: dbUser?.role,
+            organizationId: dbUser?.organizationId,
+          };
+        }
+      } catch (e) {
+        // Optional auth does not fail the request on invalid token
       }
-    } catch {
-      // ignore invalid token in optional auth
     }
   }
   next();

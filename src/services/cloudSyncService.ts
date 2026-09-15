@@ -40,15 +40,20 @@ export async function authenticatedFetch(url: string, init?: RequestInit): Promi
   });
 }
 
+export interface CloudSaveResult {
+  ok: boolean;
+  error?: string;
+}
+
 /**
  * Persists active fiscal year and fiscal year list across Cloud SQL and Firestore
  */
 export async function saveCloudFiscalYearConfig(data: {
   activeFiscalYear: string;
   fiscalYears: string[];
-}): Promise<boolean> {
+}): Promise<CloudSaveResult> {
   try {
-    await fetch('/api/system-settings/active_fiscal_year', {
+    const res = await authenticatedFetch('/api/system-settings/active_fiscal_year', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -58,68 +63,38 @@ export async function saveCloudFiscalYearConfig(data: {
         },
       }),
     });
-  } catch (sqlErr) {
-    console.warn('Could not save active FY to Cloud SQL API:', sqlErr);
-  }
-
-  if (canWriteFirestore()) {
-    try {
-      const configDocRef = doc(db, CONNECTIONS_COLLECTION, MAIN_CONFIG_DOC);
-      await setDoc(
-        configDocRef,
-        {
-          activeFiscalYear: data.activeFiscalYear,
-          fiscalYears: data.fiscalYears,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
-      return true;
-    } catch (err) {
-      handleFirestoreWriteError(err, 'saveCloudFiscalYearConfig');
+    if (!res.ok) {
+      const errText = await res.text();
+      return { ok: false, error: errText || 'Failed to save fiscal year config' };
     }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Network error saving fiscal year config' };
   }
-  return true;
 }
 
 /**
- * Persists full Fiscal Year isolated database to Cloud SQL & Firestore for a specific Organization
+ * Persists full Fiscal Year isolated database to backend for a specific Organization
  */
-export async function saveCloudFyDatabase(fyDb: Record<string, any>, orgId: string = 'org_default'): Promise<boolean> {
+export async function saveCloudFyDatabase(
+  fyDb: Record<string, any>,
+  orgId: string = 'org_default'
+): Promise<CloudSaveResult> {
   const targetOrg = orgId || 'org_default';
   try {
-    await fetch(`/api/organizations/${encodeURIComponent(targetOrg)}/fy-database`, {
+    const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(targetOrg)}/fy-database`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data: fyDb }),
     });
-  } catch (sqlErr) {
-    console.warn(`Could not save FY Database for ${targetOrg} to Cloud SQL:`, sqlErr);
-  }
-
-  if (targetOrg === 'org_default') {
-    try {
-      await fetch('/api/system-settings/fy_database', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: fyDb }),
-      });
-    } catch {}
-  }
-
-  if (canWriteFirestore()) {
-    try {
-      const officeDocRef = doc(db, 'offices', targetOrg, 'fiscal_years', 'all_years');
-      await setDoc(officeDocRef, { fyDatabase: fyDb, orgId: targetOrg, updatedAt: new Date().toISOString() }, { merge: true });
-
-      const docRef = doc(db, CONNECTIONS_COLLECTION, `fy_database_${targetOrg}`);
-      await setDoc(docRef, { fyDatabase: fyDb, orgId: targetOrg, updatedAt: new Date().toISOString() }, { merge: true });
-      return true;
-    } catch (err) {
-      handleFirestoreWriteError(err, `saveCloudFyDatabase_${targetOrg}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      return { ok: false, error: errText || 'Failed to save FY database' };
     }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Network error saving FY database' };
   }
-  return true;
 }
 
 /**
@@ -127,9 +102,8 @@ export async function saveCloudFyDatabase(fyDb: Record<string, any>, orgId: stri
  */
 export async function getCloudFyDatabase(orgId: string = 'org_default'): Promise<Record<string, any> | null> {
   const targetOrg = orgId || 'org_default';
-  // 1. Try Cloud SQL organization-specific endpoint
   try {
-    const res = await fetch(`/api/organizations/${encodeURIComponent(targetOrg)}/fy-database`);
+    const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(targetOrg)}/fy-database`);
     if (res.ok) {
       const json = await res.json();
       const d = json.data?.data || json.data;
@@ -138,75 +112,32 @@ export async function getCloudFyDatabase(orgId: string = 'org_default'): Promise
       }
     }
   } catch (err) {}
-
-  // 1b. Fallback to generic endpoint if default org
-  if (targetOrg === 'org_default') {
-    try {
-      const res = await fetch('/api/system-settings/fy_database');
-      if (res.ok) {
-        const json = await res.json();
-        const d = json.data?.data || json.data;
-        if (d && typeof d === 'object' && Object.keys(d).length > 0) {
-          return d;
-        }
-      }
-    } catch (err) {}
-  }
-
-  // 2. Try Firestore multi-tenant subcollection
-  try {
-    const officeDocRef = doc(db, 'offices', targetOrg, 'fiscal_years', 'all_years');
-    const snap = await getDoc(officeDocRef);
-    if (snap.exists()) {
-      const d = snap.data();
-      if (d?.fyDatabase && typeof d.fyDatabase === 'object') {
-        return d.fyDatabase;
-      }
-    }
-  } catch (err) {}
-
-  // 3. Try Firestore system_connections
-  try {
-    const docRef = doc(db, CONNECTIONS_COLLECTION, `fy_database_${targetOrg}`);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const d = snap.data();
-      if (d?.fyDatabase && typeof d.fyDatabase === 'object') {
-        return d.fyDatabase;
-      }
-    }
-  } catch (err) {}
-
   return null;
 }
 
 /**
  * Persists the entire organization data store (org, FYs, active FY, fyDatabase, users, sheetsConfig)
  */
-export async function saveCloudOrgStore(orgId: string, store: any): Promise<boolean> {
-  if (!orgId) return false;
+export async function saveCloudOrgStore(orgId: string, store: any): Promise<CloudSaveResult> {
+  if (!orgId) return { ok: false, error: 'orgId is required' };
   try {
-    await fetch(`/api/organizations/${encodeURIComponent(orgId)}/store`, {
+    const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}/store`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data: store }),
     });
-  } catch (err) {
-    console.warn(`Failed to save org store for ${orgId} to Cloud SQL:`, err);
-  }
-
-  if (canWriteFirestore()) {
-    try {
-      const docRef = doc(db, 'offices', orgId);
-      await setDoc(docRef, { ...store.organization, updatedAt: new Date().toISOString() }, { merge: true });
-      const storeRef = doc(db, CONNECTIONS_COLLECTION, `org_store_${orgId}`);
-      await setDoc(storeRef, { store, orgId, updatedAt: new Date().toISOString() }, { merge: true });
-    } catch (err) {
-      handleFirestoreWriteError(err, `saveCloudOrgStore_${orgId}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      return { ok: false, error: errText || 'Failed to save organization store' };
     }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Network error saving store' };
   }
-  return true;
 }
+
+export const saveCloudDataStore = saveCloudOrgStore;
+
 
 /**
  * Retrieves the entire organization data store from Cloud SQL & Firestore
@@ -468,9 +399,9 @@ const ORGANIZATIONS_COLLECTION = 'system_organizations';
 const MAIN_ORGS_DOC = 'registered_offices';
 
 /**
- * Persists a single organization to Cloud SQL and Firestore
+ * Persists a single organization to backend (Firestore + SQL mirror)
  */
-export async function saveCloudOrganization(org: OrganizationItem): Promise<boolean> {
+export async function saveCloudOrganization(org: OrganizationItem): Promise<CloudSaveResult> {
   const payload = {
     id: org.id,
     name: org.name || 'नेपाल सरकार',
@@ -508,169 +439,76 @@ export async function saveCloudOrganization(org: OrganizationItem): Promise<bool
     createdAt: org.createdAt || new Date().toISOString(),
   };
 
-  // 1. Sync to Cloud SQL via /api/organization
   try {
-    await authenticatedFetch('/api/organization', {
-      method: 'POST',
+    const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(org.id)}`, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-  } catch (sqlErr) {
-    console.warn('Could not save organization to Cloud SQL API:', sqlErr);
-  }
 
-  // 2. Sync to Firestore
-  if (canWriteFirestore()) {
-    try {
-      const orgDocRef = doc(db, ORGANIZATIONS_COLLECTION, org.id);
-      await setDoc(orgDocRef, { ...payload, updatedAt: new Date().toISOString() }, { merge: true });
-
-      // Also ensure master list doc is kept updated
-      const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
-      const snap = await getDoc(listDocRef);
-      let currentOrgs: OrganizationItem[] = [];
-      if (snap.exists() && Array.isArray(snap.data()?.organizations)) {
-        currentOrgs = snap.data().organizations;
+    if (!res.ok) {
+      if (res.status === 404) {
+        const postRes = await authenticatedFetch('/api/offices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ office: payload }),
+        });
+        if (!postRes.ok) {
+          const errText = await postRes.text();
+          return { ok: false, error: errText || 'Failed to save organization' };
+        }
+      } else {
+        const errText = await res.text();
+        return { ok: false, error: errText || 'Failed to update organization' };
       }
-      const filtered = currentOrgs.filter((item) => item.id !== org.id);
-      filtered.push(org);
-      await setDoc(listDocRef, {
-        organizations: filtered,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-
-      // Mirror to standalone office doc in Firestore
-      saveOfficeToFirestore(org).catch(() => {});
-
-      return true;
-    } catch (err) {
-      handleFirestoreWriteError(err, 'saveCloudOrganization');
-      saveOfficeToFirestore(org).catch(() => {});
-      return true;
     }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Network error saving organization' };
   }
-  return true;
 }
 
 /**
- * Persists the entire organizations list to Cloud SQL and Firestore
+ * Persists organizations list to backend
  */
-export async function saveCloudOrganizations(orgs: OrganizationItem[]): Promise<boolean> {
+export async function saveCloudOrganizations(orgs: OrganizationItem[]): Promise<CloudSaveResult> {
   const cleanOrgs = deduplicateOrganizations(orgs);
-  // 1. Save individually to Cloud SQL
-  for (const org of cleanOrgs) {
-    try {
-      await authenticatedFetch('/api/organization', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(org),
-      });
-    } catch {}
-  }
+  let failed = 0;
+  let lastError = '';
 
-  // 2. Save full array to Firestore
-  if (canWriteFirestore()) {
-    try {
-      const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
-      await setDoc(listDocRef, {
-        organizations: cleanOrgs,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-      return true;
-    } catch (err) {
-      handleFirestoreWriteError(err, 'saveCloudOrganizations');
-      return true;
+  for (const org of cleanOrgs) {
+    const res = await saveCloudOrganization(org);
+    if (!res.ok) {
+      failed++;
+      lastError = res.error || '';
     }
   }
-  return true;
+
+  if (failed > 0) {
+    return { ok: false, error: `${failed} organizations failed to sync. Last error: ${lastError}` };
+  }
+  return { ok: true };
 }
 
 /**
- * Retrieves all registered organizations from Cloud SQL or Firestore
+ * Retrieves all registered organizations from backend (Firestore + SQL)
  */
 export async function getCloudOrganizations(): Promise<OrganizationItem[] | null> {
-  let resultOrgs: OrganizationItem[] = [];
-
-  // 1. Try Cloud SQL
   try {
-    const res = await authenticatedFetch('/api/organization');
+    const res = await authenticatedFetch('/api/offices');
     if (res.ok) {
       const json = await res.json();
-      if (Array.isArray(json.organizations) && json.organizations.length > 0) {
-        resultOrgs = json.organizations.map((o: any) => ({
-          id: o.id || 'org_default',
-          name: o.name || 'नेपाल सरकार',
-          officeName: o.officeName || o.office_name || '',
-          officeCode: o.officeCode || o.office_code || '',
-          code: o.officeCode || o.office_code || '',
-          ministryName: o.ministryName || o.ministry_name || '',
-          departmentName: o.departmentName || o.department_name || '',
-          parentBodyName: o.parentBodyName || o.parent_body_name || '',
-          province: o.province || 'बागमती प्रदेश',
-          district: o.district || 'काठमाडौं',
-          localLevel: o.localLevel || o.local_level || '',
-          address: o.address || '',
-          email: o.email || '',
-          phone: o.phone || '',
-          mobile: o.mobile || '',
-          whatsapp: o.whatsapp || '',
-          website: o.website || '',
-          panNumber: o.panNumber || o.pan_number || '',
-          pan: o.panNumber || o.pan_number || '',
-          registrationNo: o.registrationNo || o.registration_no || '',
-          authorizedPersonName: o.authorizedPersonName || o.authorized_person_name || '',
-          authorizedPersonDesignation: o.authorizedPersonDesignation || o.authorized_person_designation || '',
-          currentFiscalYear: o.currentFiscalYear || o.current_fiscal_year || '२०८१/८२',
-          logoUrl: o.logoUrl || o.logo_url || '',
-          signatureUrl: o.signatureUrl || o.signature_url || '',
-          headerText: o.headerText || o.header_text || '',
-          footerText: o.footerText || o.footer_text || '',
-          alignment: o.alignment || 'center',
-          spreadsheetId: o.spreadsheetId || o.spreadsheet_id || undefined,
-          spreadsheetUrl: o.spreadsheetUrl || o.spreadsheet_url || undefined,
-          driveFolderId: o.driveFolderId || o.drive_folder_id || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
-          lastSyncedAt: o.lastSyncedAt || o.last_synced_at || undefined,
-          syncStatus: o.syncStatus || o.sync_status || 'IDLE',
-          createdById: o.createdById || o.created_by_id || undefined,
-          isActive: o.isActive ?? o.is_active ?? true,
-          createdAt: o.createdAt || o.created_at || new Date().toISOString(),
-        })) as OrganizationItem[];
+      const rawList = json.offices || json.organizations;
+      if (Array.isArray(rawList) && rawList.length > 0) {
+        return deduplicateOrganizations(rawList);
       }
     }
-  } catch (sqlErr) {
-    console.warn('Could not fetch organizations from Cloud SQL:', sqlErr);
-  }
-
-  // 2. Try Firestore fallback
-  try {
-    const listDocRef = doc(db, ORGANIZATIONS_COLLECTION, MAIN_ORGS_DOC);
-    const snap = await getDoc(listDocRef);
-    if (snap.exists()) {
-      const data = snap.data();
-      if (Array.isArray(data.organizations) && data.organizations.length > 0) {
-        resultOrgs = [...resultOrgs, ...(data.organizations as OrganizationItem[])];
-      }
-    }
-
-    // Secondary fallback: query all documents in collection
-    const colSnap = await getDocs(collection(db, ORGANIZATIONS_COLLECTION));
-    colSnap.forEach((d) => {
-      if (d.id !== MAIN_ORGS_DOC) {
-        const item = d.data() as OrganizationItem;
-        if (item && item.officeName) {
-          resultOrgs.push(item);
-        }
-      }
-    });
   } catch (err) {
-    console.warn('Could not fetch organizations from Cloud Firestore:', err);
-  }
-
-  if (resultOrgs.length > 0) {
-    return deduplicateOrganizations(resultOrgs);
+    console.warn('Could not fetch organizations from backend:', err);
   }
   return null;
 }
+
 
 /**
  * Removes an organization from Cloud SQL and Cloud Firestore
@@ -860,9 +698,9 @@ export async function getCloudAppConnection(
 }
 
 /**
- * Persists a single user to Cloud SQL and Firestore
+ * Persists a single user to backend (Firestore + SQL mirror)
  */
-export async function saveSingleUserToCloud(u: User): Promise<boolean> {
+export async function saveSingleUserToCloud(u: User): Promise<CloudSaveResult> {
   const payload = {
     uid: u.id || u.username,
     email: u.email || `${u.username}@system.local`,
@@ -888,53 +726,28 @@ export async function saveSingleUserToCloud(u: User): Promise<boolean> {
     },
   };
 
-  let sqlOk = false;
   try {
     const res = await authenticatedFetch('/api/users/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    sqlOk = res.ok;
-  } catch (sqlErr) {
-    console.warn('Could not sync single user to Cloud SQL:', sqlErr);
-  }
-
-  // Sync to Firestore for multi-device reliability
-  if (canWriteFirestore()) {
-    try {
-      const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
-      const snap = await getDoc(docRef);
-      let currentUsers: User[] = [];
-      if (snap.exists() && Array.isArray(snap.data()?.users)) {
-        currentUsers = snap.data().users;
-      }
-      const filtered = currentUsers.filter(
-        (item) => item.id !== u.id && item.username.toLowerCase() !== u.username.toLowerCase()
-      );
-      filtered.push(u);
-      await setDoc(docRef, {
-        users: filtered,
-        updatedAt: new Date().toISOString(),
-      });
-      // Mirror to individual user doc in Firestore
-      saveUserToFirestore(u).catch(() => {});
-    } catch (fsErr) {
-      handleFirestoreWriteError(fsErr, 'saveSingleUserToCloud');
-      saveUserToFirestore(u).catch(() => {});
-      console.warn('Could not sync single user to Firestore:', fsErr);
+    if (!res.ok) {
+      const errText = await res.text();
+      return { ok: false, error: errText || 'Failed to sync user' };
     }
-  } else {
-    saveUserToFirestore(u).catch(() => {});
+    return { ok: true };
+  } catch (sqlErr: any) {
+    return { ok: false, error: sqlErr?.message || 'Network error syncing user' };
   }
-
-  return sqlOk;
 }
 
+export const saveCloudUser = saveSingleUserToCloud;
+
 /**
- * Persists registered users list to Cloud SQL and Firestore
+ * Persists registered users list to backend
  */
-export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
+export async function saveCloudUsers(usersList: User[]): Promise<CloudSaveResult> {
   const cleanUsers = deduplicateUsers(usersList);
   const formattedUsers = cleanUsers.map((u) => ({
     uid: u.id || u.username,
@@ -961,7 +774,6 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
     },
   }));
 
-  // 1. Sync users to Cloud SQL via Batch API (instant & atomic)
   try {
     const batchRes = await authenticatedFetch('/api/users/batch-sync', {
       method: 'POST',
@@ -971,34 +783,27 @@ export async function saveCloudUsers(usersList: User[]): Promise<boolean> {
 
     if (!batchRes.ok) {
       // Fallback to individual sync
+      let errText = '';
       for (const payload of formattedUsers) {
-        await authenticatedFetch('/api/users/sync', {
+        const indRes = await authenticatedFetch('/api/users/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
+        if (!indRes.ok) {
+          errText = await indRes.text();
+        }
+      }
+      if (errText) {
+        return { ok: false, error: errText };
       }
     }
-  } catch (sqlErr) {
-    console.warn('Could not sync users to Cloud SQL:', sqlErr);
+    return { ok: true };
+  } catch (sqlErr: any) {
+    return { ok: false, error: sqlErr?.message || 'Network error syncing users' };
   }
-
-  // 2. Sync to Firestore
-  if (canWriteFirestore()) {
-    try {
-      const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
-      await setDoc(docRef, {
-        users: cleanUsers,
-        updatedAt: new Date().toISOString(),
-      });
-      return true;
-    } catch (err) {
-      handleFirestoreWriteError(err, 'saveCloudUsers');
-      return true;
-    }
-  }
-  return true;
 }
+
 
 export function normalizeUserData(u: User): User {
   let fullName = u.fullName;
@@ -1223,17 +1028,38 @@ export async function getCloudUsers(): Promise<User[] | null> {
 }
 
 /**
- * Removes a deleted user account from Cloud SQL backend
+ * Persists a generic system setting to backend
+ */
+export async function saveCloudSystemSetting(key: string, data: any): Promise<CloudSaveResult> {
+  try {
+    const res = await authenticatedFetch(`/api/settings/${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data }),
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      return { ok: false, error: errText || 'Failed to save system setting' };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Network error saving system setting' };
+  }
+}
+
+/**
+ * Removes a deleted user account from backend
  */
 export async function deleteCloudUser(userId: string): Promise<void> {
   try {
-    await fetch(`/api/users/${encodeURIComponent(userId)}`, {
+    await authenticatedFetch(`/api/users/${encodeURIComponent(userId)}`, {
       method: 'DELETE',
     });
   } catch (err) {
-    console.warn('Could not delete user from Cloud SQL API:', err);
+    console.warn('Could not delete user from backend API:', err);
   }
 }
+
 
 /**
  * Searches and retrieves a single user by username or email from Cloud SQL or Firestore.
@@ -1313,7 +1139,7 @@ export async function lookupCloudUser(usernameOrEmail: string): Promise<User | n
 export async function saveCloudSupportContact(
   contact: SystemSupportContact,
   updatedBy?: string
-): Promise<boolean> {
+): Promise<CloudSaveResult> {
   const cleanContact: SystemSupportContact = {
     phone: (contact.phone || '').trim(),
     email: (contact.email || '').trim(),
@@ -1321,41 +1147,21 @@ export async function saveCloudSupportContact(
     supportNote: (contact.supportNote || '').trim(),
   };
 
-  // 1. Sync to Cloud SQL via backend API
   try {
-    await fetch('/api/settings/system_support_contact', {
+    const res = await authenticatedFetch('/api/settings/system_support_contact', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data: cleanContact, updatedBy }),
     });
-  } catch (sqlErr) {
-    console.warn('Could not save support contact to Cloud SQL API:', sqlErr);
-  }
-
-  // 2. Sync to Firestore
-  if (canWriteFirestore()) {
-    try {
-      const contactDocRef = doc(db, CONNECTIONS_COLLECTION, 'system_support_contact');
-      await setDoc(
-        contactDocRef,
-        { ...cleanContact, updatedAt: new Date().toISOString(), lastUpdatedBy: updatedBy || 'system' },
-        { merge: true }
-      );
-
-      // Also update main config doc
-      const mainDocRef = doc(db, CONNECTIONS_COLLECTION, MAIN_CONFIG_DOC);
-      await setDoc(
-        mainDocRef,
-        { supportContact: cleanContact, updatedAt: new Date().toISOString() },
-        { merge: true }
-      );
-      return true;
-    } catch (err) {
-      handleFirestoreWriteError(err, 'saveCloudSupportContact');
-      return true;
+    if (!res.ok) {
+      const errText = await res.text();
+      return { ok: false, error: errText || 'Failed to save support contact' };
     }
+    return { ok: true };
+  } catch (sqlErr: any) {
+    console.warn('Could not save support contact to Cloud SQL API:', sqlErr);
+    return { ok: false, error: sqlErr?.message || 'Network error saving support contact' };
   }
-  return true;
 }
 
 /**
