@@ -1050,13 +1050,34 @@ export async function saveCloudSystemSetting(key: string, data: any): Promise<Cl
 /**
  * Removes a deleted user account from backend
  */
-export async function deleteCloudUser(userId: string): Promise<void> {
+export async function deleteCloudUser(userId: string, officeId?: string): Promise<void> {
+  if (!userId) return;
+
+  // 1. Backend API
   try {
     await authenticatedFetch(`/api/users/${encodeURIComponent(userId)}`, {
       method: 'DELETE',
     });
   } catch (err) {
     console.warn('Could not delete user from backend API:', err);
+  }
+
+  if (officeId && officeId !== 'all') {
+    try {
+      await authenticatedFetch(`/api/offices/${encodeURIComponent(officeId)}/users/${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+      });
+    } catch {}
+  }
+
+  // 2. Direct Firestore cleanup
+  if (canWriteFirestore()) {
+    try {
+      const { deleteUserFromFirestore } = await import('./firestoreService');
+      await deleteUserFromFirestore(userId, officeId);
+    } catch (fsErr) {
+      handleFirestoreWriteError(fsErr, 'deleteCloudUser');
+    }
   }
 }
 

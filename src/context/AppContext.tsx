@@ -2492,7 +2492,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return false;
     }
 
-    const updatedUsers = users.filter((u) => u.id !== id && u.uid !== id);
+    const targetUsername = target.username?.toLowerCase();
+    const updatedUsers = users.filter(
+      (u) =>
+        u.id !== id &&
+        u.uid !== id &&
+        u.username?.toLowerCase() !== targetUsername &&
+        (!target.uid || u.uid !== target.uid) &&
+        (!target.id || u.id !== target.id)
+    );
     setUsers(updatedUsers);
     try {
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
@@ -2500,13 +2508,53 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // Storage error ignore
     }
 
-    deleteCloudUser(id).catch(console.warn);
+    // Clean from all org databases
+    setOrgDatabases((prev) => {
+      const next = { ...prev };
+      for (const [orgKey, store] of Object.entries(next)) {
+        if (store && Array.isArray(store.users)) {
+          next[orgKey] = {
+            ...store,
+            users: store.users.filter(
+              (u) =>
+                u.id !== id &&
+                u.uid !== id &&
+                u.username?.toLowerCase() !== targetUsername
+            ),
+          };
+        }
+      }
+      try {
+        localStorage.setItem(STORAGE_KEYS.ORG_DATABASES, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    if (target.organizationId) {
+      const currentOrgStore = orgDatabases[target.organizationId];
+      if (currentOrgStore) {
+        const cleanedStore = {
+          ...currentOrgStore,
+          users: (currentOrgStore.users || []).filter(
+            (u) =>
+              u.id !== id &&
+              u.uid !== id &&
+              u.username?.toLowerCase() !== targetUsername
+          ),
+        };
+        saveCloudOrgStore(target.organizationId, cleanedStore).catch(console.warn);
+      }
+    }
+
+    deleteCloudUser(id, target.organizationId).catch(console.warn);
     if (target.uid && target.uid !== id) {
-      deleteCloudUser(target.uid).catch(console.warn);
+      deleteCloudUser(target.uid, target.organizationId).catch(console.warn);
     }
     if (target.username) {
-      deleteCloudUser(target.username).catch(console.warn);
+      deleteCloudUser(target.username, target.organizationId).catch(console.warn);
+      deleteCloudUser(`user_${target.username.toLowerCase()}`, target.organizationId).catch(console.warn);
     }
+    saveCloudUsers(updatedUsers).catch(console.warn);
     triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({

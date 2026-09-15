@@ -115,7 +115,40 @@ export function localListUsers(): any[] {
 
 export function localDeleteUser(uid: string): void {
   ensureLoaded();
+  if (!uid) return;
+  const clean = uid.toLowerCase().trim();
+  
+  // 1. Delete from direct key
   delete dbState.users[uid];
+
+  // 2. Scan all entries in dbState.users
+  for (const [key, user] of Object.entries(dbState.users)) {
+    const u = user as any;
+    if (
+      key === uid ||
+      u.uid === uid ||
+      u.id === uid ||
+      u.username?.toLowerCase() === clean ||
+      u.email?.toLowerCase() === clean
+    ) {
+      delete dbState.users[key];
+    }
+  }
+
+  // 3. Scan dbState.orgStores
+  for (const [orgKey, store] of Object.entries(dbState.orgStores)) {
+    const s = store as any;
+    if (Array.isArray(s?.users)) {
+      s.users = s.users.filter(
+        (u: any) =>
+          u.uid !== uid &&
+          u.id !== uid &&
+          u.username?.toLowerCase() !== clean &&
+          u.email?.toLowerCase() !== clean
+      );
+    }
+  }
+
   scheduleSave();
 }
 

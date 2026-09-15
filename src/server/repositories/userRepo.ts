@@ -400,19 +400,59 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
   if (existing?.uid && existing.uid !== uid) {
     localDeleteUser(existing.uid);
   }
+  if (existing?.username) {
+    localDeleteUser(existing.username);
+  }
 
-  // 1. Firestore
+  const uidsToDelete = new Set<string>([uid]);
+  if (existing?.uid) uidsToDelete.add(existing.uid);
+  if (existing?.id) uidsToDelete.add(String(existing.id));
+  if (existing?.username) {
+    uidsToDelete.add(existing.username);
+    uidsToDelete.add(`user_${existing.username.toLowerCase()}`);
+  }
+
+  // 1. Firestore Deletions
   try {
-    await adminDb.collection('users').doc(uid).delete();
-    if (existing?.uid && existing.uid !== uid) {
-      await adminDb.collection('users').doc(existing.uid).delete();
+    const batch = adminDb.batch();
+
+    for (const id of uidsToDelete) {
+      batch.delete(adminDb.collection('users').doc(id));
+      batch.delete(adminDb.collection('credentials').doc(id));
     }
+
     if (existing?.username) {
-      await adminDb.collection('usernames').doc(existing.username.toLowerCase()).delete();
+      batch.delete(adminDb.collection('usernames').doc(existing.username.toLowerCase()));
     }
-    await adminDb.collection('credentials').doc(uid).delete();
-    if (existing?.uid) {
-      await adminDb.collection('credentials').doc(existing.uid).delete();
+    batch.delete(adminDb.collection('usernames').doc(uid.toLowerCase()));
+
+    await batch.commit().catch(() => {});
+
+    // Query-based deletion from users collection
+    try {
+      const qSnaps = await adminDb.collection('users')
+        .where('username', '==', existing?.username || uid)
+        .get();
+      if (!qSnaps.empty) {
+        const qBatch = adminDb.batch();
+        qSnaps.forEach((doc) => qBatch.delete(doc.ref));
+        await qBatch.commit().catch(() => {});
+      }
+    } catch {}
+
+    // Office subcollections
+    if (existing?.organizationId && existing.organizationId !== 'all') {
+      try {
+        for (const id of uidsToDelete) {
+          await adminDb
+            .collection('offices')
+            .doc(existing.organizationId)
+            .collection('users')
+            .doc(id)
+            .delete()
+            .catch(() => {});
+        }
+      } catch {}
     }
 
     // Legacy list cleanup
@@ -420,7 +460,11 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
       const legacyRef = adminDb.collection('system_users').doc('registered_accounts');
       const snap = await legacyRef.get();
       if (snap.exists && Array.isArray(snap.data()?.users)) {
-        const filtered = snap.data()?.users.filter((u: any) => u.id !== uid && u.uid !== uid && u.username !== uid);
+        const filtered = snap.data()?.users.filter((u: any) => {
+          const uName = u.username?.toLowerCase();
+          const targetName = existing?.username?.toLowerCase() || uid.toLowerCase();
+          return !uidsToDelete.has(u.id) && !uidsToDelete.has(u.uid) && uName !== targetName;
+        });
         await legacyRef.set({ users: filtered, updatedAt: new Date().toISOString() });
       }
     } catch {}
@@ -442,9 +486,8 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
   // 3. SQL deletion
   if (await isSqlEnabled()) {
     try {
-      await sqlDeleteUserByUid(uid);
-      if (existing?.uid && existing.uid !== uid) {
-        await sqlDeleteUserByUid(existing.uid);
+      for (const id of uidsToDelete) {
+        await sqlDeleteUserByUid(id);
       }
     } catch (sqlErr: any) {
       // Handled

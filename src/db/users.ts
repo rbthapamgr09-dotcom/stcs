@@ -239,8 +239,8 @@ export async function deleteUserByUid(uid: string) {
     );
     return result[0] || null;
   } catch (error) {
-    console.error('Database query failed in deleteUserByUid:', error);
-    throw new Error('Failed to delete user from database.', { cause: error });
+    console.warn('Database query notice in deleteUserByUid:', error);
+    return null;
   }
 }
 
