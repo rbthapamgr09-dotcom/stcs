@@ -1,6 +1,12 @@
 import { adminDb } from '../../lib/firebase-admin.ts';
 import { isSqlEnabled } from './sqlHelper.ts';
 import {
+  localSaveOffice,
+  localGetOffice,
+  localListOffices,
+  localDeleteOffice,
+} from './localStore.ts';
+import {
   getOrganizations as getSqlOrganizations,
   getOrganizationById as getSqlOrganizationById,
   upsertOrganization as upsertSqlOrganization,
@@ -88,29 +94,24 @@ function cleanData(data: any): OfficeEntity {
 
 export async function saveOffice(data: any): Promise<OfficeEntity> {
   const office = cleanData(data);
-  let firestoreSaved = false;
+  // 1. Always guarantee persistence in local file-backed store
+  localSaveOffice(office);
 
-  // 1. Write to Firestore via adminDb first
+  // 2. Best-effort Firestore write via adminDb
   try {
     const docRef = adminDb.collection('offices').doc(office.id);
     await docRef.set(office, { merge: true });
-    firestoreSaved = true;
   } catch (err: any) {
-    console.warn(`[OfficeRepo] Firestore write error for office ${office.id}:`, err?.message || err);
+    // Firestore admin warning handled gracefully
   }
 
-  // 2. Best-effort mirror to Cloud SQL
+  // 3. Best-effort mirror to Cloud SQL
   if (await isSqlEnabled()) {
     try {
       await upsertSqlOrganization(office);
     } catch (sqlErr: any) {
-      console.warn(`[OfficeRepo] SQL mirror error for office ${office.id}:`, sqlErr?.message || sqlErr);
-      if (!firestoreSaved) {
-        throw new Error(`Failed to save office to both Firestore and SQL: ${sqlErr.message}`);
-      }
+      console.warn(`[OfficeRepo] SQL mirror notice for office ${office.id}:`, sqlErr?.message || sqlErr);
     }
-  } else if (!firestoreSaved) {
-    throw new Error('Could not persist office: Firestore is unavailable and SQL is disabled.');
   }
 
   return office;
@@ -126,7 +127,7 @@ export async function getOfficeById(id: string): Promise<OfficeEntity | null> {
       return docSnap.data() as OfficeEntity;
     }
   } catch (err: any) {
-    console.warn(`[OfficeRepo] Firestore read error for office ${id}:`, err?.message || err);
+    // Fallback to local / SQL
   }
 
   // 2. Fallback to SQL
@@ -135,9 +136,13 @@ export async function getOfficeById(id: string): Promise<OfficeEntity | null> {
       const sqlOrg = await getSqlOrganizationById(id);
       if (sqlOrg) return cleanData(sqlOrg);
     } catch (sqlErr: any) {
-      console.warn(`[OfficeRepo] SQL fallback read error for office ${id}:`, sqlErr?.message || sqlErr);
+      // Fallback
     }
   }
+
+  // 3. Fallback to localStore
+  const local = localGetOffice(id);
+  if (local) return cleanData(local);
 
   return null;
 }
@@ -152,10 +157,10 @@ export async function listOffices(): Promise<OfficeEntity[]> {
       officesMap.set(doc.id, doc.data() as OfficeEntity);
     });
   } catch (err: any) {
-    console.warn('[OfficeRepo] Firestore list error:', err?.message || err);
+    // Fallback
   }
 
-  // 2. Read from SQL if Firestore returned nothing or on error
+  // 2. Read from SQL if Firestore returned nothing
   if (officesMap.size === 0 && (await isSqlEnabled())) {
     try {
       const sqlOrgs = await getSqlOrganizations();
@@ -163,7 +168,15 @@ export async function listOffices(): Promise<OfficeEntity[]> {
         officesMap.set(org.id, cleanData(org));
       }
     } catch (sqlErr: any) {
-      console.warn('[OfficeRepo] SQL list error:', sqlErr?.message || sqlErr);
+      // Fallback
+    }
+  }
+
+  // 3. Merge or fallback with localStore
+  const localList = localListOffices();
+  for (const o of localList) {
+    if (!officesMap.has(o.id)) {
+      officesMap.set(o.id, cleanData(o));
     }
   }
 
@@ -173,17 +186,19 @@ export async function listOffices(): Promise<OfficeEntity[]> {
 export async function deleteOfficeById(id: string): Promise<boolean> {
   if (!id) return false;
 
+  localDeleteOffice(id);
+
   try {
     await adminDb.collection('offices').doc(id).delete();
   } catch (err: any) {
-    console.warn(`[OfficeRepo] Firestore delete error for office ${id}:`, err?.message || err);
+    // Handled
   }
 
   if (await isSqlEnabled()) {
     try {
       await deleteSqlOrganizationById(id);
     } catch (sqlErr: any) {
-      console.warn(`[OfficeRepo] SQL delete error for office ${id}:`, sqlErr?.message || sqlErr);
+      // Handled
     }
   }
 

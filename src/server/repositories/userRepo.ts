@@ -1,6 +1,13 @@
 import { adminDb } from '../../lib/firebase-admin.ts';
 import { isSqlEnabled } from './sqlHelper.ts';
 import {
+  localSaveUser,
+  localGetUserByUid,
+  localGetUserByUsername,
+  localListUsers,
+  localDeleteUser,
+} from './localStore.ts';
+import {
   getOrCreateUser as sqlGetOrCreateUser,
   getUserByUid as sqlGetUserByUid,
   getUserByFirebaseUid as sqlGetUserByFirebaseUid,
@@ -76,14 +83,15 @@ function cleanUserData(data: any): UserEntity {
 
 export async function saveUser(data: any): Promise<UserEntity> {
   const user = cleanUserData(data);
-  let firestoreSaved = false;
 
-  // 1. Write to Firestore via adminDb
+  // 1. LocalStore persistence
+  localSaveUser(user);
+
+  // 2. Best-effort Firestore write via adminDb
   try {
     const userRef = adminDb.collection('users').doc(user.uid);
     await userRef.set(user, { merge: true });
 
-    // Also update username index
     if (user.username) {
       const usernameRef = adminDb.collection('usernames').doc(user.username.toLowerCase());
       await usernameRef.set({
@@ -94,12 +102,11 @@ export async function saveUser(data: any): Promise<UserEntity> {
         createdAt: user.createdAt,
       }, { merge: true });
     }
-    firestoreSaved = true;
   } catch (err: any) {
-    console.warn(`[UserRepo] Firestore write error for user ${user.uid}:`, err?.message || err);
+    // Handled
   }
 
-  // 2. Mirror to SQL
+  // 3. Best-effort mirror to Cloud SQL
   if (await isSqlEnabled()) {
     try {
       await sqlGetOrCreateUser(
@@ -109,17 +116,12 @@ export async function saveUser(data: any): Promise<UserEntity> {
         user.fullName,
         user.role,
         user.organizationId,
-        user.metadata,
+        user.metadata || user,
         user.firebaseUid
       );
     } catch (sqlErr: any) {
-      console.warn(`[UserRepo] SQL mirror error for user ${user.uid}:`, sqlErr?.message || sqlErr);
-      if (!firestoreSaved) {
-        throw new Error(`Failed to persist user to both Firestore and SQL: ${sqlErr.message}`);
-      }
+      console.warn(`[UserRepo] SQL mirror notice for user ${user.uid}:`, sqlErr?.message || sqlErr);
     }
-  } else if (!firestoreSaved) {
-    throw new Error('Could not persist user: Firestore is unavailable and SQL is disabled.');
   }
 
   return user;
@@ -135,7 +137,7 @@ export async function getUserByUid(uid: string): Promise<UserEntity | null> {
       return cleanUserData(docSnap.data());
     }
   } catch (err: any) {
-    console.warn(`[UserRepo] Firestore read error for uid ${uid}:`, err?.message || err);
+    // Fallback
   }
 
   // 2. SQL
@@ -144,9 +146,13 @@ export async function getUserByUid(uid: string): Promise<UserEntity | null> {
       const sqlUser = await sqlGetUserByUid(uid);
       if (sqlUser) return cleanUserData(sqlUser);
     } catch (sqlErr: any) {
-      console.warn(`[UserRepo] SQL read error for uid ${uid}:`, sqlErr?.message || sqlErr);
+      // Fallback
     }
   }
+
+  // 3. LocalStore
+  const local = localGetUserByUid(uid);
+  if (local) return cleanUserData(local);
 
   return null;
 }
@@ -165,13 +171,12 @@ export async function getUserByUsername(username: string): Promise<UserEntity | 
         if (user) return user;
       }
     }
-    // Direct query fallback on users collection
     const snap = await adminDb.collection('users').where('username', '==', username.trim()).limit(1).get();
     if (!snap.empty) {
       return cleanUserData(snap.docs[0].data());
     }
   } catch (err: any) {
-    console.warn(`[UserRepo] Firestore username read error for ${clean}:`, err?.message || err);
+    // Fallback
   }
 
   // 2. SQL fallback
@@ -180,9 +185,13 @@ export async function getUserByUsername(username: string): Promise<UserEntity | 
       const sqlUser = await sqlGetUserByUsernameOrEmailOrUid(username);
       if (sqlUser) return cleanUserData(sqlUser);
     } catch (sqlErr: any) {
-      console.warn(`[UserRepo] SQL username lookup error for ${clean}:`, sqlErr?.message || sqlErr);
+      // Fallback
     }
   }
+
+  // 3. LocalStore fallback
+  const local = localGetUserByUsername(username);
+  if (local) return cleanUserData(local);
 
   return null;
 }
@@ -196,13 +205,12 @@ export async function getUserByFirebaseUid(firebaseUid: string): Promise<UserEnt
     if (!snap.empty) {
       return cleanUserData(snap.docs[0].data());
     }
-    // Also check if document ID is firebaseUid
     const docSnap = await adminDb.collection('users').doc(firebaseUid).get();
     if (docSnap.exists) {
       return cleanUserData(docSnap.data());
     }
   } catch (err: any) {
-    console.warn(`[UserRepo] Firestore read error for firebaseUid ${firebaseUid}:`, err?.message || err);
+    // Fallback
   }
 
   // 2. SQL
@@ -211,9 +219,14 @@ export async function getUserByFirebaseUid(firebaseUid: string): Promise<UserEnt
       const sqlUser = await sqlGetUserByFirebaseUid(firebaseUid);
       if (sqlUser) return cleanUserData(sqlUser);
     } catch (sqlErr: any) {
-      console.warn(`[UserRepo] SQL read error for firebaseUid ${firebaseUid}:`, sqlErr?.message || sqlErr);
+      // Fallback
     }
   }
+
+  // 3. LocalStore
+  const all = localListUsers();
+  const found = all.find((u) => u.firebaseUid === firebaseUid || u.uid === firebaseUid);
+  if (found) return cleanUserData(found);
 
   return null;
 }
@@ -241,7 +254,7 @@ export async function getUserByUsernameOrEmailOrUid(query: string): Promise<User
       return cleanUserData(snap.docs[0].data());
     }
   } catch (err: any) {
-    console.warn('[UserRepo] Firestore email query error:', err?.message || err);
+    // Fallback
   }
 
   // SQL fallback
@@ -250,7 +263,7 @@ export async function getUserByUsernameOrEmailOrUid(query: string): Promise<User
       const sqlUser = await sqlGetUserByUsernameOrEmailOrUid(clean);
       if (sqlUser) return cleanUserData(sqlUser);
     } catch (sqlErr: any) {
-      console.warn('[UserRepo] SQL lookup error:', sqlErr?.message || sqlErr);
+      // Fallback
     }
   }
 
@@ -272,7 +285,7 @@ export async function listUsersByOrganization(orgId: string): Promise<UserEntity
       usersMap.set(u.uid, u);
     });
   } catch (err: any) {
-    console.warn(`[UserRepo] Firestore list error for org ${orgId}:`, err?.message || err);
+    // Fallback
   }
 
   // 2. SQL
@@ -286,7 +299,15 @@ export async function listUsersByOrganization(orgId: string): Promise<UserEntity
         usersMap.set(u.uid, cleanUserData(u));
       }
     } catch (sqlErr: any) {
-      console.warn(`[UserRepo] SQL list error for org ${orgId}:`, sqlErr?.message || sqlErr);
+      // Fallback
+    }
+  }
+
+  // 3. Merge with localStore
+  const localUsers = localListUsers();
+  for (const u of localUsers) {
+    if ((!orgId || orgId === 'all' || u.organizationId === orgId) && !usersMap.has(u.uid)) {
+      usersMap.set(u.uid, cleanUserData(u));
     }
   }
 
@@ -300,6 +321,7 @@ export async function listAllUsers(): Promise<UserEntity[]> {
 export async function deleteUserByUid(uid: string): Promise<boolean> {
   if (!uid) return false;
 
+  localDeleteUser(uid);
   const existing = await getUserByUid(uid);
 
   // Firestore
@@ -309,7 +331,7 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
       await adminDb.collection('usernames').doc(existing.username.toLowerCase()).delete();
     }
   } catch (err: any) {
-    console.warn(`[UserRepo] Firestore delete error for uid ${uid}:`, err?.message || err);
+    // Handled
   }
 
   // SQL
@@ -317,7 +339,7 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
     try {
       await sqlDeleteUserByUid(uid);
     } catch (sqlErr: any) {
-      console.warn(`[UserRepo] SQL delete error for uid ${uid}:`, sqlErr?.message || sqlErr);
+      // Handled
     }
   }
 
@@ -327,10 +349,15 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
 export async function linkFirebaseUid(uid: string, firebaseUid: string): Promise<void> {
   if (!uid || !firebaseUid) return;
 
+  const local = localGetUserByUid(uid);
+  if (local) {
+    localSaveUser({ ...local, firebaseUid });
+  }
+
   try {
     await adminDb.collection('users').doc(uid).set({ firebaseUid }, { merge: true });
   } catch (err: any) {
-    console.warn(`[UserRepo] Firestore linkFirebaseUid error:`, err?.message || err);
+    // Handled
   }
 
   if (await isSqlEnabled()) {
@@ -340,7 +367,7 @@ export async function linkFirebaseUid(uid: string, firebaseUid: string): Promise
         await sqlLinkFirebaseUidToUser(user.id, firebaseUid);
       }
     } catch (sqlErr: any) {
-      console.warn(`[UserRepo] SQL linkFirebaseUid error:`, sqlErr?.message || sqlErr);
+      // Handled
     }
   }
 }

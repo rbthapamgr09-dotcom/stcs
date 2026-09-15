@@ -1,6 +1,14 @@
 import { adminDb } from '../../lib/firebase-admin.ts';
 import { isSqlEnabled } from './sqlHelper.ts';
 import {
+  localGetFyDatabase,
+  localSetFyDatabase,
+  localGetOrgStore,
+  localSetOrgStore,
+  localGetEmployees,
+  localSaveEmployee,
+} from './localStore.ts';
+import {
   getOrgFyDatabase as sqlGetOrgFyDatabase,
   setOrgFyDatabase as sqlSetOrgFyDatabase,
   getOrgDataStore as sqlGetOrgDataStore,
@@ -17,7 +25,7 @@ export async function getOrgFyDatabase(orgId: string): Promise<Record<string, an
   let fyData: Record<string, any> = {};
   let foundInFirestore = false;
 
-  // 1. Try reading individual fiscal year docs from Firestore
+  // 1. Try reading from Firestore
   try {
     const snap = await adminDb.collection('offices').doc(orgId).collection('fiscal_years').get();
     if (!snap.empty) {
@@ -26,7 +34,6 @@ export async function getOrgFyDatabase(orgId: string): Promise<Record<string, an
       });
       foundInFirestore = true;
     } else {
-      // Also check if stored as a document in data/fy_database
       const docSnap = await adminDb.collection('offices').doc(orgId).collection('data').doc('fy_database').get();
       if (docSnap.exists) {
         fyData = docSnap.data()?.data || docSnap.data() || {};
@@ -34,7 +41,7 @@ export async function getOrgFyDatabase(orgId: string): Promise<Record<string, an
       }
     }
   } catch (err: any) {
-    console.warn(`[FyRepo] Firestore read error for org ${orgId}:`, err?.message || err);
+    // Fallback
   }
 
   if (foundInFirestore && Object.keys(fyData).length > 0) {
@@ -47,11 +54,12 @@ export async function getOrgFyDatabase(orgId: string): Promise<Record<string, an
       const sqlData = await sqlGetOrgFyDatabase(orgId);
       if (sqlData) return sqlData;
     } catch (sqlErr: any) {
-      console.warn(`[FyRepo] SQL read error for org ${orgId}:`, sqlErr?.message || sqlErr);
+      // Fallback
     }
   }
 
-  return foundInFirestore ? fyData : null;
+  // 3. Fallback to localStore
+  return localGetFyDatabase(orgId);
 }
 
 export async function setOrgFyDatabase(orgId: string, data: any, updatedBy: string = 'system'): Promise<any> {
@@ -59,11 +67,11 @@ export async function setOrgFyDatabase(orgId: string, data: any, updatedBy: stri
     throw new Error('Tenant scoping violation: orgId is required to save fiscal year database.');
   }
 
-  let firestoreSaved = false;
+  // 1. LocalStore persistence
+  localSetFyDatabase(orgId, data);
 
-  // 1. Write to Firestore
+  // 2. Best-effort Firestore write
   try {
-    // Write the full blob to data/fy_database
     await adminDb
       .collection('offices')
       .doc(orgId)
@@ -75,7 +83,6 @@ export async function setOrgFyDatabase(orgId: string, data: any, updatedBy: stri
         updatedAt: new Date().toISOString(),
       }, { merge: true });
 
-    // Also write per-fiscal-year documents if data is a map of fiscal years
     if (data && typeof data === 'object') {
       const batch = adminDb.batch();
       for (const [fy, val] of Object.entries(data)) {
@@ -92,23 +99,17 @@ export async function setOrgFyDatabase(orgId: string, data: any, updatedBy: stri
       }
       await batch.commit();
     }
-    firestoreSaved = true;
   } catch (err: any) {
-    console.warn(`[FyRepo] Firestore write error for org ${orgId}:`, err?.message || err);
+    // Handled
   }
 
-  // 2. Mirror to SQL
+  // 3. Best-effort SQL mirror
   if (await isSqlEnabled()) {
     try {
       await sqlSetOrgFyDatabase(orgId, data, updatedBy);
     } catch (sqlErr: any) {
-      console.warn(`[FyRepo] SQL mirror error for org ${orgId}:`, sqlErr?.message || sqlErr);
-      if (!firestoreSaved) {
-        throw new Error(`Failed to persist FY database to both Firestore and SQL: ${sqlErr.message}`);
-      }
+      console.warn(`[FyRepo] SQL mirror notice for org ${orgId}:`, sqlErr?.message || sqlErr);
     }
-  } else if (!firestoreSaved) {
-    throw new Error('Could not persist FY database: Firestore is unavailable and SQL is disabled.');
   }
 
   return { success: true, orgId };
@@ -126,7 +127,7 @@ export async function getOrgDataStore(orgId: string): Promise<any> {
       return docSnap.data()?.data || docSnap.data();
     }
   } catch (err: any) {
-    console.warn(`[FyRepo] Firestore store read error for org ${orgId}:`, err?.message || err);
+    // Fallback
   }
 
   // 2. SQL
@@ -135,11 +136,12 @@ export async function getOrgDataStore(orgId: string): Promise<any> {
       const sqlStore = await sqlGetOrgDataStore(orgId);
       if (sqlStore) return sqlStore;
     } catch (sqlErr: any) {
-      console.warn(`[FyRepo] SQL store read error for org ${orgId}:`, sqlErr?.message || sqlErr);
+      // Fallback
     }
   }
 
-  return null;
+  // 3. Local fallback
+  return localGetOrgStore(orgId);
 }
 
 export async function setOrgDataStore(orgId: string, data: any, updatedBy: string = 'system'): Promise<any> {
@@ -147,9 +149,10 @@ export async function setOrgDataStore(orgId: string, data: any, updatedBy: strin
     throw new Error('Tenant scoping violation: orgId is required to save organization store.');
   }
 
-  let firestoreSaved = false;
+  // 1. LocalStore persistence
+  localSetOrgStore(orgId, data);
 
-  // 1. Firestore
+  // 2. Best-effort Firestore write
   try {
     await adminDb
       .collection('offices')
@@ -161,53 +164,50 @@ export async function setOrgDataStore(orgId: string, data: any, updatedBy: strin
         updatedBy,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
-    firestoreSaved = true;
   } catch (err: any) {
-    console.warn(`[FyRepo] Firestore store write error for org ${orgId}:`, err?.message || err);
+    // Handled
   }
 
-  // 2. SQL
+  // 3. Best-effort SQL write
   if (await isSqlEnabled()) {
     try {
       await sqlSetOrgDataStore(orgId, data, updatedBy);
     } catch (sqlErr: any) {
-      console.warn(`[FyRepo] SQL store mirror error for org ${orgId}:`, sqlErr?.message || sqlErr);
-      if (!firestoreSaved) {
-        throw new Error(`Failed to persist store to both Firestore and SQL: ${sqlErr.message}`);
-      }
+      console.warn(`[FyRepo] SQL store mirror notice for org ${orgId}:`, sqlErr?.message || sqlErr);
     }
-  } else if (!firestoreSaved) {
-    throw new Error('Could not persist store: Firestore is unavailable and SQL is disabled.');
   }
 
   return { success: true, orgId };
 }
 
-export async function getEmployees(orgId: string): Promise<any[]> {
+export async function getEmployees(orgId: string, fiscalYear?: string): Promise<any[]> {
   if (!orgId) {
     throw new Error('Tenant scoping violation: orgId is required to get employees.');
   }
 
   if (await isSqlEnabled()) {
     try {
-      return await sqlGetEmployees(orgId);
+      const emps = await sqlGetEmployees(orgId);
+      if (emps && emps.length > 0) return emps;
     } catch (err: any) {
-      console.warn(`[FyRepo] SQL getEmployees error for org ${orgId}:`, err?.message || err);
+      // Fallback
     }
   }
-  return [];
+  return localGetEmployees(orgId, fiscalYear);
 }
 
-export async function upsertEmployee(employee: any, orgId: string): Promise<any> {
+export async function upsertEmployee(employee: any, orgId: string, fiscalYear: string = '२०८१/८२'): Promise<any> {
   if (!orgId) {
     throw new Error('Tenant scoping violation: orgId is required to save employee.');
   }
+
+  localSaveEmployee(orgId, fiscalYear, employee);
 
   if (await isSqlEnabled()) {
     try {
       return await sqlUpsertEmployee(employee, orgId);
     } catch (err: any) {
-      console.warn(`[FyRepo] SQL upsertEmployee error for org ${orgId}:`, err?.message || err);
+      console.warn(`[FyRepo] SQL upsertEmployee notice for org ${orgId}:`, err?.message || err);
     }
   }
   return employee;

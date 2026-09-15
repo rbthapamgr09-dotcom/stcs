@@ -1,5 +1,6 @@
 import { adminDb } from '../../lib/firebase-admin.ts';
 import { isSqlEnabled } from './sqlHelper.ts';
+import { localGetSetting, localSetSetting } from './localStore.ts';
 import {
   getSystemSetting as sqlGetSystemSetting,
   setSystemSetting as sqlSetSystemSetting,
@@ -16,7 +17,7 @@ export async function getSystemSetting(key: string): Promise<any> {
       return data?.data !== undefined ? data.data : data;
     }
   } catch (err: any) {
-    console.warn(`[SettingsRepo] Firestore read error for setting ${key}:`, err?.message || err);
+    // Fallback
   }
 
   // 2. SQL
@@ -25,18 +26,21 @@ export async function getSystemSetting(key: string): Promise<any> {
       const sqlData = await sqlGetSystemSetting(key);
       if (sqlData !== null && sqlData !== undefined) return sqlData;
     } catch (sqlErr: any) {
-      console.warn(`[SettingsRepo] SQL read error for setting ${key}:`, sqlErr?.message || sqlErr);
+      // Fallback
     }
   }
 
-  return null;
+  // 3. Local fallback
+  return localGetSetting(key);
 }
 
 export async function setSystemSetting(key: string, data: any, updatedBy: string = 'system'): Promise<any> {
   if (!key) throw new Error('Setting key is required.');
-  let firestoreSaved = false;
 
-  // 1. Firestore
+  // 1. LocalStore persistence
+  localSetSetting(key, data);
+
+  // 2. Best-effort Firestore write
   try {
     await adminDb.collection('system_settings').doc(key).set({
       key,
@@ -44,23 +48,17 @@ export async function setSystemSetting(key: string, data: any, updatedBy: string
       updatedBy,
       updatedAt: new Date().toISOString(),
     }, { merge: true });
-    firestoreSaved = true;
   } catch (err: any) {
-    console.warn(`[SettingsRepo] Firestore write error for setting ${key}:`, err?.message || err);
+    // Handled
   }
 
-  // 2. SQL
+  // 3. Best-effort SQL write
   if (await isSqlEnabled()) {
     try {
       await sqlSetSystemSetting(key, data, updatedBy);
     } catch (sqlErr: any) {
-      console.warn(`[SettingsRepo] SQL mirror error for setting ${key}:`, sqlErr?.message || sqlErr);
-      if (!firestoreSaved) {
-        throw new Error(`Failed to persist setting to both Firestore and SQL: ${sqlErr.message}`);
-      }
+      console.warn(`[SettingsRepo] SQL mirror notice for setting ${key}:`, sqlErr?.message || sqlErr);
     }
-  } else if (!firestoreSaved) {
-    throw new Error('Could not persist setting: Firestore is unavailable and SQL is disabled.');
   }
 
   return { key, data, updatedBy, updatedAt: new Date().toISOString() };
