@@ -55,9 +55,18 @@ export function sanitizeUser(u: any): any {
 }
 
 function cleanUserData(data: any): UserEntity {
-  const uid = data.uid || data.id || `user_${Date.now()}`;
-  const username = (data.username || (data.email ? data.email.split('@')[0] : uid)).trim();
-  const email = data.email ? data.email.trim().toLowerCase() : `${username.toLowerCase()}@stcs.local`;
+  if (!data || typeof data !== 'object') {
+    data = {};
+  }
+  const uid = String(data.uid || data.id || `user_${Date.now()}`);
+  const username = String(data.username || (data.email && data.email.includes('@') ? data.email.split('@')[0] : uid)).trim();
+  
+  // Validate email format or generate fallback
+  let rawEmail = data.email ? String(data.email).trim().toLowerCase() : '';
+  if (!rawEmail || !rawEmail.includes('@') || rawEmail === '-' || rawEmail.length < 5) {
+    rawEmail = `${username.toLowerCase().replace(/[^a-z0-9_]/g, '')}@system.local`;
+  }
+  const email = rawEmail;
   const meta = data.metadata || {};
 
   return {
@@ -97,52 +106,58 @@ export async function saveUser(data: any): Promise<UserEntity> {
   const user = cleanUserData(data);
 
   // 1. LocalStore persistence
-  localSaveUser(user);
+  try {
+    localSaveUser(user);
+  } catch (localErr: any) {
+    console.warn(`[UserRepo] Local store write notice for user ${user.uid}:`, localErr?.message || localErr);
+  }
 
   // 2. Firebase Auth provisioning / update with Custom Claims (Task 8 & 11)
   try {
     let authUser: any = null;
-    try {
-      if (user.email) {
-        authUser = await adminAuth.getUserByEmail(user.email);
-      }
-    } catch {
-      // User not found in Firebase Auth yet
-    }
-
-    if (!authUser) {
+    if (user.email && user.email.includes('@') && !user.email.endsWith('@example.com')) {
       try {
-        authUser = await adminAuth.createUser({
-          uid: user.uid,
-          email: user.email,
-          password: user.password || 'admin123',
-          displayName: user.fullName || user.username,
-        });
-      } catch (createErr: any) {
-        // If UID exists or email exists with different UID
-        if (createErr?.code === 'auth/uid-already-exists') {
-          authUser = await adminAuth.getUser(user.uid);
-        } else if (createErr?.code === 'auth/email-already-exists' && user.email) {
-          authUser = await adminAuth.getUserByEmail(user.email);
-        }
+        authUser = await adminAuth.getUserByEmail(user.email);
+      } catch {
+        // User not found in Firebase Auth yet
       }
-    }
 
-    if (authUser) {
-      user.firebaseUid = authUser.uid;
-      // Set Custom Claims for fast, secure RBAC
-      await adminAuth.setCustomUserClaims(authUser.uid, {
-        role: user.role,
-        organizationId: user.organizationId,
-      });
-
-      if (user.password) {
+      if (!authUser) {
         try {
-          await adminAuth.updateUser(authUser.uid, {
-            password: user.password,
+          authUser = await adminAuth.createUser({
+            uid: user.uid,
+            email: user.email,
+            password: user.password || 'admin123',
             displayName: user.fullName || user.username,
           });
+        } catch (createErr: any) {
+          // If UID exists or email exists with different UID
+          if (createErr?.code === 'auth/uid-already-exists') {
+            authUser = await adminAuth.getUser(user.uid);
+          } else if (createErr?.code === 'auth/email-already-exists' && user.email) {
+            authUser = await adminAuth.getUserByEmail(user.email);
+          }
+        }
+      }
+
+      if (authUser) {
+        user.firebaseUid = authUser.uid;
+        // Set Custom Claims for fast, secure RBAC
+        try {
+          await adminAuth.setCustomUserClaims(authUser.uid, {
+            role: user.role,
+            organizationId: user.organizationId,
+          });
         } catch {}
+
+        if (user.password) {
+          try {
+            await adminAuth.updateUser(authUser.uid, {
+              password: user.password,
+              displayName: user.fullName || user.username,
+            });
+          } catch {}
+        }
       }
     }
   } catch (authErr: any) {

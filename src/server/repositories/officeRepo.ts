@@ -52,9 +52,12 @@ export interface OfficeEntity {
 }
 
 function cleanData(data: any): OfficeEntity {
+  if (!data || typeof data !== 'object') {
+    data = {};
+  }
   const orgId = data.id || `org_${Date.now()}`;
   return {
-    id: orgId,
+    id: String(orgId),
     name: data.name || 'नेपाल सरकार',
     officeName: data.officeName || data.name || 'कार्यालय',
     officeCode: data.officeCode || '',
@@ -94,8 +97,13 @@ function cleanData(data: any): OfficeEntity {
 
 export async function saveOffice(data: any): Promise<OfficeEntity> {
   const office = cleanData(data);
+
   // 1. Always guarantee persistence in local file-backed store
-  localSaveOffice(office);
+  try {
+    localSaveOffice(office);
+  } catch (localErr: any) {
+    console.warn(`[OfficeRepo] Local store write notice for office ${office.id}:`, localErr?.message || localErr);
+  }
 
   // 2. Best-effort Firestore write via adminDb
   try {
@@ -106,12 +114,12 @@ export async function saveOffice(data: any): Promise<OfficeEntity> {
   }
 
   // 3. Best-effort mirror to Cloud SQL
-  if (await isSqlEnabled()) {
-    try {
+  try {
+    if (await isSqlEnabled()) {
       await upsertSqlOrganization(office);
-    } catch (sqlErr: any) {
-      console.warn(`[OfficeRepo] SQL mirror notice for office ${office.id}:`, sqlErr?.message || sqlErr);
     }
+  } catch (sqlErr: any) {
+    console.warn(`[OfficeRepo] SQL mirror notice for office ${office.id}:`, sqlErr?.message || sqlErr);
   }
 
   return office;
