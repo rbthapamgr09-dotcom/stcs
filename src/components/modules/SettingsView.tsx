@@ -162,8 +162,8 @@ export const SettingsView: React.FC = () => {
     spreadsheetId: '',
     spreadsheetUrl: '',
     driveFolderId: '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
-    // Initial Admin User creation fields (Optional during org creation)
-    createAdminUser: true,
+    // Initial Admin User creation fields (Disabled)
+    createAdminUser: false,
     adminUsername: '',
     adminPassword: '',
     adminFullName: '',
@@ -199,9 +199,9 @@ export const SettingsView: React.FC = () => {
       spreadsheetId: '',
       spreadsheetUrl: '',
       driveFolderId: '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
-      createAdminUser: true,
+      createAdminUser: false,
       adminUsername: '',
-      adminPassword: 'admin' + Math.floor(100 + Math.random() * 900),
+      adminPassword: '',
       adminFullName: '',
       adminEmail: '',
       adminPhone: '',
@@ -3178,60 +3178,6 @@ export const SettingsView: React.FC = () => {
                   </div>
                 </div>
               </div>
-
-              {/* Initial Admin User for New Org */}
-              {!editingOrg && (
-                <div className="p-3.5 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-3">
-                  <p className="font-bold text-emerald-950 flex items-center gap-1.5 text-xs sm:text-sm">
-                    <UserPlus className="w-4 h-4 text-emerald-700" />
-                    <span>यस कार्यालयको प्रारम्भिक प्रशासक (Initial Admin User for this Office):</span>
-                  </p>
-                  <p className="text-[10px] text-emerald-800">
-                    यस कार्यालयको व्यवस्थापनका लागि एक जना प्रशासक (Admin) प्रयोगकर्ता स्वतः सिर्जना हुनेछ।
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="text-xs font-bold text-emerald-900 block mb-1 whitespace-nowrap truncate" title="प्रशासकको नाम (Admin Name)">
-                        प्रशासकको नाम (Admin Name):
-                      </label>
-                      <input
-                        type="text"
-                        value={orgFormData.adminFullName}
-                        onChange={(e) => setOrgFormData({ ...orgFormData, adminFullName: e.target.value })}
-                        placeholder="कार्यालय प्रशासक"
-                        className="w-full h-10 px-3 py-2 rounded-xl border border-emerald-300 bg-white font-medium text-xs sm:text-sm outline-none focus:ring-2 focus:ring-emerald-600"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold text-emerald-900 block mb-1 whitespace-nowrap truncate" title="प्रयोगकर्ता आइडी (User ID)">
-                        प्रयोगकर्ता आइडी (User ID):
-                      </label>
-                      <input
-                        type="text"
-                        value={orgFormData.adminUsername}
-                        onChange={(e) => setOrgFormData({ ...orgFormData, adminUsername: e.target.value.toLowerCase().replace(/\s+/g, '') })}
-                        placeholder="admin_office"
-                        className="w-full h-10 px-3 py-2 rounded-xl border border-emerald-300 bg-white font-mono font-bold text-xs sm:text-sm outline-none focus:ring-2 focus:ring-emerald-600"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-bold text-emerald-900 block mb-1 whitespace-nowrap truncate" title="पासवर्ड (Password)">
-                        पासवर्ड (Password):
-                      </label>
-                      <input
-                        type="text"
-                        value={orgFormData.adminPassword}
-                        onChange={(e) => setOrgFormData({ ...orgFormData, adminPassword: e.target.value })}
-                        placeholder="pass1234"
-                        className="w-full h-10 px-3 py-2 rounded-xl border border-emerald-300 bg-white font-mono font-bold text-xs sm:text-sm outline-none focus:ring-2 focus:ring-emerald-600"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Operational Status (Active / Inactive) */}
               <div className="p-3.5 bg-[#f5f8f3] rounded-xl border border-[#d6e3d2] space-y-2">
