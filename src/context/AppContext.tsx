@@ -90,6 +90,8 @@ import {
   saveCloudTaxReferences,
   getCloudTaxReferences,
   authenticatedFetch,
+  parseApiError,
+  ClientApiError,
   CloudSaveResult,
   db,
 } from '../services/cloudSyncService';
@@ -1294,46 +1296,96 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     let unsubscribeStandaloneOffices: (() => void) | undefined;
     let unsubscribeStandaloneUsers: (() => void) | undefined;
     try {
-      unsubscribeStandaloneOffices = subscribeToOffices((offices) => {
+      unsubscribeStandaloneOffices = subscribeToOffices((offices, meta) => {
         if (isMounted && Array.isArray(offices)) {
-          const validOffices = deduplicateOrganizations(
-            offices.filter((o) => o.id !== 'all' && o.id !== 'org_default' && Boolean(o.officeName))
-          );
-          setOrganizations(validOffices);
-          try { localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(validOffices)); } catch {}
+          if (offices.length === 0 && (meta?.fromCache || meta?.empty)) {
+            return;
+          }
+          setOrganizations((prev) => {
+            if (offices.length === 0 && prev.length > 0) return prev;
+            const orgMap = new Map(prev.map((o) => [o.id, o]));
+            for (const off of offices) {
+              if (off.id !== 'all' && off.id !== 'org_default' && Boolean(off.officeName)) {
+                const existing = orgMap.get(off.id);
+                if (!existing || !existing.updatedAt || !off.updatedAt || new Date(off.updatedAt) >= new Date(existing.updatedAt)) {
+                  orgMap.set(off.id, off);
+                }
+              }
+            }
+            const validOffices = deduplicateOrganizations(Array.from(orgMap.values()));
+            try { localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(validOffices)); } catch {}
+            return validOffices;
+          });
         }
       });
 
-      unsubscribeStandaloneUsers = subscribeToUsers((uList) => {
+      unsubscribeStandaloneUsers = subscribeToUsers((uList, meta) => {
         if (isMounted && Array.isArray(uList)) {
-          const validCloudUsers = deduplicateUsers(uList.map(normalizeUserData));
-          setUsers(validCloudUsers);
-          try { localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(validCloudUsers)); } catch {}
+          if (uList.length === 0 && (meta?.fromCache || meta?.empty)) {
+            return;
+          }
+          setUsers((prev) => {
+            if (uList.length === 0 && prev.length > 0) return prev;
+            const userMap = new Map(prev.map((u) => [u.id || u.uid || u.username?.toLowerCase(), u]));
+            for (const raw of uList) {
+              const u = normalizeUserData(raw);
+              const key = u.id || u.uid || u.username?.toLowerCase();
+              if (!key) continue;
+              const existing = userMap.get(key);
+              if (!existing || !existing.updatedAt || !u.updatedAt || new Date(u.updatedAt) >= new Date(existing.updatedAt)) {
+                userMap.set(key, u);
+              }
+            }
+            const validCloudUsers = deduplicateUsers(Array.from(userMap.values()));
+            try { localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(validCloudUsers)); } catch {}
+            return validCloudUsers;
+          });
         }
       });
     } catch (err) {}
 
     // 2. Multi-Organization Cloud Sync across Devices
     getCloudOrganizations().then((cloudOrgs) => {
-      if (isMounted && Array.isArray(cloudOrgs)) {
-        const validOffices = deduplicateOrganizations(
-          cloudOrgs.filter((o) => o.id !== 'all' && o.id !== 'org_default' && Boolean(o.officeName))
-        );
-        setOrganizations(validOffices);
-        try {
-          localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(validOffices));
-        } catch {}
+      if (isMounted && Array.isArray(cloudOrgs) && cloudOrgs.length > 0) {
+        setOrganizations((prev) => {
+          const orgMap = new Map(prev.map((o) => [o.id, o]));
+          for (const off of cloudOrgs) {
+            if (off.id !== 'all' && off.id !== 'org_default' && Boolean(off.officeName)) {
+              const existing = orgMap.get(off.id);
+              if (!existing || !existing.updatedAt || !off.updatedAt || new Date(off.updatedAt) >= new Date(existing.updatedAt)) {
+                orgMap.set(off.id, off);
+              }
+            }
+          }
+          const validOffices = deduplicateOrganizations(Array.from(orgMap.values()));
+          try {
+            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(validOffices));
+          } catch {}
+          return validOffices;
+        });
       }
     }).catch((e) => console.warn('Cloud organizations sync notice:', e));
 
     // 3. User Accounts Cloud Sync
     getCloudUsers().then((cloudUsers) => {
-      if (Array.isArray(cloudUsers) && isMounted) {
-        const validUsers = deduplicateUsers(cloudUsers.map(normalizeUserData));
-        setUsers(validUsers);
-        try {
-          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(validUsers));
-        } catch {}
+      if (Array.isArray(cloudUsers) && cloudUsers.length > 0 && isMounted) {
+        setUsers((prev) => {
+          const userMap = new Map(prev.map((u) => [u.id || u.uid || u.username?.toLowerCase(), u]));
+          for (const raw of cloudUsers) {
+            const u = normalizeUserData(raw);
+            const key = u.id || u.uid || u.username?.toLowerCase();
+            if (!key) continue;
+            const existing = userMap.get(key);
+            if (!existing || !existing.updatedAt || !u.updatedAt || new Date(u.updatedAt) >= new Date(existing.updatedAt)) {
+              userMap.set(key, u);
+            }
+          }
+          const validUsers = deduplicateUsers(Array.from(userMap.values()));
+          try {
+            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(validUsers));
+          } catch {}
+          return validUsers;
+        });
       }
     }).catch((e) => console.warn('Cloud users sync notice:', e));
 
@@ -4088,18 +4140,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (json.adminUser) savedAdmin = json.adminUser;
         serverSaved = true;
       } else {
-        let errMessage = '';
-        try {
-          const errJson = await res.json();
-          errMessage = errJson.error || errJson.message || '';
-        } catch {
-          const rawText = await res.text().catch(() => '');
-          errMessage = rawText;
-        }
-        console.warn('[AppContext] Primary API office save notice:', errMessage);
+        const { message } = await parseApiError(res);
+        console.warn('[AppContext] Primary API office save notice:', message);
       }
     } catch (err: any) {
-      console.warn('[AppContext] Network or server error during office creation:', err?.message || err);
+      const errMsg = err instanceof ClientApiError ? err.message : (err?.message || err);
+      console.warn('[AppContext] Network or server error during office creation:', errMsg);
     }
 
     // Direct Firestore fallback if server API was bypassed or unavailable
@@ -4206,19 +4252,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         body: JSON.stringify(orgData),
       });
       if (!res.ok) {
-        let errMessage = '';
-        try {
-          const errJson = await res.json();
-          errMessage = errJson.error || errJson.message || '';
-        } catch {
-          const rawText = await res.text().catch(() => '');
-          errMessage = rawText;
-        }
-        addToast('error', 'कार्यालय सुरक्षित हुन सकेन', errMessage || 'सर्भरमा अपडेट गर्न सकिएन।');
+        const { message } = await parseApiError(res);
+        addToast('error', 'कार्यालय सुरक्षित हुन सकेन', message || 'सर्भरमा अपडेट गर्न सकिएन।');
         return false;
       }
     } catch (e: any) {
-      addToast('error', 'कार्यालय सुरक्षित हुन सकेन', e?.message || 'नेटवर्क त्रुटि आयो।');
+      const errMsg = e instanceof ClientApiError ? e.message : (e?.message || 'नेटवर्क त्रुटि आयो।');
+      addToast('error', 'कार्यालय सुरक्षित हुन सकेन', errMsg);
       return false;
     }
 
@@ -4270,12 +4310,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         body: JSON.stringify({ isActive: newIsActive }),
       });
       if (!res.ok) {
-        const errText = await res.text();
-        addToast('error', 'अवस्था परिवर्तन हुन सकेन', errText || 'सर्भरमा अपडेट गर्न सकिएन।');
+        const { message } = await parseApiError(res);
+        addToast('error', 'अवस्था परिवर्तन हुन सकेन', message || 'सर्भरमा अपडेट गर्न सकिएन।');
         return false;
       }
     } catch (e: any) {
-      addToast('error', 'अवस्था परिवर्तन हुन सकेन', e?.message || 'नेटवर्क त्रुटि आयो।');
+      const errMsg = e instanceof ClientApiError ? e.message : (e?.message || 'नेटवर्क त्रुटि आयो।');
+      addToast('error', 'अवस्था परिवर्तन हुन सकेन', errMsg);
       return false;
     }
 

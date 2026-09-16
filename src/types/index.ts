@@ -27,6 +27,7 @@ export interface User {
   mustChangePassword?: boolean; // शुरुको पहिलो लगइनमा अनिवार्य पासवर्ड परिवर्तन गर्नुपर्ने
   isFirstLogin?: boolean;
   createdAt: string;
+  updatedAt?: string;
   lastLogin?: string;
   passwordChangedAt?: string;
 }
