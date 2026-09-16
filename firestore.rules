@@ -2,31 +2,29 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isSignedIn() {
-      return request.auth != null;
+    // System healthcheck and diagnostic collection
+    match /_system/{document=**} {
+      allow read, write: if true;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128;
+    // Credentials collections (managed server-side and by sync)
+    match /user_credentials/{uid} {
+      allow read, write: if true;
     }
 
-    // Multi-tenant Offices
+    match /credentials/{uid} {
+      allow read, write: if true;
+    }
+
+    // Usernames directory for fast O(1) lookup
+    match /usernames/{username} {
+      allow read, write: if true;
+    }
+
+    // Multi-tenant Offices and subcollections (users, fiscal_years, stores, etc.)
     match /offices/{officeId} {
-      allow read: if true;
-      allow write: if true;
+      allow read, write: if true;
 
-      // Office-scoped subcollections: Fiscal Years (Employees, Salaries, Deductions, Taxes)
-      match /fiscal_years/{fiscalYear} {
-        allow read, write: if true;
-      }
-
-      // Office-scoped subcollections: Audit Logs
-      match /audit_logs/{logId} {
-        allow read, write: if true;
-      }
-
-      // Any other office-scoped nested subcollections
       match /{subcollection=**} {
         allow read, write: if true;
       }
@@ -37,12 +35,17 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // System Settings (Support contact, app configs, payroll configs)
+    // System Settings collection
     match /system_settings/{settingKey} {
       allow read, write: if true;
     }
 
-    // Legacy sync collections (maintained for seamless zero-downtime transition)
+    // Employees collection
+    match /employees/{employeeId} {
+      allow read, write: if true;
+    }
+
+    // Legacy and sync collections
     match /system_organizations/{document=**} {
       allow read, write: if true;
     }
@@ -61,3 +64,5 @@ service cloud.firestore {
     }
   }
 }
+
+

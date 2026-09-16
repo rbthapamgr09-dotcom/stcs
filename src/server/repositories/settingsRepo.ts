@@ -1,5 +1,7 @@
 import { adminDb } from '../../lib/firebase-admin.ts';
 import { isSqlEnabled } from './sqlHelper.ts';
+import { withFirestore, PersistenceError } from './firestoreGuard.ts';
+import { assertUnderLimit } from '../utils/chunking.ts';
 import { localGetSetting, localSetSetting } from './localStore.ts';
 import {
   getSystemSetting as sqlGetSystemSetting,
@@ -11,13 +13,16 @@ export async function getSystemSetting(key: string): Promise<any> {
 
   // 1. Firestore
   try {
-    const docSnap = await adminDb.collection('system_settings').doc(key).get();
+    const docSnap = await withFirestore('getSystemSetting', async () => {
+      return await adminDb.collection('system_settings').doc(key).get();
+    }, { retries: 1, timeoutMs: 5000 });
+
     if (docSnap.exists) {
       const data = docSnap.data();
       return data?.data !== undefined ? data.data : data;
     }
   } catch (err: any) {
-    // Fallback
+    console.warn(`[SettingsRepo] Firestore read error for setting ${key}:`, err?.message || err);
   }
 
   // 2. SQL
@@ -26,7 +31,7 @@ export async function getSystemSetting(key: string): Promise<any> {
       const sqlData = await sqlGetSystemSetting(key);
       if (sqlData !== null && sqlData !== undefined) return sqlData;
     } catch (sqlErr: any) {
-      // Fallback
+      console.warn(`[SettingsRepo] SQL read error for setting ${key}:`, sqlErr?.message || sqlErr);
     }
   }
 
@@ -37,29 +42,39 @@ export async function getSystemSetting(key: string): Promise<any> {
 export async function setSystemSetting(key: string, data: any, updatedBy: string = 'system'): Promise<any> {
   if (!key) throw new Error('Setting key is required.');
 
-  // 1. LocalStore persistence
-  localSetSetting(key, data);
+  assertUnderLimit(data, 800_000, `प्रणाली सेटिङ (${key})`);
 
-  // 2. Best-effort Firestore write
-  try {
+  const persistedTo: string[] = [];
+
+  // 1. Primary Firestore write via withFirestore
+  await withFirestore('setSystemSetting', async () => {
     await adminDb.collection('system_settings').doc(key).set({
       key,
       data,
       updatedBy,
       updatedAt: new Date().toISOString(),
     }, { merge: true });
-  } catch (err: any) {
-    // Handled
+  });
+  persistedTo.push('firestore');
+
+  // 2. LocalStore cache persistence (ONLY after Firestore confirms)
+  try {
+    localSetSetting(key, data);
+    persistedTo.push('local');
+  } catch (localErr: any) {
+    console.warn(`[SettingsRepo] Local cache write notice for setting ${key}:`, localErr?.message || localErr);
   }
 
-  // 3. Best-effort SQL write
+  // 3. Mirror to Cloud SQL if operational
   if (await isSqlEnabled()) {
     try {
       await sqlSetSystemSetting(key, data, updatedBy);
+      persistedTo.push('sql');
     } catch (sqlErr: any) {
       console.warn(`[SettingsRepo] SQL mirror notice for setting ${key}:`, sqlErr?.message || sqlErr);
     }
   }
 
-  return { key, data, updatedBy, updatedAt: new Date().toISOString() };
+  const result = { key, data, updatedBy, updatedAt: new Date().toISOString() };
+  return Object.assign({ entity: result, persistedTo }, result);
 }

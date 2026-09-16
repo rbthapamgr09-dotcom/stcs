@@ -1,5 +1,6 @@
 import { db, withDbRetry } from './index.ts';
 import {
+  users,
   employees,
   organizations,
   salarySetups,
@@ -7,7 +8,155 @@ import {
   systemSettings,
   taxReferences,
 } from './schema.ts';
-import { eq } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
+
+// Users
+export async function getUsers() {
+  try {
+    return await withDbRetry(() => db.select().from(users));
+  } catch (error) {
+    console.error('Error fetching users from DB:', error);
+    throw new Error('Failed to fetch users.', { cause: error });
+  }
+}
+
+export async function getUserById(id: number) {
+  try {
+    const res = await withDbRetry(() => db.select().from(users).where(eq(users.id, id)));
+    return res[0] || null;
+  } catch (error) {
+    console.error(`Error fetching user ${id} from DB:`, error);
+    throw new Error(`Failed to fetch user ${id}.`, { cause: error });
+  }
+}
+
+export async function getUserByUid(uid: string) {
+  try {
+    const res = await withDbRetry(() => db.select().from(users).where(eq(users.uid, uid)));
+    return res[0] || null;
+  } catch (error) {
+    console.error(`Error fetching user with uid ${uid} from DB:`, error);
+    throw new Error(`Failed to fetch user with uid ${uid}.`, { cause: error });
+  }
+}
+
+export async function getUserByFirebaseUid(firebaseUid: string) {
+  try {
+    const res = await withDbRetry(() => db.select().from(users).where(eq(users.firebaseUid, firebaseUid)));
+    return res[0] || null;
+  } catch (error) {
+    console.error(`Error fetching user with firebaseUid ${firebaseUid} from DB:`, error);
+    throw new Error(`Failed to fetch user with firebaseUid ${firebaseUid}.`, { cause: error });
+  }
+}
+
+export async function getUserByUsernameOrEmailOrUid(identifier: string) {
+  try {
+    const res = await withDbRetry(() =>
+      db
+        .select()
+        .from(users)
+        .where(
+          or(
+            eq(users.username, identifier),
+            eq(users.email, identifier),
+            eq(users.uid, identifier)
+          )
+        )
+    );
+    return res[0] || null;
+  } catch (error) {
+    console.error(`Error fetching user ${identifier} from DB:`, error);
+    throw new Error(`Failed to fetch user ${identifier}.`, { cause: error });
+  }
+}
+
+export async function getUsersByOrganization(orgId: string) {
+  try {
+    return await withDbRetry(() =>
+      db.select().from(users).where(eq(users.organizationId, orgId))
+    );
+  } catch (error) {
+    console.error(`Error fetching users for org ${orgId} from DB:`, error);
+    throw new Error(`Failed to fetch users for org ${orgId}.`, { cause: error });
+  }
+}
+
+export async function upsertUser(data: any) {
+  try {
+    const uid = data.uid || data.id || data.username;
+    if (!uid) {
+      throw new Error('User uid/id/username is required');
+    }
+    const result = await withDbRetry(() =>
+      db
+        .insert(users)
+        .values({
+          uid,
+          firebaseUid: data.firebaseUid || null,
+          username: data.username || uid,
+          fullName: data.fullName || '',
+          email: data.email || null,
+          role: data.role || 'GENERAL_USER',
+          organizationId: data.organizationId || null,
+          organizationName: data.organizationName || null,
+          designation: data.designation || null,
+          phone: data.phone || null,
+          isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
+          metadata: data.metadata || null,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: users.uid,
+          set: {
+            firebaseUid: data.firebaseUid !== undefined ? data.firebaseUid : undefined,
+            username: data.username,
+            fullName: data.fullName,
+            email: data.email,
+            role: data.role,
+            organizationId: data.organizationId,
+            organizationName: data.organizationName,
+            designation: data.designation,
+            phone: data.phone,
+            isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
+            metadata: data.metadata,
+            updatedAt: new Date(),
+          },
+        })
+        .returning()
+    );
+    return result[0];
+  } catch (error) {
+    console.error('Error upserting user in DB:', error);
+    throw new Error('Failed to upsert user.', { cause: error });
+  }
+}
+
+export async function deleteUserByUid(uid: string) {
+  try {
+    await withDbRetry(() => db.delete(users).where(eq(users.uid, uid)));
+    return true;
+  } catch (error) {
+    console.error(`Error deleting user ${uid} from DB:`, error);
+    throw new Error(`Failed to delete user ${uid}.`, { cause: error });
+  }
+}
+
+export async function linkFirebaseUidToUser(internalUid: string, firebaseUid: string) {
+  try {
+    const res = await withDbRetry(() =>
+      db
+        .update(users)
+        .set({ firebaseUid, updatedAt: new Date() })
+        .where(eq(users.uid, internalUid))
+        .returning()
+    );
+    return res[0] || null;
+  } catch (error) {
+    console.error(`Error linking firebaseUid to user ${internalUid} in DB:`, error);
+    throw new Error(`Failed to link firebaseUid to user.`, { cause: error });
+  }
+}
 
 // Organizations
 export async function getOrganizations() {

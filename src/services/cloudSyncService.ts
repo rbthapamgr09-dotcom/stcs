@@ -15,34 +15,179 @@ import { saveOfficeToFirestore, saveUserToFirestore, getUserFromFirestore } from
 import { deduplicateOrganizations, deduplicateUsers } from '../utils/deduplicate';
 import { auth } from '../lib/firebase';
 
+export class ClientApiError extends Error {
+  state: 'OFFLINE' | 'TIMEOUT' | 'SERVER' | 'VALIDATION' | 'UNKNOWN';
+  code: string;
+
+  constructor(opts: { state: 'OFFLINE' | 'TIMEOUT' | 'SERVER' | 'VALIDATION' | 'UNKNOWN'; code: string; message: string }) {
+    super(opts.message);
+    this.name = 'ClientApiError';
+    this.state = opts.state;
+    this.code = opts.code;
+  }
+}
+
+/**
+ * Extracts human-readable, user-friendly error messages from API responses.
+ * Never returns empty string or unparsed raw object strings.
+ */
+export async function parseApiError(res: Response): Promise<{ code: string; message: string }> {
+  try {
+    const clone = res.clone();
+    try {
+      const data = await clone.json();
+      if (data) {
+        const code = data.code || `HTTP_${res.status}`;
+        const message = data.message || data.error;
+        if (message && typeof message === 'string' && message.trim().length > 0) {
+          return { code, message: message.trim() };
+        }
+      }
+    } catch {
+      const text = await res.clone().text();
+      if (text && text.trim().length > 0 && text.length < 300 && !text.startsWith('<')) {
+        return { code: `HTTP_${res.status}`, message: text.trim() };
+      }
+    }
+  } catch {}
+
+  let code = `HTTP_${res.status}`;
+  let message = '';
+  switch (res.status) {
+    case 503:
+      code = 'SERVICE_UNAVAILABLE';
+      message = 'सर्भरको डाटाबेस हाल उपलब्ध छैन — कृपया केही समयपछि पुनः प्रयास गर्नुहोस्।';
+      break;
+    case 502:
+    case 504:
+      code = 'GATEWAY_ERROR';
+      message = 'सर्भरसँग सम्पर्क हुन सकेन (गेटवे त्रुटि)।';
+      break;
+    case 500:
+      code = 'INTERNAL_SERVER_ERROR';
+      message = 'सर्भरमा आन्तरिक समस्या आयो — विवरण सुरक्षित भएन।';
+      break;
+    case 413:
+      code = 'PAYLOAD_TOO_LARGE';
+      message = 'पठाइएको विवरण सर्भरको सीमाभन्दा ठूलो छ।';
+      break;
+    case 401:
+    case 403:
+      code = 'UNAUTHORIZED';
+      message = 'यस कार्यको लागि अनुमति छैन।';
+      break;
+    case 400:
+      code = 'VALIDATION_ERROR';
+      message = 'पठाइएको विवरण मान्य छैन।';
+      break;
+    case 404:
+      code = 'NOT_FOUND';
+      message = 'खोजिएको विवरण फेला परेन।';
+      break;
+    default:
+      message = `सर्भरबाट त्रुटि प्राप्त भयो (Status: ${res.status})।`;
+  }
+  return { code, message };
+}
+
 /**
  * Helper to perform authenticated HTTP requests to backend API,
  * automatically passing the Firebase ID token in Authorization header when available.
+ * Implements 10-second timeout, offline detection, and 2-attempt retry with backoff.
  */
-export async function authenticatedFetch(url: string, init?: RequestInit): Promise<Response> {
-  let token: string | null = null;
-  try {
-    if (auth?.currentUser) {
-      token = await auth.currentUser.getIdToken();
+export async function authenticatedFetch(
+  url: string,
+  init?: RequestInit,
+  opts?: { retries?: number; timeoutMs?: number }
+): Promise<Response> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new ClientApiError({
+      state: 'OFFLINE',
+      code: 'OFFLINE',
+      message: 'इन्टरनेट सम्पर्क विच्छेद भएको छ (Offline)। कृपया इन्टरनेट जाँच गर्नुहोस्।',
+    });
+  }
+
+  const maxRetries = opts?.retries ?? (init?.method && init.method !== 'GET' ? 2 : 1);
+  const timeoutMs = opts?.timeoutMs ?? 10000;
+  const backoffs = [800, 2400];
+
+  let lastError: any = null;
+  let lastResponse: Response | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      let token: string | null = null;
+      try {
+        if (auth?.currentUser) {
+          token = await auth.currentUser.getIdToken();
+        }
+      } catch (err) {
+        // Non-fatal token retrieval notice
+      }
+
+      const headers = new Headers(init?.headers || {});
+      if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+
+      const signal = init?.signal ? init.signal : controller.signal;
+
+      const res = await fetch(url, {
+        ...init,
+        headers,
+        signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      // Retry on 502, 503, 504
+      if ([502, 503, 504].includes(res.status) && attempt < maxRetries) {
+        lastResponse = res;
+        await new Promise((r) => setTimeout(r, backoffs[attempt] || 2400));
+        continue;
+      }
+
+      return res;
+    } catch (fetchErr: any) {
+      clearTimeout(timeoutId);
+      lastError = fetchErr;
+
+      if (fetchErr?.name === 'AbortError') {
+        if (attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, backoffs[attempt] || 2400));
+          continue;
+        }
+        throw new ClientApiError({
+          state: 'TIMEOUT',
+          code: 'TIMEOUT',
+          message: 'सर्भरबाट प्रतिक्रिया आउन १० सेकेन्डभन्दा बढी समय लाग्यो (Timeout)।',
+        });
+      }
+
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, backoffs[attempt] || 2400));
+        continue;
+      }
     }
-  } catch (err) {
-    // Non-fatal token retrieval notice
   }
 
-  const headers = new Headers(init?.headers || {});
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-
-  return fetch(url, {
-    ...init,
-    headers,
+  if (lastResponse) return lastResponse;
+  throw new ClientApiError({
+    state: 'SERVER',
+    code: 'NETWORK_ERROR',
+    message: lastError?.message || 'सर्भरसँग सम्पर्क हुन सकेन।',
   });
 }
 
 export interface CloudSaveResult {
   ok: boolean;
+  code?: string;
   error?: string;
+  state?: 'OFFLINE' | 'TIMEOUT' | 'SERVER' | 'VALIDATION' | 'UNKNOWN';
 }
 
 /**
@@ -64,12 +209,16 @@ export async function saveCloudFiscalYearConfig(data: {
       }),
     });
     if (!res.ok) {
-      const errText = await res.text();
-      return { ok: false, error: errText || 'Failed to save fiscal year config' };
+      const parsed = await parseApiError(res);
+      const state = res.status >= 500 ? 'SERVER' : res.status === 400 ? 'VALIDATION' : 'UNKNOWN';
+      return { ok: false, code: parsed.code, error: parsed.message, state };
     }
     return { ok: true };
   } catch (err: any) {
-    return { ok: false, error: err?.message || 'Network error saving fiscal year config' };
+    if (err instanceof ClientApiError) {
+      return { ok: false, code: err.code, error: err.message, state: err.state };
+    }
+    return { ok: false, code: 'NETWORK_ERROR', error: err?.message || 'नेटवर्क त्रुटि आयो।', state: 'SERVER' };
   }
 }
 
@@ -88,12 +237,16 @@ export async function saveCloudFyDatabase(
       body: JSON.stringify({ data: fyDb }),
     });
     if (!res.ok) {
-      const errText = await res.text();
-      return { ok: false, error: errText || 'Failed to save FY database' };
+      const parsed = await parseApiError(res);
+      const state = res.status >= 500 ? 'SERVER' : res.status === 400 ? 'VALIDATION' : 'UNKNOWN';
+      return { ok: false, code: parsed.code, error: parsed.message, state };
     }
     return { ok: true };
   } catch (err: any) {
-    return { ok: false, error: err?.message || 'Network error saving FY database' };
+    if (err instanceof ClientApiError) {
+      return { ok: false, code: err.code, error: err.message, state: err.state };
+    }
+    return { ok: false, code: 'NETWORK_ERROR', error: err?.message || 'नेटवर्क त्रुटि आयो।', state: 'SERVER' };
   }
 }
 
@@ -127,12 +280,16 @@ export async function saveCloudOrgStore(orgId: string, store: any): Promise<Clou
       body: JSON.stringify({ data: store }),
     });
     if (!res.ok) {
-      const errText = await res.text();
-      return { ok: false, error: errText || 'Failed to save organization store' };
+      const parsed = await parseApiError(res);
+      const state = res.status >= 500 ? 'SERVER' : res.status === 400 ? 'VALIDATION' : 'UNKNOWN';
+      return { ok: false, code: parsed.code, error: parsed.message, state };
     }
     return { ok: true };
   } catch (err: any) {
-    return { ok: false, error: err?.message || 'Network error saving store' };
+    if (err instanceof ClientApiError) {
+      return { ok: false, code: err.code, error: err.message, state: err.state };
+    }
+    return { ok: false, code: 'NETWORK_ERROR', error: err?.message || 'Network error saving store', state: 'SERVER' };
   }
 }
 
@@ -454,17 +611,22 @@ export async function saveCloudOrganization(org: OrganizationItem): Promise<Clou
           body: JSON.stringify({ office: payload }),
         });
         if (!postRes.ok) {
-          const errText = await postRes.text();
-          return { ok: false, error: errText || 'Failed to save organization' };
+          const parsed = await parseApiError(postRes);
+          const state = postRes.status >= 500 ? 'SERVER' : postRes.status === 400 ? 'VALIDATION' : 'UNKNOWN';
+          return { ok: false, code: parsed.code, error: parsed.message, state };
         }
       } else {
-        const errText = await res.text();
-        return { ok: false, error: errText || 'Failed to update organization' };
+        const parsed = await parseApiError(res);
+        const state = res.status >= 500 ? 'SERVER' : res.status === 400 ? 'VALIDATION' : 'UNKNOWN';
+        return { ok: false, code: parsed.code, error: parsed.message, state };
       }
     }
     return { ok: true };
   } catch (err: any) {
-    return { ok: false, error: err?.message || 'Network error saving organization' };
+    if (err instanceof ClientApiError) {
+      return { ok: false, code: err.code, error: err.message, state: err.state };
+    }
+    return { ok: false, code: 'NETWORK_ERROR', error: err?.message || 'Network error saving organization', state: 'SERVER' };
   }
 }
 
@@ -513,13 +675,21 @@ export async function getCloudOrganizations(): Promise<OrganizationItem[] | null
 /**
  * Removes an organization from Cloud SQL and Cloud Firestore
  */
-export async function deleteCloudOrganization(orgId: string): Promise<boolean> {
+export async function deleteCloudOrganization(orgId: string): Promise<CloudSaveResult> {
   try {
-    await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
+    const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
       method: 'DELETE',
     });
-  } catch (err) {
-    console.warn('Could not delete organization from Backend API:', err);
+    if (!res.ok) {
+      const parsed = await parseApiError(res);
+      const state = res.status >= 500 ? 'SERVER' : res.status === 400 ? 'VALIDATION' : 'UNKNOWN';
+      return { ok: false, code: parsed.code, error: parsed.message, state };
+    }
+  } catch (err: any) {
+    if (err instanceof ClientApiError) {
+      return { ok: false, code: err.code, error: err.message, state: err.state };
+    }
+    return { ok: false, code: 'NETWORK_ERROR', error: err?.message || 'नेटवर्क त्रुटि आयो।', state: 'SERVER' };
   }
 
   if (canWriteFirestore()) {
@@ -530,7 +700,7 @@ export async function deleteCloudOrganization(orgId: string): Promise<boolean> {
       handleFirestoreWriteError(fsErr, 'deleteCloudOrganization');
     }
   }
-  return true;
+  return { ok: true };
 }
 
 /**
@@ -733,12 +903,16 @@ export async function saveSingleUserToCloud(u: User): Promise<CloudSaveResult> {
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      const errText = await res.text();
-      return { ok: false, error: errText || 'Failed to sync user' };
+      const parsed = await parseApiError(res);
+      const state = res.status >= 500 ? 'SERVER' : res.status === 400 ? 'VALIDATION' : 'UNKNOWN';
+      return { ok: false, code: parsed.code, error: parsed.message, state };
     }
     return { ok: true };
-  } catch (sqlErr: any) {
-    return { ok: false, error: sqlErr?.message || 'Network error syncing user' };
+  } catch (err: any) {
+    if (err instanceof ClientApiError) {
+      return { ok: false, code: err.code, error: err.message, state: err.state };
+    }
+    return { ok: false, code: 'NETWORK_ERROR', error: err?.message || 'Network error syncing user', state: 'SERVER' };
   }
 }
 
@@ -1050,16 +1224,24 @@ export async function saveCloudSystemSetting(key: string, data: any): Promise<Cl
 /**
  * Removes a deleted user account from backend
  */
-export async function deleteCloudUser(userId: string, officeId?: string): Promise<void> {
-  if (!userId) return;
+export async function deleteCloudUser(userId: string, officeId?: string): Promise<CloudSaveResult> {
+  if (!userId) return { ok: false, error: 'User ID is required' };
 
   // 1. Backend API
   try {
-    await authenticatedFetch(`/api/users/${encodeURIComponent(userId)}`, {
+    const res = await authenticatedFetch(`/api/users/${encodeURIComponent(userId)}`, {
       method: 'DELETE',
     });
-  } catch (err) {
-    console.warn('Could not delete user from backend API:', err);
+    if (!res.ok) {
+      const parsed = await parseApiError(res);
+      const state = res.status >= 500 ? 'SERVER' : res.status === 400 ? 'VALIDATION' : 'UNKNOWN';
+      return { ok: false, code: parsed.code, error: parsed.message, state };
+    }
+  } catch (err: any) {
+    if (err instanceof ClientApiError) {
+      return { ok: false, code: err.code, error: err.message, state: err.state };
+    }
+    return { ok: false, code: 'NETWORK_ERROR', error: err?.message || 'Network error deleting user', state: 'SERVER' };
   }
 
   if (officeId && officeId !== 'all') {
@@ -1079,6 +1261,8 @@ export async function deleteCloudUser(userId: string, officeId?: string): Promis
       handleFirestoreWriteError(fsErr, 'deleteCloudUser');
     }
   }
+
+  return { ok: true };
 }
 
 /**

@@ -1,5 +1,13 @@
 import { adminDb, adminAuth } from '../../lib/firebase-admin.ts';
 import { isSqlEnabled } from './sqlHelper.ts';
+import { withFirestore, PersistenceError } from './firestoreGuard.ts';
+import { assertUnderLimit } from '../utils/chunking.ts';
+import {
+  hashPassword,
+  setUserCredentials,
+  getUserCredentials,
+  deleteUserCredentials,
+} from '../auth/credentials.ts';
 import {
   localSaveUser,
   localGetUserByUid,
@@ -8,118 +16,314 @@ import {
   localDeleteUser,
 } from './localStore.ts';
 import {
-  getOrCreateUser as sqlGetOrCreateUser,
+  getUsers as sqlGetUsers,
+  getUserById as sqlGetUserById,
   getUserByUid as sqlGetUserByUid,
   getUserByFirebaseUid as sqlGetUserByFirebaseUid,
   getUserByUsernameOrEmailOrUid as sqlGetUserByUsernameOrEmailOrUid,
-  getUsers as sqlGetUsers,
   getUsersByOrganization as sqlGetUsersByOrganization,
+  upsertUser as sqlUpsertUser,
   deleteUserByUid as sqlDeleteUserByUid,
   linkFirebaseUidToUser as sqlLinkFirebaseUidToUser,
-} from '../../db/users.ts';
+} from '../../db/payroll.ts';
 
 export interface UserEntity {
-  id: string;
+  id?: string;
   uid: string;
-  firebaseUid?: string;
   username: string;
-  fullName: string;
+  usernameLower?: string;
   email: string;
-  role: 'SUPER_ADMIN' | 'ADMIN' | 'ACCOUNTANT' | 'GENERAL_USER' | 'VIEWER';
+  emailLower?: string;
+  fullName: string;
+  role: string;
   organizationId: string;
   organizationName?: string;
-  designation?: string;
+  isActive: boolean;
   phone?: string;
+  panNumber?: string;
+  designation?: string;
   password?: string;
   securityPin?: string;
   securityQuestion?: string;
   securityAnswer?: string;
   mustChangePassword?: boolean;
   isFirstLogin?: boolean;
-  isActive: boolean;
-  metadata?: Record<string, any>;
+  permissions?: string[];
+  searchKeywords?: string[];
+  firebaseUid?: string;
+  metadata?: any;
   createdAt?: string;
   updatedAt?: string;
 }
 
-export function sanitizeUser(u: any): any {
-  if (!u) return null;
-  const userCopy = { ...u };
-  delete userCopy.password;
-  if (userCopy.metadata) {
-    const metaCopy = { ...userCopy.metadata };
-    delete metaCopy.password;
-    userCopy.metadata = metaCopy;
-  }
-  return userCopy;
+export type UserSaveResult = {
+  entity: UserEntity;
+  persistedTo: string[];
+} & UserEntity;
+
+export function sanitizeUser(u: any): UserEntity {
+  const sanitized = { ...u };
+  delete sanitized.password;
+  delete sanitized.salt;
+  delete sanitized.hash;
+  return sanitized;
+}
+
+export function buildSearchKeywords(user: any): string[] {
+  const words = new Set<string>();
+  const add = (str?: string) => {
+    if (!str || typeof str !== 'string') return;
+    const clean = str.trim().toLowerCase();
+    if (!clean) return;
+    words.add(clean);
+    clean.split(/[\s,.-_@]+/).forEach((part) => {
+      if (part.length > 1) words.add(part);
+    });
+  };
+
+  add(user.username);
+  add(user.fullName);
+  add(user.email);
+  add(user.designation);
+  add(user.phone);
+  add(user.panNumber);
+  add(user.organizationName);
+
+  return Array.from(words);
 }
 
 function cleanUserData(data: any): UserEntity {
   if (!data || typeof data !== 'object') {
     data = {};
   }
-  const uid = String(data.uid || data.id || `user_${Date.now()}`);
-  const username = String(data.username || (data.email && data.email.includes('@') ? data.email.split('@')[0] : uid)).trim();
-  
-  // Validate email format or generate fallback
-  let rawEmail = data.email ? String(data.email).trim().toLowerCase() : '';
-  if (!rawEmail || !rawEmail.includes('@') || rawEmail === '-' || rawEmail.length < 5) {
-    rawEmail = `${username.toLowerCase().replace(/[^a-z0-9_]/g, '')}@system.local`;
-  }
-  const email = rawEmail;
-  const meta = data.metadata || {};
+  const uid = data.uid || data.id || `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const username = (data.username || (data.email ? data.email.split('@')[0] : `user_${Date.now()}`)).trim();
+  const email = (data.email || `${username.toLowerCase()}@system.local`).trim();
+  const usernameLower = username.toLowerCase();
+  const emailLower = email.toLowerCase();
 
-  return {
-    id: uid,
-    uid,
-    firebaseUid: data.firebaseUid || meta.firebaseUid || undefined,
+  const userObj: UserEntity = {
+    id: String(data.id || uid),
+    uid: String(uid),
     username,
-    fullName: data.fullName || meta.fullName || username,
+    usernameLower,
     email,
+    emailLower,
+    fullName: data.fullName || data.name || username,
     role: data.role || 'GENERAL_USER',
-    organizationId: data.organizationId || 'org_default',
-    organizationName: data.organizationName || meta.organizationName || '',
-    designation: data.designation || meta.designation || '',
-    phone: data.phone || meta.phone || '',
-    password: data.password || meta.password || undefined,
-    securityPin: data.securityPin || meta.securityPin || '1234',
-    securityQuestion: data.securityQuestion || meta.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
-    securityAnswer: data.securityAnswer || meta.securityAnswer || 'नेपाल',
-    mustChangePassword: data.mustChangePassword !== undefined ? Boolean(data.mustChangePassword) : Boolean(meta.mustChangePassword),
-    isFirstLogin: data.isFirstLogin !== undefined ? Boolean(data.isFirstLogin) : Boolean(meta.isFirstLogin),
+    organizationId: data.organizationId || 'all',
+    organizationName: data.organizationName || '',
     isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
-    metadata: {
-      ...meta,
-      password: data.password || meta.password || undefined,
-      securityPin: data.securityPin || meta.securityPin || '1234',
-      securityQuestion: data.securityQuestion || meta.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
-      securityAnswer: data.securityAnswer || meta.securityAnswer || 'नेपाल',
-      mustChangePassword: Boolean(data.mustChangePassword || meta.mustChangePassword),
-      isFirstLogin: Boolean(data.isFirstLogin || meta.isFirstLogin),
-    },
+    phone: data.phone || '',
+    panNumber: data.panNumber || '',
+    designation: data.designation || '',
+    password: data.password || undefined,
+    securityPin: data.securityPin || '1234',
+    securityQuestion: data.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+    securityAnswer: data.securityAnswer || 'नेपाल',
+    mustChangePassword: data.mustChangePassword !== undefined ? Boolean(data.mustChangePassword) : false,
+    isFirstLogin: data.isFirstLogin !== undefined ? Boolean(data.isFirstLogin) : false,
+    permissions: Array.isArray(data.permissions) ? data.permissions : [],
+    firebaseUid: data.firebaseUid || undefined,
+    metadata: data.metadata || {},
     createdAt: data.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+
+  userObj.searchKeywords = buildSearchKeywords(userObj);
+  return userObj;
 }
 
-export async function saveUser(data: any): Promise<UserEntity> {
-  const user = cleanUserData(data);
-
-  // 1. LocalStore persistence
-  try {
-    localSaveUser(user);
-  } catch (localErr: any) {
-    console.warn(`[UserRepo] Local store write notice for user ${user.uid}:`, localErr?.message || localErr);
+/**
+ * Task 2: Atomic user provisioning via Firestore Transaction
+ */
+export async function provisionUserAtomic(params: {
+  userData: any;
+  password?: string;
+  mustChangePassword?: boolean;
+}): Promise<UserSaveResult> {
+  const user = cleanUserData(params.userData);
+  const username = (user.username || '').trim();
+  const usernameLower = username.toLowerCase();
+  if (!usernameLower) {
+    const err: any = new Error('कृपया मान्य प्रयोगकर्ता नाम (Username) प्रविष्ट गर्नुहोस्।');
+    err.code = 'INVALID_USERNAME';
+    err.status = 400;
+    throw err;
   }
 
-  // 2. Firebase Auth provisioning / update with Custom Claims (Task 8 & 11)
+  const rawPassword = params.password || params.userData.password;
+  if (!rawPassword) {
+    const err: any = new Error('पासवर्ड अनिवार्य छ।');
+    err.code = 'PASSWORD_REQUIRED';
+    err.status = 400;
+    throw err;
+  }
+
+  const uid = user.uid || `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  user.uid = uid;
+  user.id = uid;
+  user.username = username;
+  user.usernameLower = usernameLower;
+  user.emailLower = (user.email || '').toLowerCase().trim();
+  user.searchKeywords = buildSearchKeywords(user);
+  user.mustChangePassword = params.mustChangePassword ?? true;
+  user.isFirstLogin = true;
+  user.createdAt = user.createdAt || new Date().toISOString();
+  user.updatedAt = new Date().toISOString();
+
+  assertUnderLimit(user, 500_000, `प्रयोगकर्ता (${username})`);
+
+  // Hash password using scrypt before entering transaction
+  const credRecord = await hashPassword(rawPassword);
+
+  // 1. Firestore Transaction (Atomic across usernames, users, user_credentials, office mirror)
+  await withFirestore('provisionUserAtomic', async () => {
+    await adminDb.runTransaction(async (transaction) => {
+      const usernameRef = adminDb.collection('usernames').doc(usernameLower);
+      const userRef = adminDb.collection('users').doc(uid);
+      const credRef = adminDb.collection('user_credentials').doc(uid);
+
+      // Check if username is already taken by another user
+      const usernameDoc = await transaction.get(usernameRef);
+      if (usernameDoc.exists) {
+        const existingData = usernameDoc.data();
+        if (existingData?.uid && existingData.uid !== uid) {
+          const err: any = new Error(`यो प्रयोगकर्ता नाम '${username}' पहिले नै दर्ता भइसकेको छ।`);
+          err.code = 'USERNAME_TAKEN';
+          err.status = 409;
+          throw err;
+        }
+      }
+
+      const userToSave = sanitizeUser(user);
+
+      // 1. usernames/{usernameLower} index
+      transaction.set(usernameRef, {
+        uid,
+        username,
+        usernameLower,
+        authEmail: user.email || `${usernameLower}@system.local`,
+        role: user.role,
+        organizationId: user.organizationId,
+        isActive: user.isActive,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      }, { merge: true });
+
+      // 2. users/{uid} profile
+      transaction.set(userRef, userToSave, { merge: true });
+
+      // 3. user_credentials/{uid}
+      transaction.set(credRef, {
+        uid,
+        usernameLower,
+        algo: credRecord.algo,
+        salt: credRecord.salt,
+        hash: credRecord.hash,
+        params: credRecord.params,
+        mustChangePassword: user.mustChangePassword,
+        passwordUpdatedAt: new Date().toISOString(),
+      }, { merge: true });
+
+      // 4. offices/{organizationId}/users/{uid} mirror
+      if (user.organizationId && user.organizationId !== 'all') {
+        const officeUserRef = adminDb
+          .collection('offices')
+          .doc(user.organizationId)
+          .collection('users')
+          .doc(uid);
+        transaction.set(officeUserRef, userToSave, { merge: true });
+      }
+    });
+  });
+
+  const persistedTo: string[] = ['firestore'];
+
+  // 2. LocalStore cache
+  try {
+    localSaveUser(user);
+    persistedTo.push('local');
+  } catch (localErr: any) {
+    console.warn(`[UserRepo] Local cache write notice for ${uid}:`, localErr?.message || localErr);
+  }
+
+  // 3. Cloud SQL mirror if enabled
+  if (await isSqlEnabled()) {
+    try {
+      await sqlUpsertUser(user);
+      persistedTo.push('sql');
+    } catch (sqlErr: any) {
+      console.warn(`[UserRepo] SQL mirror notice for ${uid}:`, sqlErr?.message || sqlErr);
+    }
+  }
+
+  // 4. Firebase Auth provisioning (non-blocking)
+  if (user.email && user.email.includes('@') && !user.email.endsWith('@example.com')) {
+    try {
+      let authUser: any = null;
+      try {
+        authUser = await adminAuth.getUserByEmail(user.email);
+      } catch {}
+
+      if (!authUser) {
+        try {
+          authUser = await adminAuth.createUser({
+            uid,
+            email: user.email,
+            password: rawPassword,
+            displayName: user.fullName || username,
+          });
+        } catch (createErr: any) {
+          if (createErr?.code === 'auth/uid-already-exists') {
+            authUser = await adminAuth.getUser(uid);
+          } else if (createErr?.code === 'auth/email-already-exists' && user.email) {
+            authUser = await adminAuth.getUserByEmail(user.email);
+          }
+        }
+      }
+
+      if (authUser) {
+        user.firebaseUid = authUser.uid;
+        await adminAuth.setCustomUserClaims(authUser.uid, {
+          role: user.role,
+          organizationId: user.organizationId,
+        }).catch(() => {});
+      }
+    } catch (authErr) {
+      console.warn('[UserRepo] Firebase Auth sync notice during provision:', authErr);
+    }
+  }
+
+  return Object.assign({ entity: user, persistedTo }, user);
+}
+
+export async function saveUser(data: any): Promise<UserSaveResult> {
+  const user = cleanUserData(data);
+  assertUnderLimit(user, 500_000, `प्रयोगकर्ता (${user.username})`);
+
+  // If password is provided, ensure user_credentials is populated with scrypt
+  if (user.password) {
+    try {
+      await setUserCredentials(
+        user.uid,
+        user.username,
+        user.password,
+        user.mustChangePassword ?? false
+      );
+    } catch (credErr) {
+      console.warn('[UserRepo] Error saving user credentials:', credErr);
+    }
+  }
+
+  // 1. Firebase Auth provisioning / update with Custom Claims
   try {
     let authUser: any = null;
     if (user.email && user.email.includes('@') && !user.email.endsWith('@example.com')) {
       try {
         authUser = await adminAuth.getUserByEmail(user.email);
       } catch {
-        // User not found in Firebase Auth yet
+        // Not found in Auth yet
       }
 
       if (!authUser) {
@@ -127,11 +331,10 @@ export async function saveUser(data: any): Promise<UserEntity> {
           authUser = await adminAuth.createUser({
             uid: user.uid,
             email: user.email,
-            password: user.password || 'admin123',
+            password: user.password || `Temp@${Math.random().toString(36).substring(2, 10)}!`,
             displayName: user.fullName || user.username,
           });
         } catch (createErr: any) {
-          // If UID exists or email exists with different UID
           if (createErr?.code === 'auth/uid-already-exists') {
             authUser = await adminAuth.getUser(user.uid);
           } else if (createErr?.code === 'auth/email-already-exists' && user.email) {
@@ -142,13 +345,14 @@ export async function saveUser(data: any): Promise<UserEntity> {
 
       if (authUser) {
         user.firebaseUid = authUser.uid;
-        // Set Custom Claims for fast, secure RBAC
         try {
           await adminAuth.setCustomUserClaims(authUser.uid, {
             role: user.role,
             organizationId: user.organizationId,
           });
-        } catch {}
+        } catch (claimsErr) {
+          console.warn('[UserRepo] Notice setting claims for user:', claimsErr);
+        }
 
         if (user.password) {
           try {
@@ -156,7 +360,9 @@ export async function saveUser(data: any): Promise<UserEntity> {
               password: user.password,
               displayName: user.fullName || user.username,
             });
-          } catch {}
+          } catch (updateErr) {
+            console.warn('[UserRepo] Notice updating auth password:', updateErr);
+          }
         }
       }
     }
@@ -164,8 +370,10 @@ export async function saveUser(data: any): Promise<UserEntity> {
     console.warn('[UserRepo] Firebase Auth sync notice for user', user.username, ':', authErr?.message || authErr);
   }
 
-  // 3. Best-effort Firestore write via adminDb
-  try {
+  const persistedTo: string[] = [];
+
+  // 2. Primary Firestore write via adminDb with withFirestore
+  await withFirestore('saveUser', async () => {
     const userToSave = sanitizeUser(user);
     const userRef = adminDb.collection('users').doc(user.uid);
     await userRef.set(userToSave, { merge: true });
@@ -174,46 +382,47 @@ export async function saveUser(data: any): Promise<UserEntity> {
       const usernameRef = adminDb.collection('usernames').doc(user.username.toLowerCase());
       await usernameRef.set({
         uid: user.uid,
+        username: user.username,
+        usernameLower: user.username.toLowerCase(),
         authEmail: user.email,
         role: user.role,
         organizationId: user.organizationId,
         isActive: user.isActive,
-        createdAt: user.createdAt,
-      }, { merge: true });
-    }
-
-    // Write server-only credentials doc for verification fallback
-    if (user.password) {
-      await adminDb.collection('credentials').doc(user.uid).set({
-        uid: user.uid,
-        username: user.username,
-        password: user.password,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
     }
-  } catch (err: any) {
-    // Handled
+
+    // Keep office subcollection synced if organization is specific
+    if (user.organizationId && user.organizationId !== 'all') {
+      const officeUserRef = adminDb
+        .collection('offices')
+        .doc(user.organizationId)
+        .collection('users')
+        .doc(user.uid);
+      await officeUserRef.set(userToSave, { merge: true });
+    }
+  });
+  persistedTo.push('firestore');
+
+  // 3. Local cache persistence (ONLY after Firestore confirms)
+  try {
+    localSaveUser(user);
+    persistedTo.push('local');
+  } catch (localErr: any) {
+    console.warn(`[UserRepo] Local cache write notice for user ${user.uid}:`, localErr?.message || localErr);
   }
 
-  // 4. Best-effort mirror to Cloud SQL
+  // 4. Mirror to Cloud SQL if enabled
   if (await isSqlEnabled()) {
     try {
-      await sqlGetOrCreateUser(
-        user.uid,
-        user.email,
-        user.username,
-        user.fullName,
-        user.role,
-        user.organizationId,
-        user.metadata || user,
-        user.firebaseUid
-      );
+      await sqlUpsertUser(user);
+      persistedTo.push('sql');
     } catch (sqlErr: any) {
       console.warn(`[UserRepo] SQL mirror notice for user ${user.uid}:`, sqlErr?.message || sqlErr);
     }
   }
 
-  return user;
+  return Object.assign({ entity: user, persistedTo }, user);
 }
 
 export async function getUserByUid(uid: string): Promise<UserEntity | null> {
@@ -221,12 +430,15 @@ export async function getUserByUid(uid: string): Promise<UserEntity | null> {
 
   // 1. Firestore
   try {
-    const docSnap = await adminDb.collection('users').doc(uid).get();
+    const docSnap = await withFirestore('getUserByUid', async () => {
+      return await adminDb.collection('users').doc(uid).get();
+    }, { retries: 1, timeoutMs: 5000 });
+
     if (docSnap.exists) {
       return cleanUserData(docSnap.data());
     }
   } catch (err: any) {
-    // Fallback
+    console.warn(`[UserRepo] Firestore read error for user ${uid}:`, err?.message || err);
   }
 
   // 2. SQL
@@ -235,7 +447,7 @@ export async function getUserByUid(uid: string): Promise<UserEntity | null> {
       const sqlUser = await sqlGetUserByUid(uid);
       if (sqlUser) return cleanUserData(sqlUser);
     } catch (sqlErr: any) {
-      // Fallback
+      console.warn(`[UserRepo] SQL read error for user ${uid}:`, sqlErr?.message || sqlErr);
     }
   }
 
@@ -248,39 +460,85 @@ export async function getUserByUid(uid: string): Promise<UserEntity | null> {
 
 export async function getUserByUsername(username: string): Promise<UserEntity | null> {
   if (!username) return null;
-  const clean = username.trim().toLowerCase();
+  const qLower = username.toLowerCase().trim();
 
-  // 1. Firestore via usernames index
+  // 1. O(1) usernames index
   try {
-    const usernameDoc = await adminDb.collection('usernames').doc(clean).get();
-    if (usernameDoc.exists) {
-      const { uid } = usernameDoc.data() as any;
-      if (uid) {
-        const user = await getUserByUid(uid);
-        if (user) return user;
+    const docSnap = await withFirestore('getUserByUsernameIndex', async () => {
+      return await adminDb.collection('usernames').doc(qLower).get();
+    }, { retries: 1, timeoutMs: 5000 });
+
+    if (docSnap.exists) {
+      const uData = docSnap.data();
+      if (uData?.uid) {
+        const fullUser = await getUserByUid(uData.uid);
+        if (fullUser) return fullUser;
       }
     }
-    const snap = await adminDb.collection('users').where('username', '==', username.trim()).limit(1).get();
-    if (!snap.empty) {
-      return cleanUserData(snap.docs[0].data());
+
+    // 2. Query users collection by usernameLower
+    const usernameLowerSnap = await adminDb.collection('users')
+      .where('usernameLower', '==', qLower)
+      .limit(1)
+      .get();
+    if (!usernameLowerSnap.empty) {
+      return cleanUserData(usernameLowerSnap.docs[0].data());
+    }
+
+    // 2b. Query users collection by legacy username
+    const usernameSnap = await adminDb.collection('users')
+      .where('username', '==', username.trim())
+      .limit(1)
+      .get();
+    if (!usernameSnap.empty) {
+      return cleanUserData(usernameSnap.docs[0].data());
+    }
+
+    // 3. Query users collection by emailLower
+    const emailLowerSnap = await adminDb.collection('users')
+      .where('emailLower', '==', qLower)
+      .limit(1)
+      .get();
+    if (!emailLowerSnap.empty) {
+      return cleanUserData(emailLowerSnap.docs[0].data());
+    }
+
+    const emailSnap = await adminDb.collection('users')
+      .where('email', '==', username.trim())
+      .limit(1)
+      .get();
+    if (!emailSnap.empty) {
+      return cleanUserData(emailSnap.docs[0].data());
     }
   } catch (err: any) {
-    // Fallback
+    console.warn(`[UserRepo] Firestore read error for username ${username}:`, err?.message || err);
   }
 
-  // 2. SQL fallback
+  // 4. SQL fallback
   if (await isSqlEnabled()) {
     try {
       const sqlUser = await sqlGetUserByUsernameOrEmailOrUid(username);
       if (sqlUser) return cleanUserData(sqlUser);
     } catch (sqlErr: any) {
-      // Fallback
+      console.warn(`[UserRepo] SQL read error for username ${username}:`, sqlErr?.message || sqlErr);
     }
   }
 
-  // 3. LocalStore fallback
+  // 5. LocalStore fallback
   const local = localGetUserByUsername(username);
   if (local) return cleanUserData(local);
+
+  // 6. Full list scan fallback
+  try {
+    const allUsers = await listAllUsers();
+    const found = allUsers.find(
+      (u) =>
+        u.username?.toLowerCase() === qLower ||
+        u.email?.toLowerCase() === qLower ||
+        u.uid === username.trim()
+    );
+    if (found) return cleanUserData(found);
+  } catch {}
 
   return null;
 }
@@ -290,7 +548,10 @@ export async function getUserByFirebaseUid(firebaseUid: string): Promise<UserEnt
 
   // 1. Firestore
   try {
-    const snap = await adminDb.collection('users').where('firebaseUid', '==', firebaseUid).limit(1).get();
+    const snap = await withFirestore('getUserByFirebaseUid', async () => {
+      return await adminDb.collection('users').where('firebaseUid', '==', firebaseUid).limit(1).get();
+    }, { retries: 1, timeoutMs: 5000 });
+
     if (!snap.empty) {
       return cleanUserData(snap.docs[0].data());
     }
@@ -299,7 +560,7 @@ export async function getUserByFirebaseUid(firebaseUid: string): Promise<UserEnt
       return cleanUserData(docSnap.data());
     }
   } catch (err: any) {
-    // Fallback
+    console.warn(`[UserRepo] Firestore read error for firebaseUid ${firebaseUid}:`, err?.message || err);
   }
 
   // 2. SQL
@@ -308,42 +569,39 @@ export async function getUserByFirebaseUid(firebaseUid: string): Promise<UserEnt
       const sqlUser = await sqlGetUserByFirebaseUid(firebaseUid);
       if (sqlUser) return cleanUserData(sqlUser);
     } catch (sqlErr: any) {
-      // Fallback
+      console.warn(`[UserRepo] SQL read error for firebaseUid ${firebaseUid}:`, sqlErr?.message || sqlErr);
     }
   }
 
   // 3. LocalStore
   const all = localListUsers();
-  const found = all.find((u) => u.firebaseUid === firebaseUid || u.uid === firebaseUid);
+  const found = all.find((u: any) => u.firebaseUid === firebaseUid || u.uid === firebaseUid);
   if (found) return cleanUserData(found);
 
   return null;
 }
 
-export async function getUserByUsernameOrEmailOrUid(query: string): Promise<UserEntity | null> {
-  if (!query) return null;
-  const clean = query.trim();
+export async function getUserByUsernameOrEmailOrUid(identifier: string): Promise<UserEntity | null> {
+  if (!identifier) return null;
+  const clean = identifier.trim();
 
-  // Try username
-  let user = await getUserByUsername(clean);
-  if (user) return user;
+  const byUid = await getUserByUid(clean);
+  if (byUid) return byUid;
 
-  // Try UID
-  user = await getUserByUid(clean);
-  if (user) return user;
+  const byUser = await getUserByUsername(clean);
+  if (byUser) return byUser;
 
-  // Try Firebase UID
-  user = await getUserByFirebaseUid(clean);
-  if (user) return user;
+  const byFb = await getUserByFirebaseUid(clean);
+  if (byFb) return byFb;
 
-  // Try Firestore email query
+  // Email lookup
   try {
     const snap = await adminDb.collection('users').where('email', '==', clean.toLowerCase()).limit(1).get();
     if (!snap.empty) {
       return cleanUserData(snap.docs[0].data());
     }
   } catch (err: any) {
-    // Fallback
+    console.warn(`[UserRepo] Firestore email lookup error for ${clean}:`, err?.message || err);
   }
 
   // SQL fallback
@@ -352,29 +610,32 @@ export async function getUserByUsernameOrEmailOrUid(query: string): Promise<User
       const sqlUser = await sqlGetUserByUsernameOrEmailOrUid(clean);
       if (sqlUser) return cleanUserData(sqlUser);
     } catch (sqlErr: any) {
-      // Fallback
+      console.warn(`[UserRepo] SQL email lookup error for ${clean}:`, sqlErr?.message || sqlErr);
     }
   }
 
   return null;
 }
 
-export async function listUsersByOrganization(orgId: string): Promise<UserEntity[]> {
+export async function listUsersByOrganization(orgId: string = 'all'): Promise<UserEntity[]> {
   const usersMap = new Map<string, UserEntity>();
 
-  // 1. Firestore
+  // 1. Firestore query
   try {
-    let query: any = adminDb.collection('users');
-    if (orgId && orgId !== 'all') {
-      query = query.where('organizationId', '==', orgId);
-    }
-    const snap = await query.get();
+    const query = orgId && orgId !== 'all'
+      ? adminDb.collection('users').where('organizationId', 'in', [orgId, 'all'])
+      : adminDb.collection('users');
+
+    const snap = await withFirestore('listUsers', async () => {
+      return await query.get();
+    }, { retries: 1, timeoutMs: 6000 });
+
     snap.forEach((doc: any) => {
       const u = cleanUserData(doc.data());
       usersMap.set(u.uid, u);
     });
   } catch (err: any) {
-    // Fallback
+    console.warn('[UserRepo] Firestore listUsers notice:', err?.message || err);
   }
 
   // 2. SQL
@@ -388,15 +649,17 @@ export async function listUsersByOrganization(orgId: string): Promise<UserEntity
         usersMap.set(u.uid, cleanUserData(u));
       }
     } catch (sqlErr: any) {
-      // Fallback
+      console.warn('[UserRepo] SQL listUsers notice:', sqlErr?.message || sqlErr);
     }
   }
 
   // 3. Merge with localStore
-  const localUsers = localListUsers();
-  for (const u of localUsers) {
-    if ((!orgId || orgId === 'all' || u.organizationId === orgId) && !usersMap.has(u.uid)) {
-      usersMap.set(u.uid, cleanUserData(u));
+  const localList = localListUsers();
+  for (const u of localList) {
+    if (orgId === 'all' || u.organizationId === orgId || u.organizationId === 'all') {
+      if (!usersMap.has(u.uid)) {
+        usersMap.set(u.uid, cleanUserData(u));
+      }
     }
   }
 
@@ -411,13 +674,6 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
   if (!uid) return false;
 
   const existing = (await getUserByUid(uid)) || (await getUserByUsername(uid));
-  localDeleteUser(uid);
-  if (existing?.uid && existing.uid !== uid) {
-    localDeleteUser(existing.uid);
-  }
-  if (existing?.username) {
-    localDeleteUser(existing.username);
-  }
 
   const uidsToDelete = new Set<string>([uid]);
   if (existing?.uid) uidsToDelete.add(existing.uid);
@@ -427,12 +683,13 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
     uidsToDelete.add(`user_${existing.username.toLowerCase()}`);
   }
 
-  // 1. Firestore Deletions
-  try {
+  // 1. Primary Firestore Deletions with withFirestore
+  await withFirestore('deleteUser', async () => {
     const batch = adminDb.batch();
 
     for (const id of uidsToDelete) {
       batch.delete(adminDb.collection('users').doc(id));
+      batch.delete(adminDb.collection('user_credentials').doc(id));
       batch.delete(adminDb.collection('credentials').doc(id));
     }
 
@@ -441,53 +698,54 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
     }
     batch.delete(adminDb.collection('usernames').doc(uid.toLowerCase()));
 
-    await batch.commit().catch(() => {});
+    await batch.commit();
 
     // Query-based deletion from users collection
-    try {
-      const qSnaps = await adminDb.collection('users')
-        .where('username', '==', existing?.username || uid)
-        .get();
-      if (!qSnaps.empty) {
-        const qBatch = adminDb.batch();
-        qSnaps.forEach((doc) => qBatch.delete(doc.ref));
-        await qBatch.commit().catch(() => {});
-      }
-    } catch {}
+    const qSnaps = await adminDb.collection('users')
+      .where('username', '==', existing?.username || uid)
+      .get();
+    if (!qSnaps.empty) {
+      const qBatch = adminDb.batch();
+      qSnaps.forEach((doc) => qBatch.delete(doc.ref));
+      await qBatch.commit();
+    }
 
     // Office subcollections
     if (existing?.organizationId && existing.organizationId !== 'all') {
-      try {
-        for (const id of uidsToDelete) {
-          await adminDb
-            .collection('offices')
-            .doc(existing.organizationId)
-            .collection('users')
-            .doc(id)
-            .delete()
-            .catch(() => {});
-        }
-      } catch {}
+      for (const id of uidsToDelete) {
+        await adminDb
+          .collection('offices')
+          .doc(existing.organizationId)
+          .collection('users')
+          .doc(id)
+          .delete()
+          .catch(() => {});
+      }
     }
 
     // Legacy list cleanup
-    try {
-      const legacyRef = adminDb.collection('system_users').doc('registered_accounts');
-      const snap = await legacyRef.get();
-      if (snap.exists && Array.isArray(snap.data()?.users)) {
-        const filtered = snap.data()?.users.filter((u: any) => {
-          const uName = u.username?.toLowerCase();
-          const targetName = existing?.username?.toLowerCase() || uid.toLowerCase();
-          return !uidsToDelete.has(u.id) && !uidsToDelete.has(u.uid) && uName !== targetName;
-        });
-        await legacyRef.set({ users: filtered, updatedAt: new Date().toISOString() });
-      }
-    } catch {}
-  } catch (err: any) {
-    console.warn(`[UserRepo] Notice deleting user ${uid} from Firestore:`, err?.message || err);
+    const legacyRef = adminDb.collection('system_users').doc('registered_accounts');
+    const snap = await legacyRef.get();
+    if (snap.exists && Array.isArray(snap.data()?.users)) {
+      const filtered = snap.data()?.users.filter((u: any) => {
+        const uName = u.username?.toLowerCase();
+        const targetName = existing?.username?.toLowerCase() || uid.toLowerCase();
+        return !uidsToDelete.has(u.id) && !uidsToDelete.has(u.uid) && uName !== targetName;
+      });
+      await legacyRef.set({ users: filtered, updatedAt: new Date().toISOString() });
+    }
+  });
+
+  // 2. Delete from localStore cache ONLY after Firestore succeeds
+  localDeleteUser(uid);
+  if (existing?.uid && existing.uid !== uid) {
+    localDeleteUser(existing.uid);
+  }
+  if (existing?.username) {
+    localDeleteUser(existing.username);
   }
 
-  // 2. Firebase Auth deletion
+  // 3. Firebase Auth deletion
   try {
     if (existing?.firebaseUid) {
       await adminAuth.deleteUser(existing.firebaseUid);
@@ -498,14 +756,14 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
     // Non-blocking if auth user doesn't exist
   }
 
-  // 3. SQL deletion
+  // 4. SQL deletion
   if (await isSqlEnabled()) {
     try {
       for (const id of uidsToDelete) {
         await sqlDeleteUserByUid(id);
       }
     } catch (sqlErr: any) {
-      // Handled
+      console.warn(`[UserRepo] SQL delete user notice for ${uid}:`, sqlErr?.message || sqlErr);
     }
   }
 
@@ -513,38 +771,112 @@ export async function deleteUserByUid(uid: string): Promise<boolean> {
 }
 
 export async function clearAllUsers(preserveSuperAdmin: boolean = true): Promise<boolean> {
-  const allUsers = await listAllUsers();
-  for (const u of allUsers) {
-    if (preserveSuperAdmin && (u.role === 'SUPER_ADMIN' || u.username === 'superadmin' || u.username === 'rbthapamgr09')) {
-      continue;
-    }
-    await deleteUserByUid(u.uid || u.id);
+  // 1. Primary Firestore clear with withFirestore
+  await withFirestore('clearAllUsers', async () => {
+    const snaps = await adminDb.collection('users').get();
+    const batch = adminDb.batch();
+
+    snaps.forEach((doc) => {
+      const data = doc.data();
+      if (preserveSuperAdmin && (data.role === 'super_admin' || data.username === 'admin' || data.username === 'superadmin')) {
+        return;
+      }
+      batch.delete(doc.ref);
+    });
+
+    await batch.commit();
+
+    const legacyRef = adminDb.collection('system_users').doc('registered_accounts');
+    await legacyRef.delete().catch(() => {});
+  });
+
+  // 2. Clear local cache
+  const localList = localListUsers();
+  for (const u of localList) {
+    if (preserveSuperAdmin && (u.role === 'super_admin' || u.username === 'admin')) continue;
+    localDeleteUser(u.uid);
   }
+
   return true;
 }
 
 export async function linkFirebaseUid(uid: string, firebaseUid: string): Promise<void> {
   if (!uid || !firebaseUid) return;
 
+  await withFirestore('linkFirebaseUid', async () => {
+    await adminDb.collection('users').doc(uid).set({ firebaseUid }, { merge: true });
+  });
+
   const local = localGetUserByUid(uid);
   if (local) {
     localSaveUser({ ...local, firebaseUid });
-  }
-
-  try {
-    await adminDb.collection('users').doc(uid).set({ firebaseUid }, { merge: true });
-  } catch (err: any) {
-    // Handled
   }
 
   if (await isSqlEnabled()) {
     try {
       const user = await sqlGetUserByUid(uid);
       if (user) {
-        await sqlLinkFirebaseUidToUser(user.id, firebaseUid);
+        await sqlLinkFirebaseUidToUser(user.uid, firebaseUid);
       }
     } catch (sqlErr: any) {
-      // Handled
+      console.warn(`[UserRepo] SQL link Firebase UID notice:`, sqlErr?.message || sqlErr);
     }
   }
+}
+
+/**
+ * Task 5: Re-indexes all users into usernames/{usernameLower} and reports credential health
+ */
+export async function reindexAllUsernames(): Promise<{
+  totalUsers: number;
+  indexedCount: number;
+  usersWithoutCredentials: string[];
+}> {
+  const usersSnap = await adminDb.collection('users').get();
+  let indexedCount = 0;
+  const usersWithoutCredentials: string[] = [];
+
+  const batch = adminDb.batch();
+
+  for (const doc of usersSnap.docs) {
+    const u = doc.data();
+    const username = (u.username || '').trim();
+    if (!username) continue;
+    const usernameLower = username.toLowerCase();
+    const uid = doc.id;
+
+    // Index document
+    const indexRef = adminDb.collection('usernames').doc(usernameLower);
+    batch.set(indexRef, {
+      uid,
+      username,
+      usernameLower,
+      authEmail: u.email || `${usernameLower}@system.local`,
+      role: u.role || 'GENERAL_USER',
+      organizationId: u.organizationId || 'all',
+      isActive: u.isActive !== false,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+    indexedCount++;
+
+    // Check credentials record
+    const credSnap = await adminDb.collection('user_credentials').doc(uid).get();
+    if (!credSnap.exists) {
+      // Check legacy credentials
+      const legSnap = await adminDb.collection('credentials').doc(uid).get();
+      if (!legSnap.exists && !u.password && !u.metadata?.password) {
+        usersWithoutCredentials.push(`${username} (${uid})`);
+      }
+    }
+  }
+
+  if (indexedCount > 0) {
+    await batch.commit();
+  }
+
+  return {
+    totalUsers: usersSnap.size,
+    indexedCount,
+    usersWithoutCredentials,
+  };
 }

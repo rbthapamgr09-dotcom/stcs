@@ -162,15 +162,6 @@ export const SettingsView: React.FC = () => {
     spreadsheetId: '',
     spreadsheetUrl: '',
     driveFolderId: '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
-    // Initial Admin User creation fields (Disabled)
-    createAdminUser: false,
-    adminUsername: '',
-    adminPassword: '',
-    adminFullName: '',
-    adminEmail: '',
-    adminPhone: '',
-    adminDesignation: 'कार्यालय प्रशासक / लेखा अधिकृत',
-    adminSecurityPin: '1234',
   });
 
   const handleOpenAddOrg = () => {
@@ -199,14 +190,6 @@ export const SettingsView: React.FC = () => {
       spreadsheetId: '',
       spreadsheetUrl: '',
       driveFolderId: '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
-      createAdminUser: false,
-      adminUsername: '',
-      adminPassword: '',
-      adminFullName: '',
-      adminEmail: '',
-      adminPhone: '',
-      adminDesignation: 'कार्यालय प्रशासक / लेखा अधिकृत',
-      adminSecurityPin: '1234',
     });
     setShowOrgModal(true);
   };
@@ -233,14 +216,6 @@ export const SettingsView: React.FC = () => {
       spreadsheetId: org.spreadsheetId || '',
       spreadsheetUrl: org.spreadsheetUrl || '',
       driveFolderId: org.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
-      createAdminUser: false,
-      adminUsername: '',
-      adminPassword: '',
-      adminFullName: '',
-      adminEmail: '',
-      adminPhone: '',
-      adminDesignation: '',
-      adminSecurityPin: '1234',
     });
     setShowOrgModal(true);
   };
@@ -278,45 +253,27 @@ export const SettingsView: React.FC = () => {
         setShowOrgModal(false);
       }
     } else {
-      let initialAdmin = undefined;
-      if (orgFormData.createAdminUser) {
-        const fallbackUsername = `admin_${Date.now().toString().slice(-4)}`;
-        const resolvedUsername = (orgFormData.adminUsername?.trim() || fallbackUsername).toLowerCase().replace(/\s+/g, '');
-        initialAdmin = {
-          username: resolvedUsername,
-          password: orgFormData.adminPassword?.trim() || 'admin123',
-          fullName: orgFormData.adminFullName?.trim() || `${orgFormData.officeName} प्रशासक`,
-          email: orgFormData.adminEmail?.trim() || orgFormData.email?.trim() || `${resolvedUsername}@system.local`,
-          phone: orgFormData.adminPhone?.trim() || orgFormData.phone?.trim() || orgFormData.mobile?.trim() || '',
-          designation: orgFormData.adminDesignation?.trim() || 'कार्यालय प्रशासक / लेखा अधिकृत',
-          securityPin: orgFormData.adminSecurityPin?.trim() || '1234',
-        };
-      }
-
-      const res = await addOrganization(
-        {
-          name: orgFormData.name || orgFormData.officeName,
-          officeName: orgFormData.officeName,
-          ministryName: orgFormData.ministryName,
-          departmentName: orgFormData.departmentName,
-          parentBodyName: orgFormData.parentBodyName,
-          province: orgFormData.province,
-          district: orgFormData.district,
-          localLevel: orgFormData.localLevel,
-          address: orgFormData.address,
-          phone: orgFormData.phone,
-          mobile: orgFormData.mobile,
-          email: orgFormData.email,
-          whatsapp: orgFormData.whatsapp,
-          pan: orgFormData.pan,
-          registrationNo: orgFormData.registrationNo,
-          isActive: orgFormData.isActive,
-          spreadsheetId: orgFormData.spreadsheetId || '',
-          spreadsheetUrl: orgFormData.spreadsheetUrl || (orgFormData.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${orgFormData.spreadsheetId}/edit` : ''),
-          driveFolderId: orgFormData.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
-        },
-        initialAdmin
-      );
+      const res = await addOrganization({
+        name: orgFormData.name || orgFormData.officeName,
+        officeName: orgFormData.officeName,
+        ministryName: orgFormData.ministryName,
+        departmentName: orgFormData.departmentName,
+        parentBodyName: orgFormData.parentBodyName,
+        province: orgFormData.province,
+        district: orgFormData.district,
+        localLevel: orgFormData.localLevel,
+        address: orgFormData.address,
+        phone: orgFormData.phone,
+        mobile: orgFormData.mobile,
+        email: orgFormData.email,
+        whatsapp: orgFormData.whatsapp,
+        pan: orgFormData.pan,
+        registrationNo: orgFormData.registrationNo,
+        isActive: orgFormData.isActive,
+        spreadsheetId: orgFormData.spreadsheetId || '',
+        spreadsheetUrl: orgFormData.spreadsheetUrl || (orgFormData.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${orgFormData.spreadsheetId}/edit` : ''),
+        driveFolderId: orgFormData.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
+      });
 
       if (res.success) {
         setShowOrgModal(false);
@@ -2930,14 +2887,7 @@ export const SettingsView: React.FC = () => {
                         type="text"
                         required
                         value={orgFormData.officeName}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setOrgFormData((prev) => ({
-                            ...prev,
-                            officeName: val,
-                            adminFullName: prev.adminFullName || (val ? `${val} प्रशासक` : ''),
-                          }));
-                        }}
+                        onChange={(e) => setOrgFormData({ ...orgFormData, officeName: e.target.value })}
                         placeholder="जस्तै: जलस्रोत तथा सिँचाइ विकास डिभिजन कार्यालय"
                         className="w-full h-10 px-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-bold text-[#24331C] text-xs sm:text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                       />

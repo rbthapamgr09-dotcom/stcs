@@ -256,3 +256,53 @@ export function localClearAllData(): void {
   };
   scheduleSave();
 }
+
+export function localStoreEntriesCount(): number {
+  ensureLoaded();
+  return (
+    Object.keys(dbState.offices).length +
+    Object.keys(dbState.users).length +
+    Object.keys(dbState.settings).length +
+    Object.keys(dbState.fyDatabases).length +
+    Object.keys(dbState.orgStores).length +
+    Object.keys(dbState.employees).length
+  );
+}
+
+export async function syncLocalStoreFromFirestore(adminDb: any): Promise<void> {
+  ensureLoaded();
+  try {
+    // 1. Sync offices
+    const officesSnap = await adminDb.collection('offices').get();
+    officesSnap.forEach((doc: any) => {
+      const data = doc.data();
+      if (data && doc.id) {
+        dbState.offices[doc.id] = { ...data, id: doc.id };
+      }
+    });
+
+    // 2. Sync users
+    const usersSnap = await adminDb.collection('users').get();
+    usersSnap.forEach((doc: any) => {
+      const data = doc.data();
+      if (data && (data.uid || doc.id)) {
+        const uid = data.uid || doc.id;
+        dbState.users[uid] = { ...data, uid };
+      }
+    });
+
+    // 3. Sync system settings
+    const settingsSnap = await adminDb.collection('system_settings').get();
+    settingsSnap.forEach((doc: any) => {
+      const data = doc.data();
+      if (data) {
+        dbState.settings[doc.id] = data?.data !== undefined ? data.data : data;
+      }
+    });
+
+    scheduleSave();
+    console.log(`[LocalStore] Populated cache from Firestore: ${Object.keys(dbState.offices).length} offices, ${Object.keys(dbState.users).length} users, ${Object.keys(dbState.settings).length} settings.`);
+  } catch (err: any) {
+    console.warn('[LocalStore] Could not bootstrap cache from Firestore:', err?.message || err);
+  }
+}

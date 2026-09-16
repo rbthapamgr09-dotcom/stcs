@@ -130,14 +130,20 @@ export async function deleteOfficeFromFirestore(officeId: string): Promise<boole
   }
 }
 
-export function subscribeToOffices(onUpdate: (offices: OrganizationItem[]) => void): () => void {
+export function subscribeToOffices(
+  onUpdate: (offices: OrganizationItem[], meta?: { fromCache: boolean; empty: boolean }) => void
+): () => void {
   try {
     const collRef = collection(db, 'offices');
     return onSnapshot(
       collRef,
       (snap) => {
+        // If snapshot is from local cache and empty, avoid wiping initialized state
+        if (snap.empty && snap.metadata.fromCache) {
+          return;
+        }
         const offices = snap.docs.map((d) => ({ ...(d.data() as OrganizationItem), id: d.id }));
-        onUpdate(offices);
+        onUpdate(offices, { fromCache: snap.metadata.fromCache, empty: snap.empty });
       },
       (err) => {
         console.warn('[Firestore] subscribeToOffices snapshot notice:', err?.message || err);
@@ -373,12 +379,26 @@ export async function deleteUserFromFirestore(userId: string, officeId?: string)
   if (!userId) return false;
   try {
     const userDocRef = doc(db, 'users', userId);
-    await deleteDoc(userDocRef);
+    await deleteDoc(userDocRef).catch(() => {});
+
+    // Also query if document ID differs from userId
+    try {
+      const qUid = query(collection(db, 'users'), where('uid', '==', userId));
+      const snapUid = await getDocs(qUid);
+      for (const d of snapUid.docs) {
+        await deleteDoc(d.ref).catch(() => {});
+      }
+      const qUser = query(collection(db, 'users'), where('username', '==', userId));
+      const snapUser = await getDocs(qUser);
+      for (const d of snapUser.docs) {
+        await deleteDoc(d.ref).catch(() => {});
+      }
+    } catch {}
 
     if (officeId && officeId !== 'all') {
       try {
         const officeUserRef = doc(db, 'offices', officeId, 'users', userId);
-        await deleteDoc(officeUserRef);
+        await deleteDoc(officeUserRef).catch(() => {});
       } catch {}
     }
 
@@ -387,7 +407,7 @@ export async function deleteUserFromFirestore(userId: string, officeId?: string)
       const legacyRef = doc(db, 'system_users', 'registered_accounts');
       const snap = await getDoc(legacyRef);
       if (snap.exists() && Array.isArray(snap.data().users)) {
-        const filtered = snap.data().users.filter((u: any) => u.id !== userId && u.username !== userId);
+        const filtered = snap.data().users.filter((u: any) => u.id !== userId && u.uid !== userId && u.username !== userId);
         await setDoc(legacyRef, { users: filtered, updatedAt: new Date().toISOString() });
       }
     } catch {}
@@ -399,7 +419,10 @@ export async function deleteUserFromFirestore(userId: string, officeId?: string)
   }
 }
 
-export function subscribeToUsers(onUpdate: (users: User[]) => void, officeId?: string): () => void {
+export function subscribeToUsers(
+  onUpdate: (users: User[], meta?: { fromCache: boolean; empty: boolean }) => void,
+  officeId?: string
+): () => void {
   try {
     const collRef = collection(db, 'users');
     let q = collRef as any;
@@ -409,8 +432,12 @@ export function subscribeToUsers(onUpdate: (users: User[]) => void, officeId?: s
     return onSnapshot(
       q,
       (snap: any) => {
+        // If snapshot is from local cache and empty, avoid wiping initialized state
+        if (snap.empty && snap.metadata.fromCache) {
+          return;
+        }
         const users = snap.docs.map((d: any) => d.data() as User);
-        onUpdate(users);
+        onUpdate(users, { fromCache: snap.metadata.fromCache, empty: snap.empty });
       },
       (err: any) => {
         console.warn('[Firestore] subscribeToUsers snapshot notice:', err?.message || err);

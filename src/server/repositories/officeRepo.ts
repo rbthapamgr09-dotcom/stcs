@@ -1,5 +1,8 @@
 import { adminDb } from '../../lib/firebase-admin.ts';
 import { isSqlEnabled } from './sqlHelper.ts';
+import { withFirestore, PersistenceError } from './firestoreGuard.ts';
+import { assertUnderLimit } from '../utils/chunking.ts';
+import { optimizeAssetUrl } from '../utils/assetStorage.ts';
 import {
   localSaveOffice,
   localGetOffice,
@@ -51,6 +54,11 @@ export interface OfficeEntity {
   updatedAt?: string;
 }
 
+export type OfficeSaveResult = {
+  entity: OfficeEntity;
+  persistedTo: string[];
+} & OfficeEntity;
+
 function cleanData(data: any): OfficeEntity {
   if (!data || typeof data !== 'object') {
     data = {};
@@ -95,34 +103,48 @@ function cleanData(data: any): OfficeEntity {
   };
 }
 
-export async function saveOffice(data: any): Promise<OfficeEntity> {
+export async function saveOffice(data: any): Promise<OfficeSaveResult> {
   const office = cleanData(data);
 
-  // 1. Always guarantee persistence in local file-backed store
-  try {
-    localSaveOffice(office);
-  } catch (localErr: any) {
-    console.warn(`[OfficeRepo] Local store write notice for office ${office.id}:`, localErr?.message || localErr);
+  // Optimize large base64 logo/signature to avoid exceeding Firestore limits
+  if (office.logoUrl && office.logoUrl.startsWith('data:image/')) {
+    office.logoUrl = await optimizeAssetUrl(office.id, 'logo', office.logoUrl);
+  }
+  if (office.signatureUrl && office.signatureUrl.startsWith('data:image/')) {
+    office.signatureUrl = await optimizeAssetUrl(office.id, 'signature', office.signatureUrl);
   }
 
-  // 2. Best-effort Firestore write via adminDb
-  try {
+  // Guard document size limit
+  assertUnderLimit(office, 850_000, `कार्यालय (${office.officeName})`);
+
+  const persistedTo: string[] = [];
+
+  // 1. Primary write to Firestore with retry and timeout guard
+  await withFirestore('saveOffice', async () => {
     const docRef = adminDb.collection('offices').doc(office.id);
     await docRef.set(office, { merge: true });
-  } catch (err: any) {
-    // Firestore admin warning handled gracefully
+  });
+  persistedTo.push('firestore');
+
+  // 2. Local cache persistence (ONLY after Firestore confirms)
+  try {
+    localSaveOffice(office);
+    persistedTo.push('local');
+  } catch (localErr: any) {
+    console.warn(`[OfficeRepo] Local cache write notice for office ${office.id}:`, localErr?.message || localErr);
   }
 
-  // 3. Best-effort mirror to Cloud SQL
+  // 3. Mirror to Cloud SQL if operational
   try {
     if (await isSqlEnabled()) {
       await upsertSqlOrganization(office);
+      persistedTo.push('sql');
     }
   } catch (sqlErr: any) {
     console.warn(`[OfficeRepo] SQL mirror notice for office ${office.id}:`, sqlErr?.message || sqlErr);
   }
 
-  return office;
+  return Object.assign({ entity: office, persistedTo }, office);
 }
 
 export async function getOfficeById(id: string): Promise<OfficeEntity | null> {
@@ -130,12 +152,15 @@ export async function getOfficeById(id: string): Promise<OfficeEntity | null> {
 
   // 1. Read from Firestore
   try {
-    const docSnap = await adminDb.collection('offices').doc(id).get();
+    const docSnap = await withFirestore('getOfficeById', async () => {
+      return await adminDb.collection('offices').doc(id).get();
+    }, { retries: 1, timeoutMs: 5000 });
+
     if (docSnap.exists) {
       return docSnap.data() as OfficeEntity;
     }
   } catch (err: any) {
-    // Fallback to local / SQL
+    console.warn(`[OfficeRepo] Firestore read error for office ${id}:`, err?.message || err);
   }
 
   // 2. Fallback to SQL
@@ -144,7 +169,7 @@ export async function getOfficeById(id: string): Promise<OfficeEntity | null> {
       const sqlOrg = await getSqlOrganizationById(id);
       if (sqlOrg) return cleanData(sqlOrg);
     } catch (sqlErr: any) {
-      // Fallback
+      console.warn(`[OfficeRepo] SQL read error for office ${id}:`, sqlErr?.message || sqlErr);
     }
   }
 
@@ -160,12 +185,15 @@ export async function listOffices(): Promise<OfficeEntity[]> {
 
   // 1. Read from Firestore
   try {
-    const snap = await adminDb.collection('offices').get();
+    const snap = await withFirestore('listOffices', async () => {
+      return await adminDb.collection('offices').get();
+    }, { retries: 1, timeoutMs: 6000 });
+
     snap.forEach((doc) => {
       officesMap.set(doc.id, doc.data() as OfficeEntity);
     });
   } catch (err: any) {
-    // Fallback
+    console.warn('[OfficeRepo] Firestore listOffices error:', err?.message || err);
   }
 
   // 2. Read from SQL if Firestore returned nothing
@@ -176,7 +204,7 @@ export async function listOffices(): Promise<OfficeEntity[]> {
         officesMap.set(org.id, cleanData(org));
       }
     } catch (sqlErr: any) {
-      // Fallback
+      console.warn('[OfficeRepo] SQL listOffices error:', sqlErr?.message || sqlErr);
     }
   }
 
@@ -194,47 +222,47 @@ export async function listOffices(): Promise<OfficeEntity[]> {
 export async function deleteOfficeById(id: string): Promise<boolean> {
   if (!id) return false;
 
-  localDeleteOffice(id);
-
-  // Firestore: delete office document and subcollections
-  try {
+  // 1. Primary delete from Firestore
+  await withFirestore('deleteOffice', async () => {
     const officeDoc = adminDb.collection('offices').doc(id);
-    
-    // Delete subcollections
-    try {
-      const fySnaps = await officeDoc.collection('fiscal_years').get();
+
+    // Delete fiscal_years subcollection
+    const fySnaps = await officeDoc.collection('fiscal_years').get();
+    if (!fySnaps.empty) {
       const batch = adminDb.batch();
       fySnaps.forEach((doc) => batch.delete(doc.ref));
       await batch.commit();
-    } catch {}
+    }
 
-    try {
-      const dataSnaps = await officeDoc.collection('data').get();
+    // Delete data subcollection
+    const dataSnaps = await officeDoc.collection('data').get();
+    if (!dataSnaps.empty) {
       const batch = adminDb.batch();
       dataSnaps.forEach((doc) => batch.delete(doc.ref));
       await batch.commit();
-    } catch {}
+    }
 
+    // Delete main document
     await officeDoc.delete();
 
-    // Legacy mirror update
-    try {
-      const legacyRef = adminDb.collection('system_organizations').doc('registered_offices');
-      const snap = await legacyRef.get();
-      if (snap.exists && Array.isArray(snap.data()?.organizations)) {
-        const filtered = snap.data()?.organizations.filter((o: any) => o.id !== id);
-        await legacyRef.set({ organizations: filtered, updatedAt: new Date().toISOString() });
-      }
-    } catch {}
-  } catch (err: any) {
-    console.warn(`[OfficeRepo] Notice deleting office ${id} from Firestore:`, err?.message || err);
-  }
+    // Clean legacy registered_offices mirror doc if present
+    const legacyRef = adminDb.collection('system_organizations').doc('registered_offices');
+    const snap = await legacyRef.get();
+    if (snap.exists && Array.isArray(snap.data()?.organizations)) {
+      const filtered = snap.data()?.organizations.filter((o: any) => o.id !== id);
+      await legacyRef.set({ organizations: filtered, updatedAt: new Date().toISOString() });
+    }
+  });
 
+  // 2. Delete from local store cache
+  localDeleteOffice(id);
+
+  // 3. Delete from SQL if enabled
   if (await isSqlEnabled()) {
     try {
       await deleteSqlOrganizationById(id);
     } catch (sqlErr: any) {
-      // Handled
+      console.warn(`[OfficeRepo] SQL delete notice for office ${id}:`, sqlErr?.message || sqlErr);
     }
   }
 
@@ -242,26 +270,25 @@ export async function deleteOfficeById(id: string): Promise<boolean> {
 }
 
 export async function clearAllOffices(): Promise<boolean> {
-  // 1. Local
+  // 1. Primary clear in Firestore
+  await withFirestore('clearAllOffices', async () => {
+    const snaps = await adminDb.collection('offices').get();
+    if (!snaps.empty) {
+      const batch = adminDb.batch();
+      snaps.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+    }
+
+    const legacyRef = adminDb.collection('system_organizations').doc('registered_offices');
+    await legacyRef.delete().catch(() => {});
+  });
+
+  // 2. Clear local cache
   const localList = localListOffices();
   for (const o of localList) {
     if (o.id) localDeleteOffice(o.id);
-  }
-
-  // 2. Firestore
-  try {
-    const snaps = await adminDb.collection('offices').get();
-    const batch = adminDb.batch();
-    snaps.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-    await batch.commit();
-
-    try {
-      await adminDb.collection('system_organizations').doc('registered_offices').delete();
-    } catch {}
-  } catch (err: any) {
-    console.warn('[OfficeRepo] Error clearing all offices from Firestore:', err);
   }
 
   return true;
