@@ -36,6 +36,7 @@ export const OrganizationSetupView: React.FC = () => {
   });
   const [activeTab, setActiveTab] = useState<'form' | 'preview'>('form');
   const [logoPreviewError, setLogoPreviewError] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
   useEffect(() => {
     setFormData((prev) => ({
@@ -139,9 +140,11 @@ export const OrganizationSetupView: React.FC = () => {
       return;
     }
 
-    const ok = await updateOrganization(formData);
-    if (ok) {
-      addToast('success', 'सुरक्षित भयो', 'कार्यालय तथा लेटरहेड विवरण र लोगो सफलतापूर्वक सुरक्षित गरियो।');
+    setIsSaving(true);
+    try {
+      await updateOrganization(formData);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -647,12 +650,23 @@ export const OrganizationSetupView: React.FC = () => {
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#d8e4d2]">
             <button
               type="submit"
-              className="px-6 py-2 text-xs font-bold text-white bg-[#4B6043] hover:bg-[#394d32] rounded-xl transition-colors shadow-xs flex items-center gap-2.5 cursor-pointer"
+              disabled={isSaving}
+              className={`px-6 py-2.5 text-xs font-bold text-white rounded-xl transition-all shadow-xs flex items-center gap-2.5 ${
+                isSaving
+                  ? 'bg-[#7a8f72] cursor-not-allowed opacity-80'
+                  : 'bg-[#4B6043] hover:bg-[#394d32] cursor-pointer'
+              }`}
             >
-              <Save className="w-4 h-4 shrink-0" />
+              {isSaving ? (
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
+              ) : (
+                <Save className="w-4 h-4 shrink-0" />
+              )}
               <span className="flex flex-col items-start leading-tight">
-                <span>विवरण सुरक्षित गर्नुहोस्</span>
-                <span className="text-[10px] font-normal opacity-90">(Save Organization Setup)</span>
+                <span>{isSaving ? 'सुरक्षित हुँदैछ...' : 'विवरण सुरक्षित गर्नुहोस्'}</span>
+                <span className="text-[10px] font-normal opacity-90">
+                  {isSaving ? '(Saving...)' : '(Save Organization Setup)'}
+                </span>
               </span>
             </button>
           </div>

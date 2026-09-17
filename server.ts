@@ -60,6 +60,7 @@ import {
   getSystemSetting,
   setSystemSetting,
 } from './src/server/repositories/settingsRepo.ts';
+import { createSessionToken } from './src/server/auth/tokenService.ts';
 
 export function sendErrorResponse(res: express.Response, error: any, defaultMessage: string) {
   console.error(`[API Error] ${defaultMessage}:`, error?.message || error);
@@ -212,6 +213,8 @@ async function startServer() {
     const degraded = isPersistenceDegraded();
     res.json({
       status: degraded ? 'degraded' : 'ok',
+      server: 'running',
+      firebaseAdmin: 'initialized',
       firestore: degraded ? 'down' : 'up',
       sql: getSqlStatus(),
       databaseId: getFirestoreDatabaseId(),
@@ -446,9 +449,18 @@ async function startServer() {
         createdAt: user.createdAt,
       };
 
+      const sessionToken = createSessionToken({
+        uid: user.uid,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        organizationId: user.organizationId,
+      });
+
       res.json({
         success: true,
         user: safeUser,
+        token: sessionToken,
         customToken,
         tokenUnavailable,
         message: 'लगइन सफल भयो।',
@@ -855,14 +867,66 @@ async function startServer() {
     }
   });
 
-  // Update office
+  // Update office (Task 6, 7, 9)
   const updateOfficeHandler = async (req: AuthRequest, res: express.Response) => {
     try {
-      const id = req.params.id;
+      const id = String(req.params.id || '').trim();
+      if (!id) {
+        return res.status(400).json({
+          success: false,
+          code: 'MISSING_OFFICE_ID',
+          message: 'कार्यालय पहिचान (Office ID) आवश्यक छ।',
+        });
+      }
+
+      // Multi-tenant & Role-Based authorization check
+      if (req.user) {
+        const userRole = req.user.role;
+        const userOrgId = String(req.user.organizationId || '').trim();
+
+        if (userRole === 'VIEWER' || userRole === 'GENERAL_USER') {
+          return res.status(403).json({
+            success: false,
+            code: 'FORBIDDEN_ROLE',
+            message: 'कार्यालय विवरण परिमार्जन गर्न प्रशासक (Admin) अधिकार आवश्यक छ।',
+          });
+        }
+
+        if (userRole === 'ADMIN') {
+          // ADMIN is scoped to their own organization
+          const isOwnOrg =
+            userOrgId === id ||
+            userOrgId === 'all' ||
+            (id === 'org_default' && (!userOrgId || userOrgId === 'org_default'));
+          if (!isOwnOrg) {
+            return res.status(403).json({
+              success: false,
+              code: 'FORBIDDEN_CROSS_TENANT',
+              message: 'तपाईंलाई अर्को कार्यालयको विवरण परिवर्तन गर्ने अनुमति छैन।',
+            });
+          }
+        }
+      }
+
+      const body = req.body || {};
+      if (body.officeName !== undefined && typeof body.officeName === 'string' && !body.officeName.trim()) {
+        return res.status(422).json({
+          success: false,
+          code: 'VALIDATION_ERROR',
+          message: 'प्रदान गरिएको विवरण मान्य छैन। कार्यालयको नाम अनिवार्य छ।',
+        });
+      }
+
       const existing = await getOfficeById(id);
-      const merged = { ...(existing || {}), ...req.body, id };
+      const merged = { ...(existing || {}), ...body, id };
       const saved = await saveOffice(merged);
-      res.json({ success: true, office: saved, organization: saved });
+
+      res.json({
+        success: true,
+        office: saved.entity || saved,
+        organization: saved.entity || saved,
+        message: 'कार्यालय विवरण सफलतापूर्वक सुरक्षित गरियो।',
+      });
     } catch (error: any) {
       sendErrorResponse(res, error, 'कार्यालय अपडेट गर्न सकिएन।');
     }

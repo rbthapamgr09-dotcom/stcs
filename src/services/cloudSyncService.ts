@@ -72,17 +72,24 @@ export async function parseApiError(res: Response): Promise<{ code: string; mess
       message = 'पठाइएको विवरण सर्भरको सीमाभन्दा ठूलो छ।';
       break;
     case 401:
-    case 403:
       code = 'UNAUTHORIZED';
-      message = 'यस कार्यको लागि अनुमति छैन।';
+      message = 'प्रयोगकर्ता प्रमाणीकरण आवश्यक छ। कृपया पुनः लगइन गर्नुहोस्।';
+      break;
+    case 403:
+      code = 'FORBIDDEN';
+      message = 'यो कार्यालयको विवरण परिवर्तन गर्ने अनुमति छैन।';
+      break;
+    case 422:
+      code = 'VALIDATION_ERROR';
+      message = 'प्रदान गरिएको विवरण मान्य छैन। कृपया आवश्यक विवरण रुजु गर्नुहोस्।';
       break;
     case 400:
-      code = 'VALIDATION_ERROR';
-      message = 'पठाइएको विवरण मान्य छैन।';
+      code = 'BAD_REQUEST';
+      message = 'पठाइएको विवरण अमान्य छ।';
       break;
     case 404:
       code = 'NOT_FOUND';
-      message = 'खोजिएको विवरण फेला परेन।';
+      message = 'खोजिएको कार्यालय वा विवरण फेला परेन।';
       break;
     default:
       message = `सर्भरबाट त्रुटि प्राप्त भयो (Status: ${res.status})।`;
@@ -127,6 +134,16 @@ export async function authenticatedFetch(
         }
       } catch (err) {
         // Non-fatal token retrieval notice
+      }
+      if (!token && typeof localStorage !== 'undefined') {
+        try {
+          token = localStorage.getItem('AUTH_TOKEN') || localStorage.getItem('np_session_token') || localStorage.getItem('session_token');
+        } catch {}
+      }
+      if (!token && typeof sessionStorage !== 'undefined') {
+        try {
+          token = sessionStorage.getItem('AUTH_TOKEN');
+        } catch {}
       }
 
       const headers = new Headers(init?.headers || {});

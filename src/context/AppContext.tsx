@@ -4318,25 +4318,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
-    const targetOrg = organizations.find((o) => o.id === orgId) || {
-      id: orgId,
+    const targetOrgId = String(orgId || activeOrganizationId || currentUser?.organizationId || 'org_default').trim();
+    const targetOrg = organizations.find((o) => o.id === targetOrgId) || {
+      id: targetOrgId,
       name: 'नेपाल सरकार',
       officeName: orgData.officeName || '',
     };
     const mergedOrg: OrganizationItem = {
       ...(targetOrg as OrganizationItem),
       ...orgData,
-      id: orgId,
+      id: targetOrgId,
       updatedAt: new Date().toISOString(),
     };
 
-    let serverSaved = false;
     try {
-      let res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
+      let res = await authenticatedFetch(`/api/offices/${encodeURIComponent(targetOrgId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(orgData),
+        body: JSON.stringify(mergedOrg),
       });
+
       if (!res.ok && res.status === 404) {
         // If office doesn't exist yet on server, create it via POST
         res = await authenticatedFetch('/api/offices', {
@@ -4345,50 +4346,58 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           body: JSON.stringify({ office: mergedOrg }),
         });
       }
+
       if (res.ok) {
-        serverSaved = true;
+        const data = await res.json().catch(() => null);
+        const savedOffice: OrganizationItem = data?.office || data?.organization || mergedOrg;
+
+        // Update authoritative React state
+        setOrganizations((prev) => {
+          const exists = prev.some((o) => o.id === targetOrgId);
+          const updated = exists ? prev.map((o) => (o.id === targetOrgId ? { ...o, ...savedOffice } : o)) : [...prev, savedOffice];
+          try {
+            localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+
+        if (targetOrgId === activeOrganizationId) {
+          setOrganization((prev) => ({ ...prev, ...savedOffice }));
+        }
+
+        setOrgDatabases((prev) => {
+          if (!prev[targetOrgId]) return prev;
+          return {
+            ...prev,
+            [targetOrgId]: {
+              ...prev[targetOrgId],
+              organization: { ...prev[targetOrgId].organization, ...savedOffice },
+            },
+          };
+        });
+
+        addToast('success', 'कार्यालय सुरक्षित भयो', 'कार्यालय तथा लेटरहेड विवरण सफलतापूर्वक सुरक्षित गरियो।');
+        return true;
       } else {
-        const { message } = await parseApiError(res);
-        console.warn('[AppContext] Primary API office update notice:', message);
+        const { code, message } = await parseApiError(res);
+        if (res.status === 401) {
+          addToast('error', 'प्रमाणीकरण त्रुटि', message || 'प्रयोगकर्ता प्रमाणीकरण आवश्यक छ। कृपया पुनः लगइन गर्नुहोस्।');
+        } else if (res.status === 403) {
+          addToast('error', 'अनुमति अस्वीकृत', message || 'यो कार्यालयको विवरण परिवर्तन गर्ने अनुमति छैन।');
+        } else if (res.status === 422) {
+          addToast('error', 'विवरण अमान्य', message || 'प्रदान गरिएको विवरण मान्य छैन।');
+        } else if (res.status === 404) {
+          addToast('error', 'कार्यालय भेटिएन', message || 'खोजिएको कार्यालय फेला परेन।');
+        } else {
+          addToast('error', 'कार्यालय सुरक्षित हुन सकेन', message || 'सर्भरमा समस्या भयो। केही समयपछि पुनः प्रयास गर्नुहोस्।');
+        }
+        return false;
       }
     } catch (e: any) {
-      const errMsg = e instanceof ClientApiError ? e.message : (e?.message || e);
-      console.warn('[AppContext] API update error, falling back to direct Firestore:', errMsg);
+      const errMsg = e instanceof ClientApiError ? e.message : (e?.message || 'सर्भरसँग सम्पर्क हुन सकेन।');
+      addToast('error', 'सम्पर्क त्रुटि', errMsg);
+      return false;
     }
-
-    // Direct Firestore client write fallback
-    try {
-      await saveOfficeToFirestore(mergedOrg);
-    } catch (fsErr: any) {
-      console.warn('[AppContext] Firestore client office update notice:', fsErr?.message || fsErr);
-    }
-
-    // Always update local state and localStorage
-    setOrganizations((prev) => {
-      const updated = prev.map((o) => (o.id === orgId ? mergedOrg : o));
-      try {
-        localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
-
-    if (orgId === activeOrganizationId) {
-      setOrganization((prev) => ({ ...prev, ...mergedOrg }));
-    }
-
-    setOrgDatabases((prev) => {
-      if (!prev[orgId]) return prev;
-      return {
-        ...prev,
-        [orgId]: {
-          ...prev[orgId],
-          organization: { ...prev[orgId].organization, ...mergedOrg },
-        },
-      };
-    });
-
-    addToast('success', 'कार्यालय विवरण अपडेट भयो', 'कार्यालयको विवरण सफलतापूर्वक सुरक्षित गरियो।');
-    return true;
   };
 
   const toggleOrganizationActive = async (orgId: string, isActive?: boolean): Promise<boolean> => {
