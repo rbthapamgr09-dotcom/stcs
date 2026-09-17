@@ -881,6 +881,13 @@ export async function saveSingleUserToCloud(u: User): Promise<CloudSaveResult> {
     organizationName: u.organizationName,
     designation: u.designation,
     phone: u.phone,
+    password: u.password,
+    securityPin: u.securityPin || '1234',
+    securityQuestion: u.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+    securityAnswer: u.securityAnswer || 'नेपाल',
+    mustChangePassword: Boolean(u.mustChangePassword),
+    isFirstLogin: Boolean(u.isFirstLogin),
+    isActive: u.isActive !== undefined ? u.isActive : true,
     firebaseUid: u.firebaseUid || undefined,
     metadata: {
       password: u.password,

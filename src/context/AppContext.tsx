@@ -2215,6 +2215,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     saveCloudUsers(updatedUsers).catch(console.warn);
     saveSingleUserToCloud(newUser).catch(console.warn);
+    saveUserToFirestore(newUser).catch(console.warn);
     saveCloudOrgUser(targetOrgId, newUser).catch(console.warn);
 
     setOrgDatabases((prev) => {
@@ -2316,6 +2317,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     saveCloudUsers(updatedUsers).catch(console.warn);
     saveSingleUserToCloud(updatedUser).catch(console.warn);
+    saveUserToFirestore(updatedUser).catch(console.warn);
     if (updatedUser.organizationId) {
       saveCloudOrgUser(updatedUser.organizationId, updatedUser).catch(console.warn);
       setOrgDatabases((prev) => {
@@ -2380,6 +2382,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     saveCloudUsers(updatedUsers).catch(console.warn);
     saveSingleUserToCloud(updatedUser).catch(console.warn);
+    saveUserToFirestore(updatedUser).catch(console.warn);
     triggerAutoSyncOnSave({ overrideUsers: updatedUsers });
 
     logSecurityEvent({

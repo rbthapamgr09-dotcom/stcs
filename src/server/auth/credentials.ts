@@ -225,12 +225,55 @@ export async function setUserCredentials(
   if (typeof recordOrUsername === 'string') {
     const username = recordOrUsername;
     const plainPass = rawPassword || '';
-    const hashed = await hashPassword(plainPass);
-    record = {
-      ...hashed,
-      usernameLower: username.toLowerCase(),
-      mustChangePassword: mustChangePassword ?? false,
-    };
+
+    if (plainPass.startsWith('sha256:')) {
+      const parts = plainPass.split(':');
+      if (parts.length === 3) {
+        record = {
+          algo: 'sha256',
+          salt: parts[1],
+          hash: parts[2],
+          usernameLower: username.toLowerCase(),
+          mustChangePassword: mustChangePassword ?? false,
+          passwordUpdatedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        const hashed = await hashPassword(plainPass);
+        record = {
+          ...hashed,
+          usernameLower: username.toLowerCase(),
+          mustChangePassword: mustChangePassword ?? false,
+        };
+      }
+    } else if (plainPass.startsWith('scrypt:')) {
+      const parts = plainPass.split(':');
+      if (parts.length >= 3) {
+        record = {
+          algo: 'scrypt',
+          salt: parts[1],
+          hash: parts[2],
+          usernameLower: username.toLowerCase(),
+          mustChangePassword: mustChangePassword ?? false,
+          passwordUpdatedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        const hashed = await hashPassword(plainPass);
+        record = {
+          ...hashed,
+          usernameLower: username.toLowerCase(),
+          mustChangePassword: mustChangePassword ?? false,
+        };
+      }
+    } else {
+      const hashed = await hashPassword(plainPass);
+      record = {
+        ...hashed,
+        usernameLower: username.toLowerCase(),
+        mustChangePassword: mustChangePassword ?? false,
+      };
+    }
   } else {
     record = recordOrUsername;
   }
@@ -242,8 +285,8 @@ export async function setUserCredentials(
       uid,
       usernameLower: (record.usernameLower || '').toLowerCase(),
       algo: record.algo || 'scrypt',
-      salt: record.salt,
-      hash: record.hash,
+      salt: record.salt || '',
+      hash: record.hash || '',
       params: record.params || DEFAULT_SCRYPT_PARAMS,
       mustChangePassword: Boolean(record.mustChangePassword),
       passwordUpdatedAt: record.passwordUpdatedAt || now,

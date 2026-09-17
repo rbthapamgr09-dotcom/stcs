@@ -162,6 +162,13 @@ export const SettingsView: React.FC = () => {
     spreadsheetId: '',
     spreadsheetUrl: '',
     driveFolderId: '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
+    // Optional initial Office Admin account for new office
+    createAdminUser: true,
+    adminFullName: '',
+    adminUsername: '',
+    adminPassword: 'admin123',
+    adminPhone: '',
+    adminEmail: '',
   });
 
   const handleOpenAddOrg = () => {
@@ -190,6 +197,12 @@ export const SettingsView: React.FC = () => {
       spreadsheetId: '',
       spreadsheetUrl: '',
       driveFolderId: '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
+      createAdminUser: true,
+      adminFullName: '',
+      adminUsername: '',
+      adminPassword: 'admin123',
+      adminPhone: '',
+      adminEmail: '',
     });
     setShowOrgModal(true);
   };
@@ -216,6 +229,12 @@ export const SettingsView: React.FC = () => {
       spreadsheetId: org.spreadsheetId || '',
       spreadsheetUrl: org.spreadsheetUrl || '',
       driveFolderId: org.driveFolderId || '1XEVf3izkJYujAyW-qUfi3eP7vFimb2kj',
+      createAdminUser: false,
+      adminFullName: '',
+      adminUsername: '',
+      adminPassword: '',
+      adminPhone: '',
+      adminEmail: '',
     });
     setShowOrgModal(true);
   };

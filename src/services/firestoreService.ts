@@ -246,11 +246,14 @@ export function subscribeToOfficeFiscalYear(
 export async function saveUserToFirestore(user: User): Promise<boolean> {
   if (!user || (!user.id && !user.username)) return false;
   const docId = user.id || `user_${user.username.toLowerCase()}`;
+  const usernameClean = (user.username || '').trim();
+  const usernameLower = usernameClean.toLowerCase();
+
   try {
     const userDocRef = doc(db, 'users', docId);
     const safeData: Partial<User> = {
       id: docId,
-      username: user.username,
+      username: usernameClean,
       fullName: user.fullName,
       role: user.role,
       organizationId: user.organizationId || 'org_default',
@@ -269,6 +272,49 @@ export async function saveUserToFirestore(user: User): Promise<boolean> {
     };
     await setDoc(userDocRef, safeData, { merge: true });
 
+    // Index username for O(1) cross-device lookup
+    if (usernameLower) {
+      try {
+        const usernameRef = doc(db, 'usernames', usernameLower);
+        await setDoc(usernameRef, {
+          uid: docId,
+          username: usernameClean,
+          usernameLower,
+          authEmail: user.email || '',
+          role: user.role,
+          organizationId: user.organizationId || 'org_default',
+          isActive: user.isActive ?? true,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      } catch {}
+    }
+
+    // Save credentials if provided
+    if (user.password) {
+      try {
+        const credRef = doc(db, 'user_credentials', docId);
+        const isHash = user.password.startsWith('sha256:') || user.password.startsWith('scrypt:');
+        const parts = user.password.split(':');
+        await setDoc(credRef, {
+          uid: docId,
+          usernameLower,
+          algo: user.password.startsWith('scrypt:') ? 'scrypt' : user.password.startsWith('sha256:') ? 'sha256' : 'plain',
+          salt: isHash && parts.length === 3 ? parts[1] : '',
+          hash: isHash && parts.length === 3 ? parts[2] : user.password,
+          mustChangePassword: Boolean(user.mustChangePassword),
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+
+        const legacyCredRef = doc(db, 'credentials', docId);
+        await setDoc(legacyCredRef, {
+          uid: docId,
+          username: usernameClean,
+          password: user.password,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      } catch {}
+    }
+
     // Also mirror to office users subcollection if officeId is specific
     if (user.organizationId && user.organizationId !== 'all') {
       try {
@@ -286,7 +332,7 @@ export async function saveUserToFirestore(user: User): Promise<boolean> {
         currentList = snap.data().users;
       }
       const existingIdx = currentList.findIndex(
-        (u) => u.id === docId || u.username.toLowerCase() === user.username.toLowerCase()
+        (u) => u.id === docId || u.username.toLowerCase() === usernameLower
       );
       if (existingIdx >= 0) {
         currentList[existingIdx] = { ...currentList[existingIdx], ...safeData } as User;
@@ -307,22 +353,55 @@ export async function getUserFromFirestore(usernameOrId: string): Promise<User |
   if (!usernameOrId) return null;
   const clean = usernameOrId.trim().toLowerCase();
   try {
-    // 1. Direct doc lookup
+    // 1. Check usernames O(1) index
+    const usernameIndexRef = doc(db, 'usernames', clean);
+    const usernameSnap = await getDoc(usernameIndexRef);
+    if (usernameSnap.exists()) {
+      const uIndexData = usernameSnap.data();
+      if (uIndexData?.uid) {
+        const directDoc = await getDoc(doc(db, 'users', uIndexData.uid));
+        if (directDoc.exists()) {
+          const uObj = directDoc.data() as User;
+          if (!uObj.password) {
+            try {
+              const credDoc = await getDoc(doc(db, 'user_credentials', uIndexData.uid));
+              if (credDoc.exists()) {
+                const cData = credDoc.data();
+                uObj.password = cData.algo === 'sha256' && cData.salt ? `sha256:${cData.salt}:${cData.hash}` : cData.hash || cData.plain;
+              }
+            } catch {}
+          }
+          return uObj;
+        }
+      }
+    }
+
+    // 2. Direct doc lookup
     const directDocRef = doc(db, 'users', usernameOrId);
     const snap = await getDoc(directDocRef);
     if (snap.exists()) {
-      return snap.data() as User;
+      const uObj = snap.data() as User;
+      if (!uObj.password) {
+        try {
+          const credDoc = await getDoc(doc(db, 'user_credentials', usernameOrId));
+          if (credDoc.exists()) {
+            const cData = credDoc.data();
+            uObj.password = cData.algo === 'sha256' && cData.salt ? `sha256:${cData.salt}:${cData.hash}` : cData.hash || cData.plain;
+          }
+        } catch {}
+      }
+      return uObj;
     }
 
-    // 2. Query by username
+    // 3. Query by username
     const collRef = collection(db, 'users');
-    const q = query(collRef, where('username', '==', clean));
+    const q = query(collRef, where('username', '==', usernameOrId.trim()));
     const querySnap = await getDocs(q);
     if (!querySnap.empty) {
       return querySnap.docs[0].data() as User;
     }
 
-    // 3. Check legacy registered_accounts
+    // 4. Check legacy registered_accounts
     const legacyRef = doc(db, 'system_users', 'registered_accounts');
     const legacySnap = await getDoc(legacyRef);
     if (legacySnap.exists() && Array.isArray(legacySnap.data().users)) {
