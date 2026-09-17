@@ -8,7 +8,13 @@ import { adminDb, adminAuth, FIRESTORE_DATABASE_ID, getFirestoreDatabaseId } fro
 import { verifyPasswordSync, hashPasswordSync } from './src/utils/securityUtils.ts';
 import { initSqlSchema } from './src/db/index.ts';
 import { isSqlEnabled, getSqlStatus } from './src/server/repositories/sqlHelper.ts';
-import { PersistenceError } from './src/server/repositories/firestoreGuard.ts';
+import {
+  PersistenceError,
+  verifyPersistence,
+  isPersistenceDegraded,
+  getPersistenceDiagnostics,
+  PersistenceVerificationResult,
+} from './src/server/repositories/firestoreGuard.ts';
 import { syncLocalStoreFromFirestore, localStoreEntriesCount } from './src/server/repositories/localStore.ts';
 import {
   saveOffice,
@@ -54,62 +60,6 @@ import {
   getSystemSetting,
   setSystemSetting,
 } from './src/server/repositories/settingsRepo.ts';
-
-let PERSISTENCE_DEGRADED = false;
-let persistenceDiagnostics = {
-  canRead: false,
-  canWrite: false,
-  readLatencyMs: 0,
-  writeLatencyMs: 0,
-  error: null as string | null,
-};
-
-export async function verifyPersistence(): Promise<{ ok: boolean; readLatencyMs: number; writeLatencyMs: number; error?: string }> {
-  const testDocRef = adminDb.collection('_system').doc('_healthcheck');
-  const now = new Date().toISOString();
-  try {
-    const writeStart = Date.now();
-    await testDocRef.set({ timestamp: now, test: true });
-    const writeLatencyMs = Date.now() - writeStart;
-
-    const readStart = Date.now();
-    const snap = await testDocRef.get();
-    const readLatencyMs = Date.now() - readStart;
-
-    await testDocRef.delete().catch(() => {});
-
-    if (snap.exists) {
-      PERSISTENCE_DEGRADED = false;
-      persistenceDiagnostics = {
-        canRead: true,
-        canWrite: true,
-        readLatencyMs,
-        writeLatencyMs,
-        error: null,
-      };
-      console.log(`[Persistence Verification] Firestore healthy (write: ${writeLatencyMs}ms, read: ${readLatencyMs}ms, db: ${getFirestoreDatabaseId()})`);
-      return { ok: true, readLatencyMs, writeLatencyMs };
-    } else {
-      throw new Error('Healthcheck document was not found after write');
-    }
-  } catch (err: any) {
-    PERSISTENCE_DEGRADED = true;
-    persistenceDiagnostics = {
-      canRead: false,
-      canWrite: false,
-      readLatencyMs: 0,
-      writeLatencyMs: 0,
-      error: err?.message || String(err),
-    };
-    console.error(`[FATAL] Persistence unavailable:`, {
-      projectId: process.env.FIREBASE_PROJECT_ID || 'inner-volt-dxfhk',
-      databaseId: getFirestoreDatabaseId(),
-      error: err?.message || err,
-      code: err?.code,
-    });
-    return { ok: false, readLatencyMs: 0, writeLatencyMs: 0, error: err?.message || String(err) };
-  }
-}
 
 export function sendErrorResponse(res: express.Response, error: any, defaultMessage: string) {
   console.error(`[API Error] ${defaultMessage}:`, error?.message || error);
@@ -222,11 +172,22 @@ async function startServer() {
   });
 
   // Verify persistence on boot
-  await verifyPersistence().catch(() => {});
+  console.log('[Server Startup] 🔍 Verifying persistence and database connectivity...');
+  const bootPersistence = await verifyPersistence().catch((err) => {
+    console.error('[Server Startup] ❌ Persistence verification error:', err);
+    return null;
+  });
+  if (bootPersistence) {
+    if (bootPersistence.ok) {
+      console.log(`[Server Startup] ✅ Database connectivity verified successfully (${bootPersistence.firestore.writeLatencyMs}ms write, ${bootPersistence.firestore.readLatencyMs}ms read)`);
+    } else {
+      console.warn(`[Server Startup] ⚠️ Database status: ${bootPersistence.status} — ${bootPersistence.message}`);
+    }
+  }
 
   // Degraded persistence guard for mutating operations
   app.use((req, res, next) => {
-    if (PERSISTENCE_DEGRADED && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    if (isPersistenceDegraded() && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       if (req.path.startsWith('/api/health') || req.path === '/api/auth/resolve' || req.path === '/api/auth/login') {
         return next();
       }
@@ -248,12 +209,13 @@ async function startServer() {
   // Health check endpoint
   app.get('/api/health', async (_req, res) => {
     await isSqlEnabled();
+    const degraded = isPersistenceDegraded();
     res.json({
-      status: PERSISTENCE_DEGRADED ? 'degraded' : 'ok',
-      firestore: PERSISTENCE_DEGRADED ? 'down' : 'up',
+      status: degraded ? 'degraded' : 'ok',
+      firestore: degraded ? 'down' : 'up',
       sql: getSqlStatus(),
       databaseId: getFirestoreDatabaseId(),
-      degraded: PERSISTENCE_DEGRADED,
+      degraded,
       timestamp: new Date().toISOString(),
     });
   });
@@ -261,18 +223,22 @@ async function startServer() {
   // Deep health check endpoint
   app.get('/api/health/deep', async (_req, res) => {
     await isSqlEnabled();
-    await verifyPersistence().catch(() => {});
+    const result = await verifyPersistence().catch(() => null);
+    const diag = getPersistenceDiagnostics();
+    const degraded = isPersistenceDegraded();
     res.json({
       projectId: process.env.FIREBASE_PROJECT_ID || 'inner-volt-dxfhk',
       databaseId: getFirestoreDatabaseId(),
-      canRead: persistenceDiagnostics.canRead,
-      canWrite: persistenceDiagnostics.canWrite,
-      readLatencyMs: persistenceDiagnostics.readLatencyMs,
-      writeLatencyMs: persistenceDiagnostics.writeLatencyMs,
+      canRead: diag.canRead,
+      canWrite: diag.canWrite,
+      readLatencyMs: diag.readLatencyMs,
+      writeLatencyMs: diag.writeLatencyMs,
       sql: getSqlStatus(),
       localStoreEntries: localStoreEntriesCount(),
-      degraded: PERSISTENCE_DEGRADED,
-      error: persistenceDiagnostics.error,
+      degraded,
+      status: result?.status || (degraded ? 'DEGRADED' : 'HEALTHY'),
+      message: result?.message || (degraded ? 'डेटाबेसमा समस्या छ।' : 'डेटाबेस सामान्य छ।'),
+      error: diag.error,
       timestamp: new Date().toISOString(),
     });
   });
