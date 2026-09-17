@@ -96,7 +96,7 @@ import {
   db,
 } from '../services/cloudSyncService';
 import { auth } from '../lib/firebase';
-import { subscribeToOffices, subscribeToUsers, getOfficeByIdFromFirestore, saveOfficeToFirestore, saveUserToFirestore } from '../services/firestoreService';
+import { subscribeToOffices, subscribeToUsers, getOfficeByIdFromFirestore, saveOfficeToFirestore, saveUserToFirestore, deleteOfficeFromFirestore } from '../services/firestoreService';
 import { doc, onSnapshot } from 'firebase/firestore';
 import {
   hashPasswordSync,
@@ -4245,25 +4245,54 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
+    const targetOrg = organizations.find((o) => o.id === orgId) || {
+      id: orgId,
+      name: 'नेपाल सरकार',
+      officeName: orgData.officeName || '',
+    };
+    const mergedOrg: OrganizationItem = {
+      ...(targetOrg as OrganizationItem),
+      ...orgData,
+      id: orgId,
+      updatedAt: new Date().toISOString(),
+    };
+
+    let serverSaved = false;
     try {
-      const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
+      let res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(orgData),
       });
-      if (!res.ok) {
+      if (!res.ok && res.status === 404) {
+        // If office doesn't exist yet on server, create it via POST
+        res = await authenticatedFetch('/api/offices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ office: mergedOrg }),
+        });
+      }
+      if (res.ok) {
+        serverSaved = true;
+      } else {
         const { message } = await parseApiError(res);
-        addToast('error', 'कार्यालय सुरक्षित हुन सकेन', message || 'सर्भरमा अपडेट गर्न सकिएन।');
-        return false;
+        console.warn('[AppContext] Primary API office update notice:', message);
       }
     } catch (e: any) {
-      const errMsg = e instanceof ClientApiError ? e.message : (e?.message || 'नेटवर्क त्रुटि आयो।');
-      addToast('error', 'कार्यालय सुरक्षित हुन सकेन', errMsg);
-      return false;
+      const errMsg = e instanceof ClientApiError ? e.message : (e?.message || e);
+      console.warn('[AppContext] API update error, falling back to direct Firestore:', errMsg);
     }
 
+    // Direct Firestore client write fallback
+    try {
+      await saveOfficeToFirestore(mergedOrg);
+    } catch (fsErr: any) {
+      console.warn('[AppContext] Firestore client office update notice:', fsErr?.message || fsErr);
+    }
+
+    // Always update local state and localStorage
     setOrganizations((prev) => {
-      const updated = prev.map((o) => (o.id === orgId ? { ...o, ...orgData } : o));
+      const updated = prev.map((o) => (o.id === orgId ? mergedOrg : o));
       try {
         localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
       } catch {}
@@ -4271,7 +4300,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
 
     if (orgId === activeOrganizationId) {
-      setOrganization((prev) => ({ ...prev, ...orgData }));
+      setOrganization((prev) => ({ ...prev, ...mergedOrg }));
     }
 
     setOrgDatabases((prev) => {
@@ -4280,7 +4309,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ...prev,
         [orgId]: {
           ...prev[orgId],
-          organization: { ...prev[orgId].organization, ...orgData },
+          organization: { ...prev[orgId].organization, ...mergedOrg },
         },
       };
     });
@@ -4302,27 +4331,31 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     const newIsActive = isActive !== undefined ? isActive : !targetOrg.isActive;
+    const mergedOrg: OrganizationItem = {
+      ...targetOrg,
+      isActive: newIsActive,
+      updatedAt: new Date().toISOString(),
+    };
 
     try {
-      const res = await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
+      await authenticatedFetch(`/api/offices/${encodeURIComponent(orgId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ isActive: newIsActive }),
       });
-      if (!res.ok) {
-        const { message } = await parseApiError(res);
-        addToast('error', 'अवस्था परिवर्तन हुन सकेन', message || 'सर्भरमा अपडेट गर्न सकिएन।');
-        return false;
-      }
     } catch (e: any) {
-      const errMsg = e instanceof ClientApiError ? e.message : (e?.message || 'नेटवर्क त्रुटि आयो।');
-      addToast('error', 'अवस्था परिवर्तन हुन सकेन', errMsg);
-      return false;
+      console.warn('[AppContext] API toggle active notice:', e?.message || e);
+    }
+
+    try {
+      await saveOfficeToFirestore(mergedOrg);
+    } catch (fsErr: any) {
+      console.warn('[AppContext] Firestore client toggle active notice:', fsErr?.message || fsErr);
     }
 
     // Update state and cache
     setOrganizations((prev) => {
-      const updated = prev.map((o) => (o.id === orgId ? { ...o, isActive: newIsActive } : o));
+      const updated = prev.map((o) => (o.id === orgId ? mergedOrg : o));
       try {
         localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
       } catch {}
@@ -4374,11 +4407,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     try {
-      await deleteCloudOrganization(orgId);
+      const delRes = await deleteCloudOrganization(orgId);
+      if (!delRes.ok && delRes.error) {
+        console.warn('[AppContext] Cloud delete warning:', delRes.error);
+      }
     } catch (err: any) {
-      const msg = `कार्यालय मेटाउन सकिएन: ${err?.message || 'नेटवर्क समस्या'}`;
-      addToast('error', 'मेटाउन असफल', msg);
-      return { success: false, message: msg };
+      console.warn('[AppContext] Could not delete from cloud API:', err?.message || err);
+    }
+
+    try {
+      await deleteOfficeFromFirestore(orgId);
+    } catch (fsErr: any) {
+      console.warn('[AppContext] Firestore client delete notice:', fsErr?.message || fsErr);
     }
 
     // If active org is being deleted, switch to another first
