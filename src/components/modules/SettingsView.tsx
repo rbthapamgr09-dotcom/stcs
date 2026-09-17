@@ -441,10 +441,8 @@ export const SettingsView: React.FC = () => {
 
   const handleOpenResetPassword = (u: User) => {
     setPasswordTargetUser(u);
-    const defPass =
-      u.role === 'SUPER_ADMIN' ? 'admin123' : u.role === 'ACCOUNTANT' ? 'account123' : 'viewer123';
-    setNewPasswordInput(defPass);
-    setConfirmPasswordInput(defPass);
+    setNewPasswordInput('');
+    setConfirmPasswordInput('');
     setResetMustChangePassword(true);
     setShowPasswordText(true);
     setShowPasswordModal(true);
@@ -2806,24 +2804,24 @@ export const SettingsView: React.FC = () => {
                 </label>
               </div>
 
-              {/* Preset suggestions */}
-              <div className="space-y-1">
-                <p className="text-[11px] font-bold text-gray-600">पूर्वनिर्धारित पासवर्डहरू (Quick Presets):</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {['admin123', 'account123', 'viewer123', 'nepal2081'].map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => {
-                        setNewPasswordInput(preset);
-                        setConfirmPasswordInput(preset);
-                      }}
-                      className="px-2.5 py-1 bg-gray-100 hover:bg-[#edf4ea] text-gray-700 hover:text-[#24331C] rounded-lg font-mono text-[11px] font-semibold border border-gray-200 transition-colors cursor-pointer"
-                    >
-                      {preset}
-                    </button>
-                  ))}
-                </div>
+              {/* Strong password generator */}
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*';
+                    let pass = '';
+                    for (let i = 0; i < 10; i++) {
+                      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+                    }
+                    setNewPasswordInput(pass);
+                    setConfirmPasswordInput(pass);
+                  }}
+                  className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg text-xs font-semibold border border-emerald-300 transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-emerald-700" />
+                  <span>सुरक्षित पासवर्ड उत्पन्न गर्नुहोस् (Generate Strong Password)</span>
+                </button>
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">

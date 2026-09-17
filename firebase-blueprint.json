@@ -108,6 +108,26 @@
     "/system_users/{userId}": {
       "schema": "User",
       "description": "Legacy user records cache"
+    },
+    "/system_connections/{connId}": {
+      "schema": "SystemSetting",
+      "description": "System synchronization states and connection records"
+    },
+    "/user_credentials/{uid}": {
+      "schema": "User",
+      "description": "User credential security hashes"
+    },
+    "/credentials/{credId}": {
+      "schema": "User",
+      "description": "Legacy user credentials storage"
+    },
+    "/usernames/{username}": {
+      "schema": "User",
+      "description": "Fast username index"
+    },
+    "/_system/{docId}": {
+      "schema": "SystemSetting",
+      "description": "System diagnostics"
     }
   }
 }

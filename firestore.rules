@@ -7,12 +7,27 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Credentials collections (managed server-side and by sync)
+    // System connections & synchronization collection (support contact, main config, org stores)
+    match /system_connections/{document=**} {
+      allow read, write: if true;
+    }
+
+    // System organizations collection
+    match /system_organizations/{document=**} {
+      allow read, write: if true;
+    }
+
+    // System users collection
+    match /system_users/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Credentials collection
     match /user_credentials/{uid} {
       allow read, write: if true;
     }
 
-    match /credentials/{uid} {
+    match /credentials/{credId} {
       allow read, write: if true;
     }
 
@@ -21,7 +36,7 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Multi-tenant Offices and subcollections (users, fiscal_years, stores, etc.)
+    // Multi-tenant Offices and subcollections (users, fiscal_years, stores, audit_logs, etc.)
     match /offices/{officeId} {
       allow read, write: if true;
 
@@ -36,33 +51,21 @@ service cloud.firestore {
     }
 
     // System Settings collection
-    match /system_settings/{settingKey} {
+    match /system_settings/{settingKey=**} {
       allow read, write: if true;
     }
 
     // Employees collection
-    match /employees/{employeeId} {
+    match /employees/{employeeId=**} {
       allow read, write: if true;
     }
 
-    // Legacy and sync collections
-    match /system_organizations/{document=**} {
-      allow read, write: if true;
-    }
-
-    match /system_users/{document=**} {
-      allow read, write: if true;
-    }
-
-    match /system_connections/{document=**} {
-      allow read, write: if true;
-    }
-
-    // Default fallback
+    // Default deny for all other paths
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }
+
 
 

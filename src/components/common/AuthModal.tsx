@@ -38,7 +38,7 @@ export const AuthModal: React.FC = () => {
 
   // Reset password form state
   const [resetUsername, setResetUsername] = useState('');
-  const [resetMethod, setResetMethod] = useState<'pin' | 'securityQuestion' | 'masterKey'>('pin');
+  const [resetMethod, setResetMethod] = useState<'pin' | 'securityQuestion'>('pin');
   const [verificationValue, setVerificationValue] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -108,8 +108,8 @@ export const AuthModal: React.FC = () => {
     }
 
     setResetLoading(true);
-    setTimeout(() => {
-      const result = resetPassword({
+    setTimeout(async () => {
+      const result = await resetPassword({
         usernameOrEmail: resetUsername.trim(),
         method: resetMethod,
         verificationValue: verificationValue.trim(),
@@ -127,11 +127,6 @@ export const AuthModal: React.FC = () => {
         }, 1500);
       }
     }, 300);
-  };
-
-  const handleFillDemoCreds = (username: string, pass: string) => {
-    setLoginUsername(username);
-    setLoginPassword(pass);
   };
 
   return (
@@ -248,45 +243,6 @@ export const AuthModal: React.FC = () => {
                   </>
                 )}
               </button>
-
-              {/* Quick Credentials / Demo Logins */}
-              <div className="pt-3 border-t border-gray-100">
-                <p className="text-[11px] font-bold text-gray-500 mb-2 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  <span>द्रुत परीक्षण खाताहरू (Quick Demo Login Credentials):</span>
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleFillDemoCreds('superadmin', 'admin123')}
-                    className="p-2 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-left transition-colors cursor-pointer group"
-                  >
-                    <p className="font-bold text-purple-900 text-[10px] group-hover:underline">Super Admin</p>
-                    <p className="text-[9px] text-gray-500 font-mono">superadmin</p>
-                    <p className="text-[8px] text-purple-700 font-mono">admin123</p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleFillDemoCreds('accountant', 'account123')}
-                    className="p-2 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-left transition-colors cursor-pointer group"
-                  >
-                    <p className="font-bold text-blue-900 text-[10px] group-hover:underline">Accountant</p>
-                    <p className="text-[9px] text-gray-500 font-mono">accountant</p>
-                    <p className="text-[8px] text-blue-700 font-mono">account123</p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleFillDemoCreds('viewer', 'viewer123')}
-                    className="p-2 rounded-xl bg-gray-50 hover:bg-gray-100 border border-gray-200 text-left transition-colors cursor-pointer group"
-                  >
-                    <p className="font-bold text-gray-800 text-[10px] group-hover:underline">Viewer</p>
-                    <p className="text-[9px] text-gray-500 font-mono">viewer</p>
-                    <p className="text-[8px] text-gray-600 font-mono">viewer123</p>
-                  </button>
-                </div>
-              </div>
             </form>
           ) : (
             /* Reset Password Form */
@@ -313,7 +269,7 @@ export const AuthModal: React.FC = () => {
                     required
                     value={resetUsername}
                     onChange={(e) => setResetUsername(e.target.value)}
-                    placeholder="जस्तै: superadmin, accountant"
+                    placeholder="जस्तै: admin_user, लेखापाल"
                     className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#c8d7c2] bg-white font-mono font-semibold text-[#24331C] outline-none focus:ring-2 focus:ring-[#4B6043]"
                   />
                 </div>
@@ -322,14 +278,14 @@ export const AuthModal: React.FC = () => {
               {/* Verification Method Chooser */}
               <div className="space-y-1.5">
                 <label className="font-bold text-gray-700">प्रमाणीकरण विधि (Verification Method):</label>
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => {
                       setResetMethod('pin');
                       setVerificationValue('');
                     }}
-                    className={`p-2 rounded-xl text-center border font-bold transition-colors cursor-pointer ${
+                    className={`p-2 rounded-xl text-center border font-bold transition-colors cursor-pointer text-xs ${
                       resetMethod === 'pin'
                         ? 'bg-[#edf4ea] border-[#4B6043] text-[#24331C]'
                         : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
@@ -344,28 +300,13 @@ export const AuthModal: React.FC = () => {
                       setResetMethod('securityQuestion');
                       setVerificationValue('');
                     }}
-                    className={`p-2 rounded-xl text-center border font-bold transition-colors cursor-pointer ${
+                    className={`p-2 rounded-xl text-center border font-bold transition-colors cursor-pointer text-xs ${
                       resetMethod === 'securityQuestion'
                         ? 'bg-[#edf4ea] border-[#4B6043] text-[#24331C]'
                         : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                     }`}
                   >
                     सुरक्षा प्रश्न
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setResetMethod('masterKey');
-                      setVerificationValue('');
-                    }}
-                    className={`p-2 rounded-xl text-center border font-bold transition-colors cursor-pointer ${
-                      resetMethod === 'masterKey'
-                        ? 'bg-[#edf4ea] border-[#4B6043] text-[#24331C]'
-                        : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    मास्टर कुञ्जी
                   </button>
                 </div>
               </div>
@@ -376,7 +317,6 @@ export const AuthModal: React.FC = () => {
                   <div className="space-y-1">
                     <label className="font-bold text-gray-800 flex items-center justify-between">
                       <span>४-अङ्कको सुरक्षा पिन (Security PIN): *</span>
-                      <span className="text-[10px] text-gray-400 font-normal">(मानक: 1234)</span>
                     </label>
                     <input
                       type="password"
@@ -384,7 +324,7 @@ export const AuthModal: React.FC = () => {
                       required
                       value={verificationValue}
                       onChange={(e) => setVerificationValue(e.target.value)}
-                      placeholder="पिन प्रविष्ट गर्नुहोस् (e.g. 1234)"
+                      placeholder="आफ्नो सुरक्षा पिन प्रविष्ट गर्नुहोस्"
                       className="w-full p-2 rounded-lg border border-[#c8d7c2] bg-white font-mono font-bold tracking-widest text-center text-sm outline-none focus:ring-2 focus:ring-[#4B6043]"
                     />
                   </div>
@@ -406,27 +346,10 @@ export const AuthModal: React.FC = () => {
                         required
                         value={verificationValue}
                         onChange={(e) => setVerificationValue(e.target.value)}
-                        placeholder="जस्तै: नेपाल वा काठमाडौँ"
+                        placeholder="सुरक्षा प्रश्नको उत्तर लेख्नुहोस्"
                         className="w-full p-2 rounded-lg border border-[#c8d7c2] bg-white font-semibold text-[#24331C] outline-none focus:ring-2 focus:ring-[#4B6043]"
                       />
                     </div>
-                  </div>
-                )}
-
-                {resetMethod === 'masterKey' && (
-                  <div className="space-y-1">
-                    <label className="font-bold text-gray-800 flex items-center justify-between">
-                      <span>मास्टर रिकभरी कुञ्जी (Master Admin Key): *</span>
-                      <span className="text-[10px] text-amber-700 font-normal">(`nepal@gov2081`)</span>
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={verificationValue}
-                      onChange={(e) => setVerificationValue(e.target.value)}
-                      placeholder="मास्टर कुञ्जी प्रविष्ट गर्नुहोस्"
-                      className="w-full p-2 rounded-lg border border-[#c8d7c2] bg-white font-mono font-semibold outline-none focus:ring-2 focus:ring-[#4B6043]"
-                    />
                   </div>
                 )}
               </div>

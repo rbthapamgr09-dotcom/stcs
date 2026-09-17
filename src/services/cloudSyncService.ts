@@ -1011,13 +1011,23 @@ export async function cloudLogin(
   username: string,
   password?: string,
   firebaseUid?: string
-): Promise<{ success: boolean; user?: User; notFound?: boolean; wrongPassword?: boolean; inactive?: boolean; message?: string }> {
+): Promise<{
+  success: boolean;
+  user?: User;
+  token?: string;
+  mustChangePassword?: boolean;
+  notFound?: boolean;
+  wrongPassword?: boolean;
+  inactive?: boolean;
+  officeInactive?: boolean;
+  message?: string;
+}> {
   const cleanInput = (username || '').trim().toLowerCase();
   if (!cleanInput) {
     return { success: false, notFound: true, message: 'प्रयोगकर्ता नाम प्रविष्ट गर्नुहोस्।' };
   }
 
-  // 1. Try backend authentication endpoint (Cloud SQL)
+  // 1. Try backend authentication endpoint (Cloud SQL & Firestore with scrypt)
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
@@ -1032,16 +1042,21 @@ export async function cloudLogin(
         ...normalized,
         isActive: normalized.isActive !== false,
       };
-      return { success: true, user: userObj };
+      return {
+        success: true,
+        user: userObj,
+        token: json.token,
+        mustChangePassword: Boolean(json.mustChangePassword ?? userObj.mustChangePassword),
+      };
     }
-    if (json.wrongPassword || json.inactive) {
+    if (json.wrongPassword || json.inactive || json.officeInactive) {
       return json;
     }
   } catch (err: any) {
     console.warn('Cloud login API error:', err);
   }
 
-  // 2. Fallback: Check Firestore if Cloud SQL returned notFound or threw an error
+  // 2. Fallback: Check Firestore if backend API was unavailable
   try {
     let foundUserRaw: User | null = null;
     const docRef = doc(db, USERS_COLLECTION, MAIN_USERS_DOC);
@@ -1073,13 +1088,7 @@ export async function cloudLogin(
         };
       }
 
-      const userPass =
-        foundUser.password ||
-        (foundUser.role === 'SUPER_ADMIN' || foundUser.role === 'ADMIN'
-          ? 'admin123'
-          : foundUser.role === 'ACCOUNTANT'
-          ? 'account123'
-          : 'viewer123');
+      const userPass = foundUser.password || '';
 
       const safeFoundUser: User = {
         ...foundUser,
@@ -1087,13 +1096,21 @@ export async function cloudLogin(
       };
 
       if (password === undefined || password === '') {
-        return { success: true, user: safeFoundUser };
+        return { success: true, user: safeFoundUser, mustChangePassword: Boolean(safeFoundUser.mustChangePassword) };
+      }
+
+      if (!userPass) {
+        return { success: false, wrongPassword: true, message: 'खाताको पासवर्ड फेला परेन।' };
       }
 
       const passCheck = verifyPasswordSync(password, userPass);
       if (passCheck.isValid) {
         saveSingleUserToCloud(safeFoundUser).catch(() => {});
-        return { success: true, user: safeFoundUser };
+        return {
+          success: true,
+          user: safeFoundUser,
+          mustChangePassword: Boolean(safeFoundUser.mustChangePassword),
+        };
       } else {
         return { success: false, wrongPassword: true, message: 'गलत पासवर्ड प्रविष्ट भयो।' };
       }

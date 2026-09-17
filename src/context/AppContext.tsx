@@ -288,7 +288,7 @@ interface AppContextType {
     securityPin?: string;
     securityQuestion?: string;
     securityAnswer?: string;
-  }) => { success: boolean; message: string };
+  }) => Promise<{ success: boolean; message: string }> | { success: boolean; message: string };
   resetPassword: (params: {
     usernameOrEmail: string;
     method: 'pin' | 'securityQuestion' | 'masterKey';
@@ -1280,17 +1280,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     let unsubscribeMainConfig: (() => void) | undefined;
     try {
       const configDocRef = doc(db, 'system_connections', 'main_config');
-      unsubscribeMainConfig = onSnapshot(configDocRef, (snap) => {
-        if (snap.exists() && isMounted) {
-          const d = snap.data();
-          if (d) {
-            if (d.activeFiscalYear) setActiveFiscalYearState(d.activeFiscalYear);
-            if (d.fiscalYears && Array.isArray(d.fiscalYears)) {
-              setFiscalYears(sortFiscalYearsDescending(d.fiscalYears));
+      unsubscribeMainConfig = onSnapshot(
+        configDocRef,
+        (snap) => {
+          if (snap.exists() && isMounted) {
+            const d = snap.data();
+            if (d) {
+              if (d.activeFiscalYear) setActiveFiscalYearState(d.activeFiscalYear);
+              if (d.fiscalYears && Array.isArray(d.fiscalYears)) {
+                setFiscalYears(sortFiscalYearsDescending(d.fiscalYears));
+              }
             }
           }
+        },
+        (err) => {
+          console.warn('Main config onSnapshot notice:', err?.message || err);
         }
-      });
+      );
     } catch (err) {}
 
     let unsubscribeStandaloneOffices: (() => void) | undefined;
@@ -1864,6 +1870,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
           }
 
+          // Save auth token to localStorage for authenticatedFetch Bearer headers
+          if (cloudResult.token) {
+            try {
+              localStorage.setItem('AUTH_TOKEN', cloudResult.token);
+            } catch {}
+          }
+
+          if (cloudResult.mustChangePassword) {
+            found.mustChangePassword = true;
+          }
+
           // Update local state and cache to localStorage
           setUsers((prev) => {
             const updated = prev.filter(
@@ -1876,22 +1893,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return updated;
           });
           isLocalPasswordValid = true;
+
+          // Multi-tenant: If user belongs to a specific organization, ensure organization is loaded
           if (found.organizationId && found.organizationId !== 'all') {
-            const orgExists = organizations.some((o) => o.id === found!.organizationId);
-            if (!orgExists) {
-              getOfficeByIdFromFirestore(found.organizationId).then((fetchedOrg) => {
-                if (fetchedOrg) {
-                  setOrganizations((prev) => {
-                    const exists = prev.some((o) => o.id === fetchedOrg.id);
-                    if (exists) return prev;
-                    const updated = [...prev, fetchedOrg];
-                    try {
-                      localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
-                    } catch {}
-                    return updated;
-                  });
-                }
-              }).catch(() => {});
+            try {
+              let fetchedOrg: OrganizationItem | null = null;
+              const offRes = await fetch(`/api/offices/${encodeURIComponent(found.organizationId)}`, {
+                headers: cloudResult.token ? { Authorization: `Bearer ${cloudResult.token}` } : {},
+              });
+              if (offRes.ok) {
+                const offData = await offRes.json();
+                fetchedOrg = offData.office || offData.organization;
+              }
+              if (!fetchedOrg) {
+                fetchedOrg = await getOfficeByIdFromFirestore(found.organizationId);
+              }
+              if (fetchedOrg) {
+                setOrganizations((prev) => {
+                  const exists = prev.some((o) => o.id === fetchedOrg!.id);
+                  const updated = exists
+                    ? prev.map((o) => (o.id === fetchedOrg!.id ? { ...o, ...fetchedOrg } : o))
+                    : [...prev, fetchedOrg!];
+                  try {
+                    localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(updated));
+                  } catch {}
+                  return updated;
+                });
+                setOrganization(fetchedOrg);
+              }
+            } catch (orgErr) {
+              console.warn('[AppContext] Pre-load office error notice:', orgErr);
             }
           }
         } else if (cloudResult.inactive) {
@@ -2024,7 +2055,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return { success: true, user: updatedUser, message: 'लगइन सफल भयो।' };
   };
 
-  const completeFirstTimePasswordChange = ({
+  const completeFirstTimePasswordChange = async ({
     userId,
     newPassword,
     securityPin,
@@ -2036,15 +2067,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     securityPin?: string;
     securityQuestion?: string;
     securityAnswer?: string;
-  }): { success: boolean; message: string } => {
+  }): Promise<{ success: boolean; message: string }> => {
     // Search user by ID, username, or UID
     const cleanId = (userId || '').trim().toLowerCase();
     let target = users.find(
       (u) =>
         u.id === userId ||
         (u.id && u.id.toLowerCase() === cleanId) ||
-        (u.username && u.username.toLowerCase() === cleanId)
+        (u.username && u.username.toLowerCase() === cleanId) ||
+        (u.uid && u.uid === userId)
     );
+
+    if (!target && currentUser && (currentUser.id === userId || currentUser.username?.toLowerCase() === cleanId || currentUser.uid === userId)) {
+      target = currentUser;
+    }
+
+    if (!target) {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEYS.USERS);
+        if (stored) {
+          const list: User[] = JSON.parse(stored);
+          target = list.find((u) => u.id === userId || u.username?.toLowerCase() === cleanId || u.uid === userId);
+        }
+      } catch {}
+    }
 
     if (!target) {
       const msg = 'प्रयोगकर्ता फेला परेन।';
@@ -2055,6 +2101,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const msg = 'नयाँ पासवर्ड कम्तिमा ४ अक्षरको हुनुपर्दछ।';
       addToast('error', 'कमजोर पासवर्ड', msg);
       return { success: false, message: msg };
+    }
+
+    // Call server-authoritative password endpoint to persist across all devices & browsers
+    const serverUid = target.uid || target.username || target.id;
+    try {
+      const resp = await fetch(`/api/users/${encodeURIComponent(serverUid)}/password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(localStorage.getItem('AUTH_TOKEN') ? { Authorization: `Bearer ${localStorage.getItem('AUTH_TOKEN')}` } : {}),
+        },
+        body: JSON.stringify({
+          newPassword,
+          securityPin: securityPin || target.securityPin || '1234',
+          securityQuestion: securityQuestion || target.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?',
+          securityAnswer: securityAnswer || target.securityAnswer || 'नेपाल',
+        }),
+      });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        console.warn('[AppContext] Server password update warning:', errData);
+      }
+    } catch (apiErr) {
+      console.warn('[AppContext] Password update network warning:', apiErr);
     }
 
     const hashed = hashPasswordSync(newPassword);

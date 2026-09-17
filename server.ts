@@ -680,33 +680,50 @@ async function startServer() {
   app.post('/api/users/:uid/password', optionalAuth, async (req: AuthRequest, res) => {
     try {
       const { uid } = req.params;
-      const { newPassword, currentPassword, masterKey } = req.body;
+      const { newPassword, currentPassword, securityPin, securityQuestion, securityAnswer } = req.body;
 
       if (!uid) return res.status(400).json({ error: 'UID is required' });
-      if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
-        return res.status(400).json({ error: 'पासवर्ड कम्तिमा ६ अक्षरको हुनुपर्छ।' });
+      if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 4) {
+        return res.status(400).json({ error: 'पासवर्ड कम्तिमा ४ अक्षरको हुनुपर्छ।' });
       }
 
-      const user = await getUserByUid(uid);
+      const user = await getUserByUsernameOrEmailOrUid(uid);
       if (!user) return res.status(404).json({ error: 'प्रयोगकर्ता फेला परेन।' });
 
-      // If currentPassword is provided, verify it
-      if (currentPassword) {
-        const cred = await getUserCredentials(uid);
-        if (cred) {
-          const check = await verifyPassword(currentPassword, cred);
-          if (!check.valid) {
-            return res.status(401).json({ error: 'हालको पासवर्ड मिलेन।' });
+      // Authorization check:
+      if (req.user) {
+        const isSelf = req.user.uid === user.uid || (req.user.dbUser && req.user.dbUser.username?.toLowerCase() === user.username?.toLowerCase());
+        const isSuperAdmin = req.user.role === 'SUPER_ADMIN';
+        const isOfficeAdmin = req.user.role === 'ADMIN' && req.user.organizationId === user.organizationId;
+        if (!isSelf && !isSuperAdmin && !isOfficeAdmin) {
+          return res.status(403).json({ error: 'तपाईंलाई यो पासवर्ड परिवर्तन गर्ने अनुमति छैन।' });
+        }
+      } else {
+        // Unauthenticated check: allow if first login / mustChangePassword or current password matches
+        const cred = await getUserCredentials(user.uid);
+        const isFirstLogin = Boolean(user.mustChangePassword || user.isFirstLogin || cred?.mustChangePassword);
+        if (!isFirstLogin) {
+          if (!currentPassword) {
+            return res.status(401).json({ error: 'हालको पासवर्ड आवश्यक छ।' });
+          }
+          if (cred) {
+            const check = await verifyPassword(currentPassword, cred);
+            if (!check.valid) {
+              return res.status(401).json({ error: 'हालको पासवर्ड मिलेन।' });
+            }
           }
         }
       }
 
-      // Update server-side credentials
-      await setUserCredentials(uid, user.username, newPassword, false);
+      // Update server-side credentials with scrypt
+      await setUserCredentials(user.uid, user.username, newPassword, false);
 
       // Clean plaintext password from user document and set mustChangePassword to false
       user.mustChangePassword = false;
       user.isFirstLogin = false;
+      if (securityPin) user.securityPin = securityPin;
+      if (securityQuestion) user.securityQuestion = securityQuestion;
+      if (securityAnswer) user.securityAnswer = securityAnswer;
       delete user.password;
       if (user.metadata) {
         delete user.metadata.password;

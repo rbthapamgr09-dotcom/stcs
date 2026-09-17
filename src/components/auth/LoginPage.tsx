@@ -98,7 +98,7 @@ export const LoginPage: React.FC = () => {
 
   // Reset password form state
   const [resetUsername, setResetUsername] = useState('');
-  const [resetMethod, setResetMethod] = useState<'pin' | 'securityQuestion' | 'masterKey'>('pin');
+  const [resetMethod, setResetMethod] = useState<'pin' | 'securityQuestion'>('pin');
   const [verificationValue, setVerificationValue] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -168,7 +168,7 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  const handleFirstTimePasswordSubmit = (e: React.FormEvent) => {
+  const handleFirstTimePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pendingUser) return;
 
@@ -206,20 +206,22 @@ export const LoginPage: React.FC = () => {
     }
 
     setFirstTimeLoading(true);
-    setTimeout(() => {
-      const result = completeFirstTimePasswordChange({
+    try {
+      const result = await completeFirstTimePasswordChange({
         userId: pendingUser.id,
         newPassword: firstTimeNewPassword,
         securityPin: firstTimePin.trim() || '1234',
         securityQuestion: firstTimeQuestion,
         securityAnswer: firstTimeAnswer.trim() || 'काठमाडौँ',
       });
-      setFirstTimeLoading(false);
-
       if (!result.success) {
         addToast('error', 'त्रुटि', result.message);
       }
-    }, 350);
+    } catch (err: any) {
+      addToast('error', 'त्रुटि', err?.message || 'पासवर्ड परिवर्तन गर्न सकिएन।');
+    } finally {
+      setFirstTimeLoading(false);
+    }
   };
 
   const handleResetSubmit = (e: React.FormEvent) => {
@@ -693,7 +695,7 @@ export const LoginPage: React.FC = () => {
                 {/* Method Tabs */}
                 <div className="space-y-1">
                   <label className="font-semibold text-gray-700">प्रमाणीकरण विधि:</label>
-                  <div className="grid grid-cols-3 gap-1 p-1 bg-gray-100 rounded-lg">
+                  <div className="grid grid-cols-2 gap-1 p-1 bg-gray-100 rounded-lg">
                     <button
                       type="button"
                       onClick={() => {
@@ -720,20 +722,6 @@ export const LoginPage: React.FC = () => {
                     >
                       सुरक्षा प्रश्न
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setResetMethod('masterKey');
-                        setVerificationValue('');
-                      }}
-                      className={`py-1 rounded font-semibold text-[11px] transition-all cursor-pointer ${
-                        resetMethod === 'masterKey'
-                          ? 'bg-white text-[#24331C] shadow-xs'
-                          : 'text-gray-600 hover:text-gray-900'
-                      }`}
-                    >
-                      Master Key
-                    </button>
                   </div>
                 </div>
 
@@ -744,11 +732,10 @@ export const LoginPage: React.FC = () => {
                       {resetMethod === 'pin' && '४-अंकको सुरक्षा पिन (4-Digit PIN): *'}
                       {resetMethod === 'securityQuestion' &&
                         `सुरक्षा प्रश्न: "${matchedResetUser?.securityQuestion || 'तपाईंको पहिलो विद्यालयको नाम के हो?'}" को उत्तर: *`}
-                      {resetMethod === 'masterKey' && 'मास्टर रिकभरी कुञ्जी (Master Key): *'}
                     </span>
                   </label>
                   <input
-                    type={resetMethod === 'masterKey' ? 'password' : 'text'}
+                    type="text"
                     required
                     value={verificationValue}
                     onChange={(e) => {
@@ -757,10 +744,8 @@ export const LoginPage: React.FC = () => {
                     }}
                     placeholder={
                       resetMethod === 'pin'
-                        ? 'सुरक्षा पिन टाइप गर्नुहोस् (जस्तै: 1234)'
-                        : resetMethod === 'securityQuestion'
-                        ? 'सुरक्षा प्रश्नको उत्तर टाइप गर्नुहोस्'
-                        : 'मास्टर रिकभरी कुञ्जी प्रविष्ट गर्नुहोस्'
+                        ? 'आफ्नो सुरक्षा पिन टाइप गर्नुहोस्'
+                        : 'सुरक्षा प्रश्नको उत्तर टाइप गर्नुहोस्'
                     }
                     className="w-full px-3 py-2 rounded-lg border border-[#c8d7c2] font-mono text-xs outline-none focus:ring-2 focus:ring-[#4B6043]"
                   />
